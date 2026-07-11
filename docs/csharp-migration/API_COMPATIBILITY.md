@@ -155,7 +155,7 @@
 | 79 | PATCH | `/api/admin/users/{user_id}` | core/routes_admin.py | `admin_update_user` | Admin role dependency | JWT admin, API Key service/admin, localhost/admin | JSON+Path | JSON | 否 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` | 未开始 |
 | 80 | GET | `/api/admin/conversations` | core/routes_admin.py | `admin_list_all_conversations` | Admin role dependency | JWT admin, API Key service/admin, localhost/admin | Query | JSON | 否 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` | 未开始 |
 | 81 | GET | `/api/admin/conversations/{conv_id}` | core/routes_admin.py | `admin_get_conversation` | Admin role dependency | JWT admin, API Key service/admin, localhost/admin | Path | JSON | 否 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` | 未开始 |
-| 82 | GET | `/api/security/status` | core/routes_security.py | `security_status` | Public | anonymous | 无 | JSON | 否 | 无 | 未开始 |
+| 82 | GET | `/api/security/status` | core/routes_security.py | `security_status` | Public，支持可选身份解析 | anonymous；可选 JWT/API Key/localhost | 无 | JSON | 否 | `Authorization: Bearer <JWT 或 API Key>`（可选），`X-API-Key: <API Key>`（可选） | 未开始 |
 | 83 | GET | `/api/security/audit/logs` | core/routes_security.py | `list_audit_logs` | Admin role dependency | JWT admin, API Key service/admin, localhost/admin | Query | JSON | 否 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` | 未开始 |
 | 84 | POST | `/api/work/configure` | core/wechat/work_bridge.py | `configure_work` | Public | anonymous | JSON | JSON | 否 | 无 | 未开始 |
 | 85 | GET | `/api/work/status` | core/wechat/work_bridge.py | `work_status` | Public | anonymous | 无 | JSON | 否 | 无 | 未开始 |
@@ -751,7 +751,7 @@
 | Python 函数名 | `file_workspace_roots` |
 | 路由前缀 | `/api` |
 | 鉴权类型 | CurrentUser dependency |
-| 是否需要账号登录 | 是（Depends(get_current_user) — 若未登录返回 401） |
+| 是否需要账号登录 | 否，不强制使用账号登录；但必须存在 CurrentUser。CurrentUser 可以来自有效 JWT、API Key service/admin，或配置允许的 localhost/admin。security.enabled=false 时中间件不设置 request.state.user，因此 CurrentUser 依赖仍会返回 401。 |
 | 允许身份和角色 | JWT admin/member/readonly, API Key service/admin, localhost/admin |
 | Depends 依赖 | `user: CurrentUser = Depends(get_current_user)` |
 | 请求 Content-Type | 无 |
@@ -911,7 +911,7 @@
 | Python 函数名 | `files_mkdir` |
 | 路由前缀 | `/api` |
 | 鉴权类型 | CurrentUser dependency |
-| 是否需要账号登录 | 是（Depends(get_current_user) — 若未登录返回 401） |
+| 是否需要账号登录 | 否，不强制使用账号登录；但必须存在 CurrentUser。CurrentUser 可以来自有效 JWT、API Key service/admin，或配置允许的 localhost/admin。security.enabled=false 时中间件不设置 request.state.user，因此 CurrentUser 依赖仍会返回 401。 |
 | 允许身份和角色 | JWT admin/member/readonly, API Key service/admin, localhost/admin |
 | Depends 依赖 | `user: CurrentUser = Depends(get_current_user)` |
 | 请求 Content-Type | `application/json` |
@@ -943,7 +943,7 @@
 | Python 函数名 | `files_upload` |
 | 路由前缀 | `/api` |
 | 鉴权类型 | CurrentUser dependency |
-| 是否需要账号登录 | 是（Depends(get_current_user) — 若未登录返回 401） |
+| 是否需要账号登录 | 否，不强制使用账号登录；但必须存在 CurrentUser。CurrentUser 可以来自有效 JWT、API Key service/admin，或配置允许的 localhost/admin。security.enabled=false 时中间件不设置 request.state.user，因此 CurrentUser 依赖仍会返回 401。 |
 | 允许身份和角色 | JWT admin/member/readonly, API Key service/admin, localhost/admin |
 | Depends 依赖 | `user: CurrentUser = Depends(get_current_user)` |
 | 请求 Content-Type | `multipart/form-data` |
@@ -975,7 +975,7 @@
 | Python 函数名 | `list_conversations` |
 | 路由前缀 | `/api` |
 | 鉴权类型 | CurrentUser dependency |
-| 是否需要账号登录 | 是（Depends(get_current_user) — 若未登录返回 401） |
+| 是否需要账号登录 | 否，不强制使用账号登录；但必须存在 CurrentUser。CurrentUser 可以来自有效 JWT、API Key service/admin，或配置允许的 localhost/admin。security.enabled=false 时中间件不设置 request.state.user，因此 CurrentUser 依赖仍会返回 401。 |
 | 允许身份和角色 | JWT admin/member/readonly, API Key service/admin, localhost/admin |
 | Depends 依赖 | `user: CurrentUser = Depends(get_current_user)` |
 | 请求 Content-Type | 无 |
@@ -1007,7 +1007,7 @@
 | Python 函数名 | `get_conversation` |
 | 路由前缀 | `/api` |
 | 鉴权类型 | CurrentUser dependency |
-| 是否需要账号登录 | 是（Depends(get_current_user) — 若未登录返回 401） |
+| 是否需要账号登录 | 否，不强制使用账号登录；但必须存在 CurrentUser。CurrentUser 可以来自有效 JWT、API Key service/admin，或配置允许的 localhost/admin。security.enabled=false 时中间件不设置 request.state.user，因此 CurrentUser 依赖仍会返回 401。 |
 | 允许身份和角色 | JWT admin/member/readonly, API Key service/admin, localhost/admin |
 | Depends 依赖 | `user: CurrentUser = Depends(get_current_user)` |
 | 请求 Content-Type | 无 |
@@ -1071,7 +1071,7 @@
 | Python 函数名 | `delete_conversation` |
 | 路由前缀 | `/api` |
 | 鉴权类型 | CurrentUser dependency |
-| 是否需要账号登录 | 是（Depends(get_current_user) — 若未登录返回 401） |
+| 是否需要账号登录 | 否，不强制使用账号登录；但必须存在 CurrentUser。CurrentUser 可以来自有效 JWT、API Key service/admin，或配置允许的 localhost/admin。security.enabled=false 时中间件不设置 request.state.user，因此 CurrentUser 依赖仍会返回 401。 |
 | 允许身份和角色 | JWT admin/member/readonly, API Key service/admin, localhost/admin |
 | Depends 依赖 | `user: CurrentUser = Depends(get_current_user)` |
 | 请求 Content-Type | 无 |
@@ -2543,7 +2543,7 @@
 | Python 函数名 | `auth_me` |
 | 路由前缀 | `/api/auth` |
 | 鉴权类型 | CurrentUser dependency |
-| 是否需要账号登录 | 是（Depends(get_current_user) — 若未登录返回 401） |
+| 是否需要账号登录 | 否，不强制使用账号登录；但必须存在 CurrentUser。CurrentUser 可以来自有效 JWT、API Key service/admin，或配置允许的 localhost/admin。security.enabled=false 时中间件不设置 request.state.user，因此 CurrentUser 依赖仍会返回 401。 |
 | 允许身份和角色 | JWT admin/member/readonly, API Key service/admin, localhost/admin |
 | Depends 依赖 | `user: CurrentUser = Depends(get_current_user)` |
 | 请求 Content-Type | 无 |
@@ -2575,7 +2575,7 @@
 | Python 函数名 | `admin_list_users` |
 | 路由前缀 | `/api/admin` |
 | 鉴权类型 | Admin role dependency |
-| 是否需要账号登录 | 是（Depends(require_admin) — 非管理员返回 403） |
+| 是否需要账号登录 | 否，不强制使用账号登录；必须存在 admin 角色 CurrentUser。该身份可以来自 JWT admin、API Key service/admin，或配置允许的 localhost/admin。无 CurrentUser 时返回 401；CurrentUser 存在但不是 admin 时返回 403；security.enabled=false 时中间件不设置 request.state.user，因此会返回 401。 |
 | 允许身份和角色 | JWT admin, API Key service/admin, localhost/admin |
 | Depends 依赖 | `user: CurrentUser = Depends(require_admin)` |
 | 请求 Content-Type | 无 |
@@ -2607,7 +2607,7 @@
 | Python 函数名 | `admin_create_user` |
 | 路由前缀 | `/api/admin` |
 | 鉴权类型 | Admin role dependency |
-| 是否需要账号登录 | 是（Depends(require_admin) — 非管理员返回 403） |
+| 是否需要账号登录 | 否，不强制使用账号登录；必须存在 admin 角色 CurrentUser。该身份可以来自 JWT admin、API Key service/admin，或配置允许的 localhost/admin。无 CurrentUser 时返回 401；CurrentUser 存在但不是 admin 时返回 403；security.enabled=false 时中间件不设置 request.state.user，因此会返回 401。 |
 | 允许身份和角色 | JWT admin, API Key service/admin, localhost/admin |
 | Depends 依赖 | `user: CurrentUser = Depends(require_admin)` |
 | 请求 Content-Type | `application/json` |
@@ -2639,7 +2639,7 @@
 | Python 函数名 | `admin_delete_user` |
 | 路由前缀 | `/api/admin` |
 | 鉴权类型 | Admin role dependency |
-| 是否需要账号登录 | 是（Depends(require_admin) — 非管理员返回 403） |
+| 是否需要账号登录 | 否，不强制使用账号登录；必须存在 admin 角色 CurrentUser。该身份可以来自 JWT admin、API Key service/admin，或配置允许的 localhost/admin。无 CurrentUser 时返回 401；CurrentUser 存在但不是 admin 时返回 403；security.enabled=false 时中间件不设置 request.state.user，因此会返回 401。 |
 | 允许身份和角色 | JWT admin, API Key service/admin, localhost/admin |
 | Depends 依赖 | `user: CurrentUser = Depends(require_admin)` |
 | 请求 Content-Type | 无 |
@@ -2671,7 +2671,7 @@
 | Python 函数名 | `admin_update_user` |
 | 路由前缀 | `/api/admin` |
 | 鉴权类型 | Admin role dependency |
-| 是否需要账号登录 | 是（Depends(require_admin) — 非管理员返回 403） |
+| 是否需要账号登录 | 否，不强制使用账号登录；必须存在 admin 角色 CurrentUser。该身份可以来自 JWT admin、API Key service/admin，或配置允许的 localhost/admin。无 CurrentUser 时返回 401；CurrentUser 存在但不是 admin 时返回 403；security.enabled=false 时中间件不设置 request.state.user，因此会返回 401。 |
 | 允许身份和角色 | JWT admin, API Key service/admin, localhost/admin |
 | Depends 依赖 | `user: CurrentUser = Depends(require_admin)` |
 | 请求 Content-Type | `application/json` + Path |
@@ -2703,7 +2703,7 @@
 | Python 函数名 | `admin_list_all_conversations` |
 | 路由前缀 | `/api/admin` |
 | 鉴权类型 | Admin role dependency |
-| 是否需要账号登录 | 是（Depends(require_admin) — 非管理员返回 403） |
+| 是否需要账号登录 | 否，不强制使用账号登录；必须存在 admin 角色 CurrentUser。该身份可以来自 JWT admin、API Key service/admin，或配置允许的 localhost/admin。无 CurrentUser 时返回 401；CurrentUser 存在但不是 admin 时返回 403；security.enabled=false 时中间件不设置 request.state.user，因此会返回 401。 |
 | 允许身份和角色 | JWT admin, API Key service/admin, localhost/admin |
 | Depends 依赖 | `user: CurrentUser = Depends(require_admin)` |
 | 请求 Content-Type | 无 |
@@ -2735,7 +2735,7 @@
 | Python 函数名 | `admin_get_conversation` |
 | 路由前缀 | `/api/admin` |
 | 鉴权类型 | Admin role dependency |
-| 是否需要账号登录 | 是（Depends(require_admin) — 非管理员返回 403） |
+| 是否需要账号登录 | 否，不强制使用账号登录；必须存在 admin 角色 CurrentUser。该身份可以来自 JWT admin、API Key service/admin，或配置允许的 localhost/admin。无 CurrentUser 时返回 401；CurrentUser 存在但不是 admin 时返回 403；security.enabled=false 时中间件不设置 request.state.user，因此会返回 401。 |
 | 允许身份和角色 | JWT admin, API Key service/admin, localhost/admin |
 | Depends 依赖 | `user: CurrentUser = Depends(require_admin)` |
 | 请求 Content-Type | 无 |
@@ -2766,14 +2766,14 @@
 | Python 来源文件 | `core/routes_security.py` |
 | Python 函数名 | `security_status` |
 | 路由前缀 | `/api/security` |
-| 鉴权类型 | Public |
-| 是否需要账号登录 | 否（公开路径，列入 `_DEFAULT_PUBLIC_PREFIXES`） |
-| 允许身份和角色 | anonymous |
-| Depends 依赖 | 无 |
+| 鉴权类型 | Public，支持可选身份解析 |
+| 是否需要账号登录 | 否 |
+| 允许身份和角色 | anonymous；也可以可选解析 JWT admin/member/readonly、API Key service/admin、localhost/admin |
+| Depends 依赖 | 无；函数内部手动调用 authenticate_request() |
 | 请求 Content-Type | 无 |
 | Path 参数 | 无 |
-| Query 参数 | 无 |
-| Header 参数 | 无 |
+| Query 参数 | `api_key: string（可选；接口本身公开，但有效 API Key 会影响 authenticated 状态和返回的用户上下文）` |
+| Header 参数 | `Authorization: Bearer <JWT 或 API Key>`（可选），`X-API-Key: <API Key>`（可选） |
 | Body JSON | 无 |
 | Form 参数 | 无 |
 | 上传文件参数 | 无 |
@@ -2785,7 +2785,7 @@
 | 是否访问数据库 | 是（若已登录，查询用户信息） |
 | 是否访问文件系统 | 否 |
 | 是否调用 Agent | 否 |
-| 当前安全注意事项 | **公开暴露鉴权配置状态**，含当前用户信息（若已登录）；`security.enabled=false` 时返回 `authenticated: true` |
+| 当前安全注意事项 | 公开调用不需要身份；提供有效身份时可能返回 authenticated=true；JWT 账号身份有效时可能额外返回 user 字段；API Key 和 localhost 身份不会返回普通账号 user 字段；security.enabled=false 时 authenticated 固定为 true，但中间件不会设置 request.state.user |
 | 后续建议对应的 C# Endpoint 名称 | `SecurityController.Status` |
 
 ### 83. GET /api/security/audit/logs — 审计日志
@@ -2799,7 +2799,7 @@
 | Python 函数名 | `list_audit_logs` |
 | 路由前缀 | `/api/security` |
 | 鉴权类型 | Admin role dependency |
-| 是否需要账号登录 | 是（Depends(require_admin) — 非管理员返回 403） |
+| 是否需要账号登录 | 否，不强制使用账号登录；必须存在 admin 角色 CurrentUser。该身份可以来自 JWT admin、API Key service/admin，或配置允许的 localhost/admin。无 CurrentUser 时返回 401；CurrentUser 存在但不是 admin 时返回 403；security.enabled=false 时中间件不设置 request.state.user，因此会返回 401。 |
 | 允许身份和角色 | JWT admin, API Key service/admin, localhost/admin |
 | Depends 依赖 | `user: CurrentUser = Depends(require_admin)` |
 | 请求 Content-Type | 无 |
