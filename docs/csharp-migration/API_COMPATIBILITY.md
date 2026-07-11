@@ -64,7 +64,7 @@
 8. **角色限制**（在 `permissions.py` 中）：`readonly` 禁止写入类工具
 
 > **安全注意事项**：
-> - 鉴权关闭时任何人都可以任意调用所有接口，包括管理接口
+> - 鉴权关闭时，无显式身份依赖的接口可匿名执行；使用 get_current_user 或 require_admin 的接口仍会因为 request.state.user 不存在而返回 401；使用 get_current_user_optional 的接口会获得 None。
 > - `allow_localhost_without_auth` 开启后本机请求完全跳过鉴权
 > - `/api/security/status` 公开暴露鉴权配置状态和当前用户信息
 > - 企业微信回调路由 `/api/work/*` 完全公开（含 `/api/work/configure` 配置接口）
@@ -77,7 +77,7 @@
 | 1 | GET | `/` | main.py | `home` | Public | anonymous | 无 | HTML | 否 | 无 | 未开始 |
 | 2 | POST | `/chat` | main.py | `chat` | Protected by middleware | JWT admin/member/readonly, API Key service/admin, localhost/admin | JSON | JSON | 否 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` | 未开始 |
 | 3 | POST | `/chat/stream` | main.py | `chat_stream` | Protected by middleware | JWT admin/member/readonly, API Key service/admin, localhost/admin | JSON | SSE | 是 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` | 未开始 |
-| 4 | POST | `/chat/stop` | main.py | `stop_chat` | Protected by middleware | JWT admin/member/readonly, API Key service/admin, localhost/admin | Form/Query | JSON | 否 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` | 未开始 |
+| 4 | POST | `/chat/stop` | main.py | `stop_chat` | Protected by middleware | JWT admin/member/readonly, API Key service/admin, localhost/admin | Query | JSON | 否 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` | 未开始 |
 | 5 | POST | `/chat/reset` | main.py | `reset_chat` | Protected by middleware | JWT admin/member/readonly, API Key service/admin, localhost/admin | JSON | JSON | 否 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` | 未开始 |
 | 6 | GET | `/tools` | main.py | `list_tools` | Protected by middleware | JWT admin/member/readonly, API Key service/admin, localhost/admin | 无 | JSON | 否 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` | 未开始 |
 | 7 | GET | `/sessions` | main.py | `get_sessions` | Protected by middleware | JWT admin/member/readonly, API Key service/admin, localhost/admin | 无 | JSON | 否 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` | 未开始 |
@@ -212,14 +212,14 @@
 | Depends 依赖 | 无（通过 APIKeyMiddleware 鉴权，request.state.user 由中间件设置，无显式 Depends） |
 | 请求 Content-Type | `application/json` |
 | Path 参数 | 无 |
-| Query 参数 | 无 |
+| Query 参数 | `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | `{"query": "string (必填, min_length=1)", "session_id": "string (可选, 默认'')", "conversation_id": "string (可选, 默认'')", "files": ["string (可选)"]}` |
 | Form 参数 | 无 |
 | 上传文件参数 | 无 |
 | 成功响应示例 | `{"reply": "回复文本", "session_id": "sid", "conversation_id": "conv_id"}` |
 | 可能的 HTTP 状态码 | 200, 401, 422 |
-| 可能的错误响应 | `422` — query 字段验证错误；`401` — 未登录 |
+| 可能的错误响应 | `422` — query 字段验证错误；`401` — 未提供有效 JWT、API Key，且不满足允许的 localhost 跳过条件 |
 | 是否使用 SSE | 否 |
 | SSE 响应头 | 无 |
 | 是否访问数据库 | 是（调用 `resolve_chat_ids` → `ensure_conversation_owned`） |
@@ -244,7 +244,7 @@
 | Depends 依赖 | 无（通过 APIKeyMiddleware 鉴权，request.state.user 由中间件设置，无显式 Depends） |
 | 请求 Content-Type | `application/json` |
 | Path 参数 | 无 |
-| Query 参数 | 无 |
+| Query 参数 | `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | `{"query": "string (必填)", "session_id": "", "conversation_id": "", "files": []}` |
 | Form 参数 | 无 |
@@ -276,14 +276,14 @@
 | Depends 依赖 | 无（通过 APIKeyMiddleware 鉴权，request.state.user 由中间件设置，无显式 Depends） |
 | 请求 Content-Type | 无特殊要求，参数来自 Query |
 | Path 参数 | 无 |
-| Query 参数 | `conversation_id: str (可选, 默认"")`, `session_id: str (可选, 默认"", 用于取消指定会话)` |
+| Query 参数 | `conversation_id: str (可选, 默认"")`, `session_id: str (可选, 默认"", 用于取消指定会话)`, `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | 无 |
 | Form 参数 | 无 |
 | 上传文件参数 | 无 |
 | 成功响应示例 | `{"status": "ok", "message": "已中断对话", "session_id": "sid"}` 或 `{"status": "warning", "message": "未找到正在执行的对话", "session_id": "sid"}` |
 | 可能的 HTTP 状态码 | 200, 401 |
-| 可能的错误响应 | `401` — 未登录 |
+| 可能的错误响应 | `401` — 未提供有效 JWT、API Key，且不满足允许的 localhost 跳过条件 |
 | 是否使用 SSE | 否 |
 | SSE 响应头 | 无 |
 | 是否访问数据库 | 否 |
@@ -308,14 +308,14 @@
 | Depends 依赖 | 无（通过 APIKeyMiddleware 鉴权，request.state.user 由中间件设置，无显式 Depends） |
 | 请求 Content-Type | `application/json` |
 | Path 参数 | 无 |
-| Query 参数 | 无 |
+| Query 参数 | `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | `{"session_id": "string (可选, 默认'')"}` |
 | Form 参数 | 无 |
 | 上传文件参数 | 无 |
 | 成功响应示例 | `{"status": "ok", "message": "会话已重置"}` |
 | 可能的 HTTP 状态码 | 200, 401, 422 |
-| 可能的错误响应 | `401` — 未登录 |
+| 可能的错误响应 | `401` — 未提供有效 JWT、API Key，且不满足允许的 localhost 跳过条件 |
 | 是否使用 SSE | 否 |
 | SSE 响应头 | 无 |
 | 是否访问数据库 | 否 |
@@ -340,14 +340,14 @@
 | Depends 依赖 | 无（通过 APIKeyMiddleware 鉴权，request.state.user 由中间件设置，无显式 Depends） |
 | 请求 Content-Type | 无 |
 | Path 参数 | 无 |
-| Query 参数 | `session_id: str (可选, 默认"")` |
+| Query 参数 | `session_id: str (可选, 默认"")`, `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | 无 |
 | Form 参数 | 无 |
 | 上传文件参数 | 无 |
 | 成功响应示例 | 返回 `adapter.tools._tools` 的完整注册表，包含每个工具的 name、description、parameters（JSON Schema）、category 等字段 |
 | 可能的 HTTP 状态码 | 200, 401 |
-| 可能的错误响应 | `401` — 未登录 |
+| 可能的错误响应 | `401` — 未提供有效 JWT、API Key，且不满足允许的 localhost 跳过条件 |
 | 是否使用 SSE | 否 |
 | SSE 响应头 | 无 |
 | 是否访问数据库 | 否 |
@@ -372,20 +372,20 @@
 | Depends 依赖 | 无（通过 APIKeyMiddleware 鉴权，request.state.user 由中间件设置，无显式 Depends） |
 | 请求 Content-Type | 无 |
 | Path 参数 | 无 |
-| Query 参数 | 无 |
+| Query 参数 | `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | 无 |
 | Form 参数 | 无 |
 | 上传文件参数 | 无 |
 | 成功响应示例 | `{"total_sessions": 5, "sessions": [{"id": "...", "messages": 3, "created_at": "...", "updated_at": "..."}]}` |
 | 可能的 HTTP 状态码 | 200, 401 |
-| 可能的错误响应 | `401` — 未登录 |
+| 可能的错误响应 | `401` — 未提供有效 JWT、API Key，且不满足允许的 localhost 跳过条件 |
 | 是否使用 SSE | 否 |
 | SSE 响应头 | 无 |
 | 是否访问数据库 | 否 |
 | 是否访问文件系统 | 否 |
 | 是否调用 Agent | 是（读取 nanobot session manager 的 `_cache`） |
-| 当前安全注意事项 | **公开所有缓存的会话** — 直接从 `adapter.session_manager._cache` 读取，无用户隔离，任意登录用户可查看所有会话的消息数和时间戳 |
+| 当前安全注意事项 | **公开所有缓存的会话** — 直接从 `adapter.session_manager._cache` 读取，无用户隔离，任何通过中间件的身份，包括 JWT 用户、API Key service/admin 和配置允许的 localhost/admin可查看所有会话的消息数和时间戳 |
 | 后续建议对应的 C# Endpoint 名称 | `SessionsController.GetSessions` |
 
 ### 8. GET /favicon.ico
@@ -436,14 +436,14 @@
 | Depends 依赖 | 无（通过 APIKeyMiddleware 鉴权，request.state.user 由中间件设置，无显式 Depends） |
 | 请求 Content-Type | 无 |
 | Path 参数 | 无 |
-| Query 参数 | `session_id: str (可选, 默认"")` |
+| Query 参数 | `session_id: str (可选, 默认"")`, `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | 无 |
 | Form 参数 | 无 |
 | 上传文件参数 | 无 |
 | 成功响应示例 | `{"session_id": "...", "mode": "react"}` |
 | 可能的 HTTP 状态码 | 200, 401 |
-| 可能的错误响应 | `401` — 未登录 |
+| 可能的错误响应 | `401` — 未提供有效 JWT、API Key，且不满足允许的 localhost 跳过条件 |
 | 是否使用 SSE | 否 |
 | SSE 响应头 | 无 |
 | 是否访问数据库 | 否 |
@@ -500,20 +500,20 @@
 | Depends 依赖 | 无（通过 APIKeyMiddleware 鉴权，request.state.user 由中间件设置，无显式 Depends） |
 | 请求 Content-Type | 无 |
 | Path 参数 | 无 |
-| Query 参数 | 无 |
+| Query 参数 | `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | 无 |
 | Form 参数 | 无 |
 | 上传文件参数 | 无 |
 | 成功响应示例 | `{"documents": [{"id": "...", "file_name": "...", "indexed_at": "2025-01-01 12:00", ...}]}` |
 | 可能的 HTTP 状态码 | 200, 401 |
-| 可能的错误响应 | `401` — 未登录 |
+| 可能的错误响应 | `401` — 未提供有效 JWT、API Key，且不满足允许的 localhost 跳过条件 |
 | 是否使用 SSE | 否 |
 | SSE 响应头 | 无 |
 | 是否访问数据库 | 是（`db.list_documents()`） |
 | 是否访问文件系统 | 否 |
 | 是否调用 Agent | 否 |
-| 当前安全注意事项 | 任何登录用户可查看所有已索引文档记录 |
+| 当前安全注意事项 | 任何通过中间件的身份，包括 JWT 用户、API Key service/admin 和配置允许的 localhost/admin可查看所有已索引文档记录 |
 | 后续建议对应的 C# Endpoint 名称 | `KnowledgeController.ListDocuments` |
 
 ### 12. POST /api/knowledge/index — 索引文档
@@ -532,7 +532,7 @@
 | Depends 依赖 | 无（通过 APIKeyMiddleware 鉴权，request.state.user 由中间件设置，无显式 Depends） |
 | 请求 Content-Type | `application/json` |
 | Path 参数 | 无 |
-| Query 参数 | 无 |
+| Query 参数 | `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | `{"path": "string (必填)", "recursive": true (可选, 默认true)}` |
 | Form 参数 | 无 |
@@ -564,20 +564,20 @@
 | Depends 依赖 | 无（通过 APIKeyMiddleware 鉴权，request.state.user 由中间件设置，无显式 Depends） |
 | 请求 Content-Type | 无 |
 | Path 参数 | 无 |
-| Query 参数 | 无 |
+| Query 参数 | `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | 无 |
 | Form 参数 | 无 |
 | 上传文件参数 | 无 |
 | 成功响应示例 | `{"status": "ok", "message": "索引任务已取消"}` |
 | 可能的 HTTP 状态码 | 200, 401 |
-| 可能的错误响应 | `401` — 未登录 |
+| 可能的错误响应 | `401` — 未提供有效 JWT、API Key，且不满足允许的 localhost 跳过条件 |
 | 是否使用 SSE | 否 |
 | SSE 响应头 | 无 |
 | 是否访问数据库 | 否 |
 | 是否访问文件系统 | 否 |
 | 是否调用 Agent | 否 |
-| 当前安全注意事项 | 任何登录用户可取消索引任务，无管理员限制 |
+| 当前安全注意事项 | 任何通过中间件的身份，包括 JWT 用户、API Key service/admin 和配置允许的 localhost/admin可取消索引任务，无管理员限制 |
 | 后续建议对应的 C# Endpoint 名称 | `KnowledgeController.CancelIndexing` |
 
 ### 14. GET /api/knowledge/is_indexing — 检查索引状态
@@ -596,14 +596,14 @@
 | Depends 依赖 | 无（通过 APIKeyMiddleware 鉴权，request.state.user 由中间件设置，无显式 Depends） |
 | 请求 Content-Type | 无 |
 | Path 参数 | 无 |
-| Query 参数 | 无 |
+| Query 参数 | `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | 无 |
 | Form 参数 | 无 |
 | 上传文件参数 | 无 |
 | 成功响应示例 | `{"is_indexing": false}` |
 | 可能的 HTTP 状态码 | 200, 401 |
-| 可能的错误响应 | `401` — 未登录 |
+| 可能的错误响应 | `401` — 未提供有效 JWT、API Key，且不满足允许的 localhost 跳过条件 |
 | 是否使用 SSE | 否 |
 | SSE 响应头 | 无 |
 | 是否访问数据库 | 否 |
@@ -628,20 +628,20 @@
 | Depends 依赖 | 无（通过 APIKeyMiddleware 鉴权，request.state.user 由中间件设置，无显式 Depends） |
 | 请求 Content-Type | 无 |
 | Path 参数 | 无 |
-| Query 参数 | 无 |
+| Query 参数 | `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | 无 |
 | Form 参数 | 无 |
 | 上传文件参数 | 无 |
 | 成功响应示例 | `{"status": "ok", "message": "已清空 N 个文档", "count": N}` |
 | 可能的 HTTP 状态码 | 200, 401 |
-| 可能的错误响应 | `401` — 未登录 |
+| 可能的错误响应 | `401` — 未提供有效 JWT、API Key，且不满足允许的 localhost 跳过条件 |
 | 是否使用 SSE | 否 |
 | SSE 响应头 | 无 |
 | 是否访问数据库 | 是（删除并重建向量集合 collection，清除 documents 表） |
 | 是否访问文件系统 | 否 |
 | 是否调用 Agent | 否 |
-| 当前安全注意事项 | **破坏性操作** — 任何登录用户可清空整个知识库（删除并重建向量集合 + 清除数据库记录），无管理员限制 |
+| 当前安全注意事项 | **破坏性操作** — 任何通过中间件的身份，包括 JWT 用户、API Key service/admin 和配置允许的 localhost/admin可清空整个知识库（删除并重建向量集合 + 清除数据库记录），无管理员限制 |
 | 后续建议对应的 C# Endpoint 名称 | `KnowledgeController.ClearKnowledge` |
 
 ### 16. DELETE /api/knowledge/document/{doc_id} — 删除文档
@@ -660,20 +660,20 @@
 | Depends 依赖 | 无（通过 APIKeyMiddleware 鉴权，request.state.user 由中间件设置，无显式 Depends） |
 | 请求 Content-Type | 无 |
 | Path 参数 | `doc_id: str` |
-| Query 参数 | 无 |
+| Query 参数 | `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | 无 |
 | Form 参数 | 无 |
 | 上传文件参数 | 无 |
 | 成功响应示例 | `{"status": "ok", "message": "文档已删除"}` |
 | 可能的 HTTP 状态码 | 200, 401 |
-| 可能的错误响应 | `401` — 未登录 |
+| 可能的错误响应 | `401` — 未提供有效 JWT、API Key，且不满足允许的 localhost 跳过条件 |
 | 是否使用 SSE | 否 |
 | SSE 响应头 | 无 |
 | 是否访问数据库 | 是（删除向量库中的文档 + 数据库中的文档记录） |
 | 是否访问文件系统 | 否 |
 | 是否调用 Agent | 否 |
-| 当前安全注意事项 | 任何登录用户可删除任意文档，无用户级隔离 |
+| 当前安全注意事项 | 任何通过中间件的身份，包括 JWT 用户、API Key service/admin 和配置允许的 localhost/admin可删除任意文档，无用户级隔离 |
 | 后续建议对应的 C# Endpoint 名称 | `KnowledgeController.DeleteDocument` |
 
 ### 17. GET /api/knowledge/search — 搜索知识库
@@ -692,20 +692,20 @@
 | Depends 依赖 | 无（通过 APIKeyMiddleware 鉴权，request.state.user 由中间件设置，无显式 Depends） |
 | 请求 Content-Type | 无 |
 | Path 参数 | 无 |
-| Query 参数 | `query: str (必填)`, `n: int (可选, 默认5, 返回结果数)` |
+| Query 参数 | `query: str (必填)`, `n: int (可选, 默认5, 返回结果数)`, `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | 无 |
 | Form 参数 | 无 |
 | 上传文件参数 | 无 |
 | 成功响应示例 | `{"results": [{"id": "...", "content": "...", "score": 0.95, "source": "...", "file_path": "..."}], "total": N}` |
 | 可能的 HTTP 状态码 | 200, 401 |
-| 可能的错误响应 | `401` — 未登录 |
+| 可能的错误响应 | `401` — 未提供有效 JWT、API Key，且不满足允许的 localhost 跳过条件 |
 | 是否使用 SSE | 否 |
 | SSE 响应头 | 无 |
 | 是否访问数据库 | 是（向量搜索知识库） |
 | 是否访问文件系统 | 否 |
 | 是否调用 Agent | 否 |
-| 当前安全注意事项 | 任何登录用户可搜索所有知识库内容，无用户级隔离 |
+| 当前安全注意事项 | 任何通过中间件的身份，包括 JWT 用户、API Key service/admin 和配置允许的 localhost/admin可搜索所有知识库内容，无用户级隔离 |
 | 后续建议对应的 C# Endpoint 名称 | `KnowledgeController.Search` |
 
 ### 18. GET /api/knowledge/stats — 知识库统计
@@ -724,14 +724,14 @@
 | Depends 依赖 | 无（通过 APIKeyMiddleware 鉴权，request.state.user 由中间件设置，无显式 Depends） |
 | 请求 Content-Type | 无 |
 | Path 参数 | 无 |
-| Query 参数 | 无 |
+| Query 参数 | `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | 无 |
 | Form 参数 | 无 |
 | 上传文件参数 | 无 |
 | 成功响应示例 | `{"total_documents": N, "total_chunks": N, "vector_count": N, "by_type": {...}}` |
 | 可能的 HTTP 状态码 | 200, 401 |
-| 可能的错误响应 | `401` — 未登录 |
+| 可能的错误响应 | `401` — 未提供有效 JWT、API Key，且不满足允许的 localhost 跳过条件 |
 | 是否使用 SSE | 否 |
 | SSE 响应头 | 无 |
 | 是否访问数据库 | 是（查询文档统计和向量库计数） |
@@ -756,14 +756,14 @@
 | Depends 依赖 | `user: CurrentUser = Depends(get_current_user)` |
 | 请求 Content-Type | 无 |
 | Path 参数 | 无 |
-| Query 参数 | 无 |
+| Query 参数 | `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | 无 |
 | Form 参数 | 无 |
 | 上传文件参数 | 无 |
 | 成功响应示例 | workspace 模式: `{"mode": "workspace", "roots": [{"id": "...", "name": "...", "path": "...", "can_write": true}]}` 或 legacy 模式: `{"mode": "legacy", "roots": [...]}` |
 | 可能的 HTTP 状态码 | 200, 401 |
-| 可能的错误响应 | `401` — 未登录 |
+| 可能的错误响应 | `401` — 未提供有效 JWT、API Key，且不满足允许的 localhost 跳过条件 |
 | 是否使用 SSE | 否 |
 | SSE 响应头 | 无 |
 | 是否访问数据库 | 否 |
@@ -788,7 +788,7 @@
 | Depends 依赖 | `user: CurrentUser | None = Depends(get_current_user_optional)` |
 | 请求 Content-Type | 无 |
 | Path 参数 | 无 |
-| Query 参数 | `path: str (可选, 默认"")` |
+| Query 参数 | `path: str (可选, 默认"")`, `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | 无 |
 | Form 参数 | 无 |
@@ -820,14 +820,14 @@
 | Depends 依赖 | `user: CurrentUser | None = Depends(get_current_user_optional)` |
 | 请求 Content-Type | 无 |
 | Path 参数 | 无 |
-| Query 参数 | 无 |
+| Query 参数 | `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | 无 |
 | Form 参数 | 无 |
 | 上传文件参数 | 无 |
 | 成功响应示例 | workspace: `{"mode": "workspace", "drives": [{"name": "...", "path": "...", "label": "...", "id": "..."}]}` 或 legacy: `{"mode": "legacy", "drives": [{"name": "C:\\", "path": "C:\\", "label": "C:\\"}]}` |
 | 可能的 HTTP 状态码 | 200, 401 |
-| 可能的错误响应 | `401` — 未登录（中间件拒绝） |
+| 可能的错误响应 | `401` — 未提供有效 JWT、API Key，且不满足允许的 localhost 跳过条件（中间件拒绝） |
 | 是否使用 SSE | 否 |
 | SSE 响应头 | 无 |
 | 是否访问数据库 | 否 |
@@ -852,7 +852,7 @@
 | Depends 依赖 | `user: CurrentUser | None = Depends(get_current_user_optional)` |
 | 请求 Content-Type | 无 |
 | Path 参数 | 无 |
-| Query 参数 | `path: str (必填, 文件/目录路径)` |
+| Query 参数 | `path: str (必填, 文件/目录路径)`, `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | 无 |
 | Form 参数 | 无 |
@@ -884,7 +884,7 @@
 | Depends 依赖 | `user: CurrentUser | None = Depends(get_current_user_optional)` |
 | 请求 Content-Type | 无 |
 | Path 参数 | 无 |
-| Query 参数 | `path: str (必填, 文件路径)` |
+| Query 参数 | `path: str (必填, 文件路径)`, `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | 无 |
 | Form 参数 | 无 |
@@ -916,7 +916,7 @@
 | Depends 依赖 | `user: CurrentUser = Depends(get_current_user)` |
 | 请求 Content-Type | `application/json` |
 | Path 参数 | 无 |
-| Query 参数 | 无 |
+| Query 参数 | `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | `{"path": "string (父目录绝对路径, 必填)", "name": "string (文件夹名, 1-128字符)"}` |
 | Form 参数 | 无 |
@@ -948,7 +948,7 @@
 | Depends 依赖 | `user: CurrentUser = Depends(get_current_user)` |
 | 请求 Content-Type | `multipart/form-data` |
 | Path 参数 | 无 |
-| Query 参数 | `path: str (目标目录, 必填)` |
+| Query 参数 | `path: str (目标目录, 必填)`, `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | 无 |
 | Form 参数 | 无 |
@@ -980,14 +980,14 @@
 | Depends 依赖 | `user: CurrentUser = Depends(get_current_user)` |
 | 请求 Content-Type | 无 |
 | Path 参数 | 无 |
-| Query 参数 | 无 |
+| Query 参数 | `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | 无 |
 | Form 参数 | 无 |
 | 上传文件参数 | 无 |
 | 成功响应示例 | `{"conversations": [{"id": "...", "title": "...", "created_at": "...", "updated_at": "...", "message_count": N, "owner_user_id": "..."}]}` |
 | 可能的 HTTP 状态码 | 200, 401 |
-| 可能的错误响应 | `401` — 未登录 |
+| 可能的错误响应 | `401` — 未提供有效 JWT、API Key，且不满足允许的 localhost 跳过条件 |
 | 是否使用 SSE | 否 |
 | SSE 响应头 | 无 |
 | 是否访问数据库 | 是（`db.list_conversations()`） |
@@ -1012,7 +1012,7 @@
 | Depends 依赖 | `user: CurrentUser = Depends(get_current_user)` |
 | 请求 Content-Type | 无 |
 | Path 参数 | `conv_id: str` |
-| Query 参数 | 无 |
+| Query 参数 | `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | 无 |
 | Form 参数 | 无 |
@@ -1044,14 +1044,14 @@
 | Depends 依赖 | 无（通过 APIKeyMiddleware 鉴权，request.state.user 由中间件设置，无显式 Depends） |
 | 请求 Content-Type | `application/x-www-form-urlencoded` 或 Query |
 | Path 参数 | 无 |
-| Query 参数 | `conv_id: str (必填)`, `session_id: str (可选, 默认"")` |
+| Query 参数 | `conv_id: str (必填)`, `session_id: str (可选, 默认"")`, `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | 无 |
 | Form 参数 | 无（参数通过 Query 传入） |
 | 上传文件参数 | 无 |
 | 成功响应示例 | `{"status": "ok", "message": "会话切换完成"}` |
 | 可能的 HTTP 状态码 | 200, 401 |
-| 可能的错误响应 | `401` — 未登录 |
+| 可能的错误响应 | `401` — 未提供有效 JWT、API Key，且不满足允许的 localhost 跳过条件 |
 | 是否使用 SSE | 否 |
 | SSE 响应头 | 无 |
 | 是否访问数据库 | 否 |
@@ -1076,7 +1076,7 @@
 | Depends 依赖 | `user: CurrentUser = Depends(get_current_user)` |
 | 请求 Content-Type | 无 |
 | Path 参数 | `conv_id: str` |
-| Query 参数 | 无 |
+| Query 参数 | `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | 无 |
 | Form 参数 | 无 |
@@ -1108,14 +1108,14 @@
 | Depends 依赖 | 无（通过 APIKeyMiddleware 鉴权，request.state.user 由中间件设置，无显式 Depends） |
 | 请求 Content-Type | 无 |
 | Path 参数 | 无 |
-| Query 参数 | 无 |
+| Query 参数 | `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | 无 |
 | Form 参数 | 无 |
 | 上传文件参数 | 无 |
 | 成功响应示例 | `{"config": {...}, "db_settings": {"model_type": "...", "ollama_url": "...", ...}}` |
 | 可能的 HTTP 状态码 | 200, 401 |
-| 可能的错误响应 | `401` — 未登录 |
+| 可能的错误响应 | `401` — 未提供有效 JWT、API Key，且不满足允许的 localhost 跳过条件 |
 | 是否使用 SSE | 否 |
 | SSE 响应头 | 无 |
 | 是否访问数据库 | 是（`db.get_all_settings()`） |
@@ -1140,20 +1140,20 @@
 | Depends 依赖 | 无（通过 APIKeyMiddleware 鉴权，request.state.user 由中间件设置，无显式 Depends） |
 | 请求 Content-Type | `application/json` |
 | Path 参数 | 无 |
-| Query 参数 | 无 |
+| Query 参数 | `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | `{"settings": {"model_type": "ollama", "ollama_url": "...", "openai_api_key": "...", ...}}` |
 | Form 参数 | 无 |
 | 上传文件参数 | 无 |
 | 成功响应示例 | `{"status": "ok", "message": "设置已保存；..."}` |
 | 可能的 HTTP 状态码 | 200, 401 |
-| 可能的错误响应 | `401` — 未登录 |
+| 可能的错误响应 | `401` — 未提供有效 JWT、API Key，且不满足允许的 localhost 跳过条件 |
 | 是否使用 SSE | 否 |
 | SSE 响应头 | 无 |
 | 是否访问数据库 | 是（保存用户偏好到 settings 表） |
 | 是否访问文件系统 | 是（写入 `config.yaml`） |
 | 是否调用 Agent | 否 |
-| 当前安全注意事项 | API Key 通过 `persist_provider_api_key` 存储到 `config.yaml`；任何登录用户可修改所有配置（含模型 API Key、知识库参数等）；无管理员限制 |
+| 当前安全注意事项 | API Key 通过 `persist_provider_api_key` 存储到 `config.yaml`；任何通过中间件的身份，包括 JWT 用户、API Key service/admin 和配置允许的 localhost/admin可修改所有配置（含模型 API Key、知识库参数等）；无管理员限制 |
 | 后续建议对应的 C# Endpoint 名称 | `SettingsController.Update` |
 
 ### 32. POST /api/mcp/reload — 重载 MCP
@@ -1172,20 +1172,20 @@
 | Depends 依赖 | 无（通过 APIKeyMiddleware 鉴权，request.state.user 由中间件设置，无显式 Depends） |
 | 请求 Content-Type | 无 |
 | Path 参数 | 无 |
-| Query 参数 | 无 |
+| Query 参数 | `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | 无 |
 | Form 参数 | 无 |
 | 上传文件参数 | 无 |
 | 成功响应示例 | `{"status": "ok", "filesystem_dirs": [...]}` |
 | 可能的 HTTP 状态码 | 200, 401 |
-| 可能的错误响应 | `401` — 未登录 |
+| 可能的错误响应 | `401` — 未提供有效 JWT、API Key，且不满足允许的 localhost 跳过条件 |
 | 是否使用 SSE | 否 |
 | SSE 响应头 | 无 |
 | 是否访问数据库 | 否 |
 | 是否访问文件系统 | 是（重载磁盘上的 `config.yaml`） |
 | 是否调用 Agent | 是（重载 adapter 配置和 MCP 文件系统目录） |
-| 当前安全注意事项 | 任何登录用户可重载 MCP 配置，无管理员限制 |
+| 当前安全注意事项 | 任何通过中间件的身份，包括 JWT 用户、API Key service/admin 和配置允许的 localhost/admin可重载 MCP 配置，无管理员限制 |
 | 后续建议对应的 C# Endpoint 名称 | `MCPController.Reload` |
 
 ### 33. GET /api/mcp/filesystem-dirs — MCP 文件系统目录
@@ -1204,14 +1204,14 @@
 | Depends 依赖 | 无（通过 APIKeyMiddleware 鉴权，request.state.user 由中间件设置，无显式 Depends） |
 | 请求 Content-Type | 无 |
 | Path 参数 | 无 |
-| Query 参数 | 无 |
+| Query 参数 | `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | 无 |
 | Form 参数 | 无 |
 | 上传文件参数 | 无 |
 | 成功响应示例 | `{"directories": [...]}` |
 | 可能的 HTTP 状态码 | 200, 401 |
-| 可能的错误响应 | `401` — 未登录 |
+| 可能的错误响应 | `401` — 未提供有效 JWT、API Key，且不满足允许的 localhost 跳过条件 |
 | 是否使用 SSE | 否 |
 | SSE 响应头 | 无 |
 | 是否访问数据库 | 否 |
@@ -1236,14 +1236,14 @@
 | Depends 依赖 | 无（通过 APIKeyMiddleware 鉴权，request.state.user 由中间件设置，无显式 Depends） |
 | 请求 Content-Type | `application/json` |
 | Path 参数 | 无 |
-| Query 参数 | 无 |
+| Query 参数 | `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | `{"model_type": "ollama", "base_url": "", "api_key": "", "model": ""}` |
 | Form 参数 | 无 |
 | 上传文件参数 | 无 |
 | 成功响应示例 | `{"status": "ok", "message": "Ollama 连接成功"}` 或 `{"status": "error", "message": "..."}` |
 | 可能的 HTTP 状态码 | 200, 401 |
-| 可能的错误响应 | `401` — 未登录 |
+| 可能的错误响应 | `401` — 未提供有效 JWT、API Key，且不满足允许的 localhost 跳过条件 |
 | 是否使用 SSE | 否 |
 | SSE 响应头 | 无 |
 | 是否访问数据库 | 否 |
@@ -1268,14 +1268,14 @@
 | Depends 依赖 | 无（通过 APIKeyMiddleware 鉴权，request.state.user 由中间件设置，无显式 Depends） |
 | 请求 Content-Type | 无 |
 | Path 参数 | 无 |
-| Query 参数 | 无 |
+| Query 参数 | `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | 无 |
 | Form 参数 | 无 |
 | 上传文件参数 | 无 |
 | 成功响应示例 | `{"ollama_running": true, "models": ["qwen2.5:7b"], "default_model_ready": true, "message": ""}` |
 | 可能的 HTTP 状态码 | 200, 401 |
-| 可能的错误响应 | `401` — 未登录 |
+| 可能的错误响应 | `401` — 未提供有效 JWT、API Key，且不满足允许的 localhost 跳过条件 |
 | 是否使用 SSE | 否 |
 | SSE 响应头 | 无 |
 | 是否访问数据库 | 否 |
@@ -1300,20 +1300,20 @@
 | Depends 依赖 | 无（通过 APIKeyMiddleware 鉴权，request.state.user 由中间件设置，无显式 Depends） |
 | 请求 Content-Type | `application/json` |
 | Path 参数 | 无 |
-| Query 参数 | 无 |
+| Query 参数 | `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | `{"model": "qwen2.5:7b"}` |
 | Form 参数 | 无 |
 | 上传文件参数 | 无 |
 | 成功响应示例 | `{"status": "ok", "model": "...", "detail": "..."}` |
 | 可能的 HTTP 状态码 | 200, 401 |
-| 可能的错误响应 | `401` — 未登录 |
+| 可能的错误响应 | `401` — 未提供有效 JWT、API Key，且不满足允许的 localhost 跳过条件 |
 | 是否使用 SSE | 否 |
 | SSE 响应头 | 无 |
 | 是否访问数据库 | 否 |
 | 是否访问文件系统 | 否 |
 | 是否调用 Agent | 否 |
-| 当前安全注意事项 | 任何登录用户可触发模型下载（可能消耗大量带宽和磁盘空间） |
+| 当前安全注意事项 | 任何通过中间件的身份，包括 JWT 用户、API Key service/admin 和配置允许的 localhost/admin可触发模型下载（可能消耗大量带宽和磁盘空间） |
 | 后续建议对应的 C# Endpoint 名称 | `OllamaController.Pull` |
 
 ### 37. GET /api/tools/display — 工具显示名
@@ -1332,14 +1332,14 @@
 | Depends 依赖 | 无（通过 APIKeyMiddleware 鉴权，request.state.user 由中间件设置，无显式 Depends） |
 | 请求 Content-Type | 无 |
 | Path 参数 | 无 |
-| Query 参数 | 无 |
+| Query 参数 | `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | 无 |
 | Form 参数 | 无 |
 | 上传文件参数 | 无 |
 | 成功响应示例 | `{"tools": {"exec": "执行命令", "web_search": "网页搜索", ...}}` |
 | 可能的 HTTP 状态码 | 200, 401 |
-| 可能的错误响应 | `401` — 未登录 |
+| 可能的错误响应 | `401` — 未提供有效 JWT、API Key，且不满足允许的 localhost 跳过条件 |
 | 是否使用 SSE | 否 |
 | SSE 响应头 | 无 |
 | 是否访问数据库 | 否 |
@@ -1364,14 +1364,14 @@
 | Depends 依赖 | 无（通过 APIKeyMiddleware 鉴权，request.state.user 由中间件设置，无显式 Depends） |
 | 请求 Content-Type | `multipart/form-data` |
 | Path 参数 | 无 |
-| Query 参数 | 无 |
+| Query 参数 | `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | 无 |
 | Form 参数 | 无 |
 | 上传文件参数 | `file: UploadFile (必填)` |
 | 成功响应示例 | `{"status": "ok", "file_name": "...", "file_path": "...", "size": N, "size_str": "...", "ext": "...", "is_supported": true}` |
 | 可能的 HTTP 状态码 | 200, 401, 500 |
-| 可能的错误响应 | `401` — 未登录；`500` — 文件上传失败 |
+| 可能的错误响应 | `401` — 未提供有效 JWT、API Key，且不满足允许的 localhost 跳过条件；`500` — 文件上传失败 |
 | 是否使用 SSE | 否 |
 | SSE 响应头 | 无 |
 | 是否访问数据库 | 否 |
@@ -1396,20 +1396,20 @@
 | Depends 依赖 | 无（通过 APIKeyMiddleware 鉴权，request.state.user 由中间件设置，无显式 Depends） |
 | 请求 Content-Type | 无 |
 | Path 参数 | 无 |
-| Query 参数 | `hours: int (可选, 默认24)` |
+| Query 参数 | `hours: int (可选, 默认24)`, `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | 无 |
 | Form 参数 | 无 |
 | 上传文件参数 | 无 |
 | 成功响应示例 | `{"status": "ok", "deleted": N}` |
 | 可能的 HTTP 状态码 | 200, 401 |
-| 可能的错误响应 | `401` — 未登录 |
+| 可能的错误响应 | `401` — 未提供有效 JWT、API Key，且不满足允许的 localhost 跳过条件 |
 | 是否使用 SSE | 否 |
 | SSE 响应头 | 无 |
 | 是否访问数据库 | 否 |
 | 是否访问文件系统 | 是（删除临时上传目录中的过期文件） |
 | 是否调用 Agent | 否 |
-| 当前安全注意事项 | 任何登录用户可触发清理临时文件 |
+| 当前安全注意事项 | 任何通过中间件的身份，包括 JWT 用户、API Key service/admin 和配置允许的 localhost/admin可触发清理临时文件 |
 | 后续建议对应的 C# Endpoint 名称 | `UploadController.Cleanup` |
 
 ### 40. GET /api/status — 系统状态
@@ -1428,14 +1428,14 @@
 | Depends 依赖 | 无（通过 APIKeyMiddleware 鉴权，request.state.user 由中间件设置，无显式 Depends） |
 | 请求 Content-Type | 无 |
 | Path 参数 | 无 |
-| Query 参数 | 无 |
+| Query 参数 | `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | 无 |
 | Form 参数 | 无 |
 | 上传文件参数 | 无 |
 | 成功响应示例 | `{"ollama": {...}, "model": {...}, "knowledge": {...}, "sessions": 0, "version": "1.0.0.1-Beta"}` |
 | 可能的 HTTP 状态码 | 200, 401 |
-| 可能的错误响应 | `401` — 未登录 |
+| 可能的错误响应 | `401` — 未提供有效 JWT、API Key，且不满足允许的 localhost 跳过条件 |
 | 是否使用 SSE | 否 |
 | SSE 响应头 | 无 |
 | 是否访问数据库 | 是（查询文档统计和设置） |
@@ -1460,20 +1460,20 @@
 | Depends 依赖 | 无（通过 APIKeyMiddleware 鉴权，request.state.user 由中间件设置，无显式 Depends） |
 | 请求 Content-Type | 无 |
 | Path 参数 | 无 |
-| Query 参数 | `since: float (可选, 默认0, Unix 时间戳)`, `limit: int (可选, 默认100)` |
+| Query 参数 | `since: float (可选, 默认0, Unix 时间戳)`, `limit: int (可选, 默认100)`, `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | 无 |
 | Form 参数 | 无 |
 | 上传文件参数 | 无 |
 | 成功响应示例 | `{"logs": [...]}` |
 | 可能的 HTTP 状态码 | 200, 401 |
-| 可能的错误响应 | `401` — 未登录 |
+| 可能的错误响应 | `401` — 未提供有效 JWT、API Key，且不满足允许的 localhost 跳过条件 |
 | 是否使用 SSE | 否 |
 | SSE 响应头 | 无 |
 | 是否访问数据库 | 否 |
 | 是否访问文件系统 | 否 |
 | 是否调用 Agent | 否 |
-| 当前安全注意事项 | 可能暴露系统内部状态和错误信息；任何登录用户可访问 |
+| 当前安全注意事项 | 可能暴露系统内部状态和错误信息；任何通过中间件的身份，包括 JWT 用户、API Key service/admin 和配置允许的 localhost/admin可访问 |
 | 后续建议对应的 C# Endpoint 名称 | `DebugController.Logs` |
 
 ### 42. GET /api/debug/agent-state — Agent 状态
@@ -1492,14 +1492,14 @@
 | Depends 依赖 | 无（通过 APIKeyMiddleware 鉴权，request.state.user 由中间件设置，无显式 Depends） |
 | 请求 Content-Type | 无 |
 | Path 参数 | 无 |
-| Query 参数 | `session_id: str (可选)` |
+| Query 参数 | `session_id: str (可选)`, `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | 无 |
 | Form 参数 | 无 |
 | 上传文件参数 | 无 |
 | 成功响应示例 | `{"session_id": "...", "memory_size": N, "messages": [...]}` |
 | 可能的 HTTP 状态码 | 200, 401 |
-| 可能的错误响应 | `401` — 未登录 |
+| 可能的错误响应 | `401` — 未提供有效 JWT、API Key，且不满足允许的 localhost 跳过条件 |
 | 是否使用 SSE | 否 |
 | SSE 响应头 | 无 |
 | 是否访问数据库 | 否 |
@@ -1524,14 +1524,14 @@
 | Depends 依赖 | 无（通过 APIKeyMiddleware 鉴权，request.state.user 由中间件设置，无显式 Depends） |
 | 请求 Content-Type | 无 |
 | Path 参数 | 无 |
-| Query 参数 | 无 |
+| Query 参数 | `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | 无 |
 | Form 参数 | 无 |
 | 上传文件参数 | 无 |
 | 成功响应示例 | `{"servers": [...], "error": "..."}` |
 | 可能的 HTTP 状态码 | 200, 401 |
-| 可能的错误响应 | `401` — 未登录 |
+| 可能的错误响应 | `401` — 未提供有效 JWT、API Key，且不满足允许的 localhost 跳过条件 |
 | 是否使用 SSE | 否 |
 | SSE 响应头 | 无 |
 | 是否访问数据库 | 否 |
@@ -1556,14 +1556,14 @@
 | Depends 依赖 | 无（通过 APIKeyMiddleware 鉴权，request.state.user 由中间件设置，无显式 Depends） |
 | 请求 Content-Type | 无 |
 | Path 参数 | 无 |
-| Query 参数 | 无 |
+| Query 参数 | `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | 无 |
 | Form 参数 | 无 |
 | 上传文件参数 | 无 |
 | 成功响应示例 | `{"connected": [...], "error": "..."}` |
 | 可能的 HTTP 状态码 | 200, 401 |
-| 可能的错误响应 | `401` — 未登录 |
+| 可能的错误响应 | `401` — 未提供有效 JWT、API Key，且不满足允许的 localhost 跳过条件 |
 | 是否使用 SSE | 否 |
 | SSE 响应头 | 无 |
 | 是否访问数据库 | 否 |
@@ -1588,14 +1588,14 @@
 | Depends 依赖 | 无（通过 APIKeyMiddleware 鉴权，request.state.user 由中间件设置，无显式 Depends） |
 | 请求 Content-Type | 无 |
 | Path 参数 | 无 |
-| Query 参数 | 无 |
+| Query 参数 | `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | 无 |
 | Form 参数 | 无 |
 | 上传文件参数 | 无 |
 | 成功响应示例 | 与 `POST /api/mcp/reload` 相同 |
 | 可能的 HTTP 状态码 | 200, 401 |
-| 可能的错误响应 | `401` — 未登录 |
+| 可能的错误响应 | `401` — 未提供有效 JWT、API Key，且不满足允许的 localhost 跳过条件 |
 | 是否使用 SSE | 否 |
 | SSE 响应头 | 无 |
 | 是否访问数据库 | 否 |
@@ -1620,20 +1620,20 @@
 | Depends 依赖 | 无（通过 APIKeyMiddleware 鉴权，request.state.user 由中间件设置，无显式 Depends） |
 | 请求 Content-Type | 无 |
 | Path 参数 | 无 |
-| Query 参数 | 无 |
+| Query 参数 | `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | 无 |
 | Form 参数 | 无 |
 | 上传文件参数 | 无 |
 | 成功响应示例 | `{"configs": [...]}` |
 | 可能的 HTTP 状态码 | 200, 401 |
-| 可能的错误响应 | `401` — 未登录 |
+| 可能的错误响应 | `401` — 未提供有效 JWT、API Key，且不满足允许的 localhost 跳过条件 |
 | 是否使用 SSE | 否 |
 | SSE 响应头 | 无 |
 | 是否访问数据库 | 是（`db.list_db_configs()`） |
 | 是否访问文件系统 | 否 |
 | 是否调用 Agent | 否 |
-| 当前安全注意事项 | **任何登录用户可查看所有数据库配置** — 含 `password_encrypted` 字段（未在列表接口中过滤），无管理员限制 |
+| 当前安全注意事项 | **任何通过中间件的身份，包括 JWT 用户、API Key service/admin 和配置允许的 localhost/admin可查看所有数据库配置** — 含 `password_encrypted` 字段（未在列表接口中过滤），无管理员限制 |
 | 后续建议对应的 C# Endpoint 名称 | `DatabaseConfigController.List` |
 
 ### 47. POST /api/database/configs — 创建数据库配置
@@ -1652,7 +1652,7 @@
 | Depends 依赖 | 无（通过 APIKeyMiddleware 鉴权，request.state.user 由中间件设置，无显式 Depends） |
 | 请求 Content-Type | `application/json` |
 | Path 参数 | 无 |
-| Query 参数 | 无 |
+| Query 参数 | `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | `{"name": "...", "db_type": "mysql|postgresql", "host": "...", "port": 3306, "database_name": "...", "username": "...", "password": "..."}` |
 | Form 参数 | 无 |
@@ -1665,7 +1665,7 @@
 | 是否访问数据库 | 是（`db.create_db_config()`） |
 | 是否访问文件系统 | 否 |
 | 是否调用 Agent | 否 |
-| 当前安全注意事项 | **任何登录用户可创建数据库配置** — 无管理员限制；密码使用基于机器名的 Fernet 加密存储 |
+| 当前安全注意事项 | **任何通过中间件的身份，包括 JWT 用户、API Key service/admin 和配置允许的 localhost/admin可创建数据库配置** — 无管理员限制；密码使用基于机器名的 Fernet 加密存储 |
 | 后续建议对应的 C# Endpoint 名称 | `DatabaseConfigController.Create` |
 
 ### 48. GET /api/database/configs/{config_id} — 获取数据库配置
@@ -1684,7 +1684,7 @@
 | Depends 依赖 | 无（通过 APIKeyMiddleware 鉴权，request.state.user 由中间件设置，无显式 Depends） |
 | 请求 Content-Type | 无 |
 | Path 参数 | `config_id: int` |
-| Query 参数 | 无 |
+| Query 参数 | `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | 无 |
 | Form 参数 | 无 |
@@ -1716,7 +1716,7 @@
 | Depends 依赖 | 无（通过 APIKeyMiddleware 鉴权，request.state.user 由中间件设置，无显式 Depends） |
 | 请求 Content-Type | `application/json` + Path |
 | Path 参数 | `config_id: int` |
-| Query 参数 | 无 |
+| Query 参数 | `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | 可更新字段: `name`, `host`, `port`, `database_name`, `username`, `password` |
 | Form 参数 | 无 |
@@ -1729,7 +1729,7 @@
 | 是否访问数据库 | 是（`db.update_db_config()`） |
 | 是否访问文件系统 | 否 |
 | 是否调用 Agent | 否 |
-| 当前安全注意事项 | 任何登录用户可修改数据库连接参数和密码，无管理员限制 |
+| 当前安全注意事项 | 任何通过中间件的身份，包括 JWT 用户、API Key service/admin 和配置允许的 localhost/admin可修改数据库连接参数和密码，无管理员限制 |
 | 后续建议对应的 C# Endpoint 名称 | `DatabaseConfigController.Update` |
 
 ### 50. DELETE /api/database/configs/{config_id} — 删除数据库配置
@@ -1748,20 +1748,20 @@
 | Depends 依赖 | 无（通过 APIKeyMiddleware 鉴权，request.state.user 由中间件设置，无显式 Depends） |
 | 请求 Content-Type | 无 |
 | Path 参数 | `config_id: int` |
-| Query 参数 | 无 |
+| Query 参数 | `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | 无 |
 | Form 参数 | 无 |
 | 上传文件参数 | 无 |
 | 成功响应示例 | `{"status": "ok"}` |
 | 可能的 HTTP 状态码 | 200, 401 |
-| 可能的错误响应 | `401` — 未登录 |
+| 可能的错误响应 | `401` — 未提供有效 JWT、API Key，且不满足允许的 localhost 跳过条件 |
 | 是否使用 SSE | 否 |
 | SSE 响应头 | 无 |
 | 是否访问数据库 | 是（`db.delete_db_config()`） |
 | 是否访问文件系统 | 否 |
 | 是否调用 Agent | 否 |
-| 当前安全注意事项 | 任何登录用户可删除数据库配置，无管理员限制 |
+| 当前安全注意事项 | 任何通过中间件的身份，包括 JWT 用户、API Key service/admin 和配置允许的 localhost/admin可删除数据库配置，无管理员限制 |
 | 后续建议对应的 C# Endpoint 名称 | `DatabaseConfigController.Delete` |
 
 ### 51. POST /api/database/configs/{config_id}/test — 测试连接
@@ -1780,7 +1780,7 @@
 | Depends 依赖 | 无（通过 APIKeyMiddleware 鉴权，request.state.user 由中间件设置，无显式 Depends） |
 | 请求 Content-Type | 无 |
 | Path 参数 | `config_id: int` |
-| Query 参数 | 无 |
+| Query 参数 | `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | 无 |
 | Form 参数 | 无 |
@@ -1793,7 +1793,7 @@
 | 是否访问数据库 | 是（建立测试数据库连接） |
 | 是否访问文件系统 | 否 |
 | 是否调用 Agent | 否 |
-| 当前安全注意事项 | 任何登录用户可测试任意数据库配置的连接 |
+| 当前安全注意事项 | 任何通过中间件的身份，包括 JWT 用户、API Key service/admin 和配置允许的 localhost/admin可测试任意数据库配置的连接 |
 | 后续建议对应的 C# Endpoint 名称 | `DatabaseConfigController.TestConnection` |
 
 ### 52. POST /api/database/configs/{config_id}/scan — 扫描表元数据
@@ -1812,7 +1812,7 @@
 | Depends 依赖 | 无（通过 APIKeyMiddleware 鉴权，request.state.user 由中间件设置，无显式 Depends） |
 | 请求 Content-Type | 无 |
 | Path 参数 | `config_id: int` |
-| Query 参数 | 无 |
+| Query 参数 | `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | 无 |
 | Form 参数 | 无 |
@@ -1825,7 +1825,7 @@
 | 是否访问数据库 | 是（连接到外部数据库，扫描所有表的列、主键、外键和行数） |
 | 是否访问文件系统 | 否 |
 | 是否调用 Agent | 否 |
-| 当前安全注意事项 | 任何登录用户可触发扫描外部数据库，可能泄露数据库结构信息 |
+| 当前安全注意事项 | 任何通过中间件的身份，包括 JWT 用户、API Key service/admin 和配置允许的 localhost/admin可触发扫描外部数据库，可能泄露数据库结构信息 |
 | 后续建议对应的 C# Endpoint 名称 | `DatabaseConfigController.ScanMetadata` |
 
 ### 53. GET /api/database/configs/{config_id}/metadata — 获取表元数据
@@ -1844,20 +1844,20 @@
 | Depends 依赖 | 无（通过 APIKeyMiddleware 鉴权，request.state.user 由中间件设置，无显式 Depends） |
 | 请求 Content-Type | 无 |
 | Path 参数 | `config_id: int` |
-| Query 参数 | 无 |
+| Query 参数 | `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | 无 |
 | Form 参数 | 无 |
 | 上传文件参数 | 无 |
 | 成功响应示例 | `{"metadata": [...]}` |
 | 可能的 HTTP 状态码 | 200, 401 |
-| 可能的错误响应 | `401` — 未登录 |
+| 可能的错误响应 | `401` — 未提供有效 JWT、API Key，且不满足允许的 localhost 跳过条件 |
 | 是否使用 SSE | 否 |
 | SSE 响应头 | 无 |
 | 是否访问数据库 | 是（查询表元数据） |
 | 是否访问文件系统 | 否 |
 | 是否调用 Agent | 否 |
-| 当前安全注意事项 | 任何登录用户可查看数据库表结构元数据 |
+| 当前安全注意事项 | 任何通过中间件的身份，包括 JWT 用户、API Key service/admin 和配置允许的 localhost/admin可查看数据库表结构元数据 |
 | 后续建议对应的 C# Endpoint 名称 | `DatabaseConfigController.GetMetadata` |
 
 ### 54. PUT /api/database/metadata/{meta_id} — 更新表问答设置
@@ -1876,20 +1876,20 @@
 | Depends 依赖 | 无（通过 APIKeyMiddleware 鉴权，request.state.user 由中间件设置，无显式 Depends） |
 | 请求 Content-Type | `application/json` + Path |
 | Path 参数 | `meta_id: int` |
-| Query 参数 | 无 |
+| Query 参数 | `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | `{"qa_enabled": 1, "business_context": "..."}` |
 | Form 参数 | 无 |
 | 上传文件参数 | 无 |
 | 成功响应示例 | `{"status": "ok"}` |
 | 可能的 HTTP 状态码 | 200, 401 |
-| 可能的错误响应 | `401` — 未登录 |
+| 可能的错误响应 | `401` — 未提供有效 JWT、API Key，且不满足允许的 localhost 跳过条件 |
 | 是否使用 SSE | 否 |
 | SSE 响应头 | 无 |
 | 是否访问数据库 | 是（`db.update_table_qa()`） |
 | 是否访问文件系统 | 否 |
 | 是否调用 Agent | 否 |
-| 当前安全注意事项 | 任何登录用户可修改表问答配置 |
+| 当前安全注意事项 | 任何通过中间件的身份，包括 JWT 用户、API Key service/admin 和配置允许的 localhost/admin可修改表问答配置 |
 | 后续建议对应的 C# Endpoint 名称 | `DatabaseConfigController.UpdateTableQA` |
 
 ### 55. POST /api/smart-query — 智能问数
@@ -1908,20 +1908,20 @@
 | Depends 依赖 | 无（通过 APIKeyMiddleware 鉴权，request.state.user 由中间件设置，无显式 Depends） |
 | 请求 Content-Type | `application/json` |
 | Path 参数 | 无 |
-| Query 参数 | 无 |
+| Query 参数 | `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | `{"query": "string", "config_id": int}` |
 | Form 参数 | 无 |
 | 上传文件参数 | 无 |
 | 成功响应示例 | `{"result": {...}}` |
 | 可能的 HTTP 状态码 | 200, 400, 401 |
-| 可能的错误响应 | `400` — 缺少参数；`401` — 未登录 |
+| 可能的错误响应 | `400` — 缺少参数；`401` — 未提供有效 JWT、API Key，且不满足允许的 localhost 跳过条件 |
 | 是否使用 SSE | 否 |
 | SSE 响应头 | 无 |
 | 是否访问数据库 | 是（通过 `smart_query_service` 查询外部数据库） |
 | 是否访问文件系统 | 否 |
 | 是否调用 Agent | 是（使用 LLM 进行 NL2SQL 转换和执行） |
-| 当前安全注意事项 | 任何登录用户可使用任意数据库配置执行智能查询 |
+| 当前安全注意事项 | 任何通过中间件的身份，包括 JWT 用户、API Key service/admin 和配置允许的 localhost/admin可使用任意数据库配置执行智能查询 |
 | 后续建议对应的 C# Endpoint 名称 | `SmartQueryController.Query` |
 
 ### 56. POST /api/smart-query/with-steps — 智能问数（带步骤）
@@ -1940,20 +1940,20 @@
 | Depends 依赖 | 无（通过 APIKeyMiddleware 鉴权，request.state.user 由中间件设置，无显式 Depends） |
 | 请求 Content-Type | `application/json` |
 | Path 参数 | 无 |
-| Query 参数 | 无 |
+| Query 参数 | `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | `{"query": "string", "config_id": int}` |
 | Form 参数 | 无 |
 | 上传文件参数 | 无 |
 | 成功响应示例 | `{"steps": [...], "result": {...}, "error": "..."}` |
 | 可能的 HTTP 状态码 | 200, 400, 401 |
-| 可能的错误响应 | `400` — 缺少参数；`401` — 未登录 |
+| 可能的错误响应 | `400` — 缺少参数；`401` — 未提供有效 JWT、API Key，且不满足允许的 localhost 跳过条件 |
 | 是否使用 SSE | 否 |
 | SSE 响应头 | 无 |
 | 是否访问数据库 | 是（通过 `smart_query_service` 查询外部数据库） |
 | 是否访问文件系统 | 否 |
 | 是否调用 Agent | 是（使用 LLM 进行 NL2SQL 转换和执行） |
-| 当前安全注意事项 | 任何登录用户可使用任意数据库配置执行智能查询 |
+| 当前安全注意事项 | 任何通过中间件的身份，包括 JWT 用户、API Key service/admin 和配置允许的 localhost/admin可使用任意数据库配置执行智能查询 |
 | 后续建议对应的 C# Endpoint 名称 | `SmartQueryController.QueryWithSteps` |
 
 ### 57. POST /api/smart-query/stream — 流式智能问数
@@ -1972,20 +1972,20 @@
 | Depends 依赖 | 无（通过 APIKeyMiddleware 鉴权，request.state.user 由中间件设置，无显式 Depends） |
 | 请求 Content-Type | `application/json` |
 | Path 参数 | 无 |
-| Query 参数 | 无 |
+| Query 参数 | `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | `{"query": "string", "config_id": int}` |
 | Form 参数 | 无 |
 | 上传文件参数 | 无 |
 | 成功响应示例 | SSE 流，每个事件 `data: {json}\n\n`，事件格式: `{"type": "step|result|error", ...}` |
 | 可能的 HTTP 状态码 | 200, 400, 401 |
-| 可能的错误响应 | `400` — 缺少参数；`401` — 未登录 |
+| 可能的错误响应 | `400` — 缺少参数；`401` — 未提供有效 JWT、API Key，且不满足允许的 localhost 跳过条件 |
 | 是否使用 SSE | 是，`media_type="text/event-stream"` |
 | SSE 响应头 | 无 |
 | 是否访问数据库 | 是（通过 `smart_query_service` 查询外部数据库） |
 | 是否访问文件系统 | 否 |
 | 是否调用 Agent | 是（使用 LLM 进行 NL2SQL 转换和执行） |
-| 当前安全注意事项 | 任何登录用户可使用任意数据库配置执行流式智能查询 |
+| 当前安全注意事项 | 任何通过中间件的身份，包括 JWT 用户、API Key service/admin 和配置允许的 localhost/admin可使用任意数据库配置执行流式智能查询 |
 | 后续建议对应的 C# Endpoint 名称 | `SmartQueryController.QueryStream` |
 
 ### 58. GET /api/command/status — 系统状态概览
@@ -2004,14 +2004,14 @@
 | Depends 依赖 | 无（通过 APIKeyMiddleware 鉴权，request.state.user 由中间件设置，无显式 Depends） |
 | 请求 Content-Type | 无 |
 | Path 参数 | 无 |
-| Query 参数 | 无 |
+| Query 参数 | `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | 无 |
 | Form 参数 | 无 |
 | 上传文件参数 | 无 |
 | 成功响应示例 | `{"text": "━━━ 科吉系统状态 ...\n模型: ...\n工具总数: N\n最大工具轮次: N"}` |
 | 可能的 HTTP 状态码 | 200, 401 |
-| 可能的错误响应 | `401` — 未登录 |
+| 可能的错误响应 | `401` — 未提供有效 JWT、API Key，且不满足允许的 localhost 跳过条件 |
 | 是否使用 SSE | 否 |
 | SSE 响应头 | 无 |
 | 是否访问数据库 | 否 |
@@ -2036,14 +2036,14 @@
 | Depends 依赖 | 无（通过 APIKeyMiddleware 鉴权，request.state.user 由中间件设置，无显式 Depends） |
 | 请求 Content-Type | 无 |
 | Path 参数 | 无 |
-| Query 参数 | 无 |
+| Query 参数 | `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | 无 |
 | Form 参数 | 无 |
 | 上传文件参数 | 无 |
 | 成功响应示例 | `{"text": "自检报告文本..."}` |
 | 可能的 HTTP 状态码 | 200, 401 |
-| 可能的错误响应 | `401` — 未登录 |
+| 可能的错误响应 | `401` — 未提供有效 JWT、API Key，且不满足允许的 localhost 跳过条件 |
 | 是否使用 SSE | 否 |
 | SSE 响应头 | 无 |
 | 是否访问数据库 | 否 |
@@ -2068,14 +2068,14 @@
 | Depends 依赖 | 无（通过 APIKeyMiddleware 鉴权，request.state.user 由中间件设置，无显式 Depends） |
 | 请求 Content-Type | 无 |
 | Path 参数 | 无 |
-| Query 参数 | 无 |
+| Query 参数 | `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | 无 |
 | Form 参数 | 无 |
 | 上传文件参数 | 无 |
 | 成功响应示例 | `{"text": "━━━ 会话统计 ...\n总会话数: N\nmax_tool_rounds: N\nProvider: ..."}` |
 | 可能的 HTTP 状态码 | 200, 401 |
-| 可能的错误响应 | `401` — 未登录 |
+| 可能的错误响应 | `401` — 未提供有效 JWT、API Key，且不满足允许的 localhost 跳过条件 |
 | 是否使用 SSE | 否 |
 | SSE 响应头 | 无 |
 | 是否访问数据库 | 否 |
@@ -2100,14 +2100,14 @@
 | Depends 依赖 | 无（通过 APIKeyMiddleware 鉴权，request.state.user 由中间件设置，无显式 Depends） |
 | 请求 Content-Type | 无 |
 | Path 参数 | 无 |
-| Query 参数 | 无 |
+| Query 参数 | `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | 无 |
 | Form 参数 | 无 |
 | 上传文件参数 | 无 |
 | 成功响应示例 | `{"text": "━━━ 可用工具 (N) ─────\n\n内置工具:\n  - exec\n..."}` |
 | 可能的 HTTP 状态码 | 200, 401 |
-| 可能的错误响应 | `401` — 未登录 |
+| 可能的错误响应 | `401` — 未提供有效 JWT、API Key，且不满足允许的 localhost 跳过条件 |
 | 是否使用 SSE | 否 |
 | SSE 响应头 | 无 |
 | 是否访问数据库 | 否 |
@@ -2132,14 +2132,14 @@
 | Depends 依赖 | 无（通过 APIKeyMiddleware 鉴权，request.state.user 由中间件设置，无显式 Depends） |
 | 请求 Content-Type | 无 |
 | Path 参数 | 无 |
-| Query 参数 | 无 |
+| Query 参数 | `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | 无 |
 | Form 参数 | 无 |
 | 上传文件参数 | 无 |
 | 成功响应示例 | `{"text": "━━━ 知识库统计 ...\n已索引文档: N\n向量块数: N\n最近文档:\n  - ..."}` |
 | 可能的 HTTP 状态码 | 200, 401 |
-| 可能的错误响应 | `401` — 未登录 |
+| 可能的错误响应 | `401` — 未提供有效 JWT、API Key，且不满足允许的 localhost 跳过条件 |
 | 是否使用 SSE | 否 |
 | SSE 响应头 | 无 |
 | 是否访问数据库 | 是（查询文档列表和向量库计数） |
@@ -2164,14 +2164,14 @@
 | Depends 依赖 | 无（通过 APIKeyMiddleware 鉴权，request.state.user 由中间件设置，无显式 Depends） |
 | 请求 Content-Type | `application/json` |
 | Path 参数 | 无 |
-| Query 参数 | 无 |
+| Query 参数 | `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | `{"session_id": "string (必填)"}` |
 | Form 参数 | 无 |
 | 上传文件参数 | 无 |
 | 成功响应示例 | `{"text": "...", "new_session_id": "..."}` |
 | 可能的 HTTP 状态码 | 200, 401 |
-| 可能的错误响应 | `401` — 未登录 |
+| 可能的错误响应 | `401` — 未提供有效 JWT、API Key，且不满足允许的 localhost 跳过条件 |
 | 是否使用 SSE | 否 |
 | SSE 响应头 | 无 |
 | 是否访问数据库 | 否 |
@@ -2196,14 +2196,14 @@
 | Depends 依赖 | 无（通过 APIKeyMiddleware 鉴权，request.state.user 由中间件设置，无显式 Depends） |
 | 请求 Content-Type | 无 |
 | Path 参数 | 无 |
-| Query 参数 | 无 |
+| Query 参数 | `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | 无 |
 | Form 参数 | 无 |
 | 上传文件参数 | 无 |
 | 成功响应示例 | `{"total": {"conversations": N, "prompt_tokens": N, "completion_tokens": N, "total_tokens": N, "cached_tokens": N, "cost": N}, "conversations": [...], "model": "...", "is_local": true}` |
 | 可能的 HTTP 状态码 | 200, 401 |
-| 可能的错误响应 | `401` — 未登录 |
+| 可能的错误响应 | `401` — 未提供有效 JWT、API Key，且不满足允许的 localhost 跳过条件 |
 | 是否使用 SSE | 否 |
 | SSE 响应头 | 无 |
 | 是否访问数据库 | 是（查询会话 LLM usage 数据） |
@@ -2228,14 +2228,14 @@
 | Depends 依赖 | 无（通过 APIKeyMiddleware 鉴权，request.state.user 由中间件设置，无显式 Depends） |
 | 请求 Content-Type | 无 |
 | Path 参数 | 无 |
-| Query 参数 | 无 |
+| Query 参数 | `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | 无 |
 | Form 参数 | 无 |
 | 上传文件参数 | 无 |
 | 成功响应示例 | `{"skills": [{"name": "...", "description": "...", "version": "...", "category": "...", "instructions": "...", "active": false}]}` |
 | 可能的 HTTP 状态码 | 200, 401 |
-| 可能的错误响应 | `401` — 未登录 |
+| 可能的错误响应 | `401` — 未提供有效 JWT、API Key，且不满足允许的 localhost 跳过条件 |
 | 是否使用 SSE | 否 |
 | SSE 响应头 | 无 |
 | 是否访问数据库 | 否 |
@@ -2260,14 +2260,14 @@
 | Depends 依赖 | 无（通过 APIKeyMiddleware 鉴权，request.state.user 由中间件设置，无显式 Depends） |
 | 请求 Content-Type | 无 |
 | Path 参数 | `name: str` |
-| Query 参数 | 无 |
+| Query 参数 | `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | 无 |
 | Form 参数 | 无 |
 | 上传文件参数 | 无 |
 | 成功响应示例 | `{"name": "...", "description": "...", "version": "...", "category": "...", "instructions": "..."}` |
 | 可能的 HTTP 状态码 | 200, 401, 404 |
-| 可能的错误响应 | `404` — 技能不存在；`401` — 未登录 |
+| 可能的错误响应 | `404` — 技能不存在；`401` — 未提供有效 JWT、API Key，且不满足允许的 localhost 跳过条件 |
 | 是否使用 SSE | 否 |
 | SSE 响应头 | 无 |
 | 是否访问数据库 | 否 |
@@ -2292,20 +2292,20 @@
 | Depends 依赖 | 无（通过 APIKeyMiddleware 鉴权，request.state.user 由中间件设置，无显式 Depends） |
 | 请求 Content-Type | `application/json` |
 | Path 参数 | 无 |
-| Query 参数 | 无 |
+| Query 参数 | `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | `{"session_id": "string (必填)", "skill_name": "string (必填)"}` |
 | Form 参数 | 无 |
 | 上传文件参数 | 无 |
 | 成功响应示例 | `{"status": "ok", "message": "已激活技能: skill_name", "active_skills": [...]}` |
 | 可能的 HTTP 状态码 | 200, 401 |
-| 可能的错误响应 | `401` — 未登录 |
+| 可能的错误响应 | `401` — 未提供有效 JWT、API Key，且不满足允许的 localhost 跳过条件 |
 | 是否使用 SSE | 否 |
 | SSE 响应头 | 无 |
 | 是否访问数据库 | 否 |
 | 是否访问文件系统 | 否 |
 | 是否调用 Agent | 是（修改 adapter 的 `_active_skills`） |
-| 当前安全注意事项 | 任何登录用户可为任意 session_id 激活技能（无 session 所有权检查） |
+| 当前安全注意事项 | 任何通过中间件的身份，包括 JWT 用户、API Key service/admin 和配置允许的 localhost/admin可为任意 session_id 激活技能（无 session 所有权检查） |
 | 后续建议对应的 C# Endpoint 名称 | `SkillsController.Activate` |
 
 ### 68. POST /api/skills/active — 查询已激活技能
@@ -2324,14 +2324,14 @@
 | Depends 依赖 | 无（通过 APIKeyMiddleware 鉴权，request.state.user 由中间件设置，无显式 Depends） |
 | 请求 Content-Type | `application/json` |
 | Path 参数 | 无 |
-| Query 参数 | 无 |
+| Query 参数 | `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | `{"session_id": "string (必填)"}` |
 | Form 参数 | 无 |
 | 上传文件参数 | 无 |
 | 成功响应示例 | `{"active_skills": [...]}` |
 | 可能的 HTTP 状态码 | 200, 401 |
-| 可能的错误响应 | `401` — 未登录 |
+| 可能的错误响应 | `401` — 未提供有效 JWT、API Key，且不满足允许的 localhost 跳过条件 |
 | 是否使用 SSE | 否 |
 | SSE 响应头 | 无 |
 | 是否访问数据库 | 否 |
@@ -2356,14 +2356,14 @@
 | Depends 依赖 | 无（通过 APIKeyMiddleware 鉴权，request.state.user 由中间件设置，无显式 Depends） |
 | 请求 Content-Type | `application/json` |
 | Path 参数 | 无 |
-| Query 参数 | 无 |
+| Query 参数 | `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | `{"session_id": "string (必填)", "skill_name": "string (可选, 不指定则卸载全部)"}` |
 | Form 参数 | 无 |
 | 上传文件参数 | 无 |
 | 成功响应示例 | `{"status": "ok", "message": "已卸载技能: skill_name"}` |
 | 可能的 HTTP 状态码 | 200, 401 |
-| 可能的错误响应 | `401` — 未登录 |
+| 可能的错误响应 | `401` — 未提供有效 JWT、API Key，且不满足允许的 localhost 跳过条件 |
 | 是否使用 SSE | 否 |
 | SSE 响应头 | 无 |
 | 是否访问数据库 | 否 |
@@ -2388,14 +2388,14 @@
 | Depends 依赖 | 无（通过 APIKeyMiddleware 鉴权，request.state.user 由中间件设置，无显式 Depends） |
 | 请求 Content-Type | `application/json` |
 | Path 参数 | 无 |
-| Query 参数 | 无 |
+| Query 参数 | `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | `{"session_id": "string (必填)", "skills": ["string", ...]}` |
 | Form 参数 | 无 |
 | 上传文件参数 | 无 |
 | 成功响应示例 | `{"status": "ok", "active_skills": [...]}` |
 | 可能的 HTTP 状态码 | 200, 401 |
-| 可能的错误响应 | `401` — 未登录 |
+| 可能的错误响应 | `401` — 未提供有效 JWT、API Key，且不满足允许的 localhost 跳过条件 |
 | 是否使用 SSE | 否 |
 | SSE 响应头 | 无 |
 | 是否访问数据库 | 否 |
@@ -2420,14 +2420,14 @@
 | Depends 依赖 | 无（通过 APIKeyMiddleware 鉴权，request.state.user 由中间件设置，无显式 Depends） |
 | 请求 Content-Type | 无 |
 | Path 参数 | 无 |
-| Query 参数 | `days: int (可选, 默认7, 范围1-365)` |
+| Query 参数 | `days: int (可选, 默认7, 范围1-365)`, `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | 无 |
 | Form 参数 | 无 |
 | 上传文件参数 | 无 |
 | 成功响应示例 | 工具调用统计数据（按工具名汇总） |
 | 可能的 HTTP 状态码 | 200, 401 |
-| 可能的错误响应 | `401` — 未登录 |
+| 可能的错误响应 | `401` — 未提供有效 JWT、API Key，且不满足允许的 localhost 跳过条件 |
 | 是否使用 SSE | 否 |
 | SSE 响应头 | 无 |
 | 是否访问数据库 | 是（`db.get_tool_stats()`） |
@@ -2452,14 +2452,14 @@
 | Depends 依赖 | 无（通过 APIKeyMiddleware 鉴权，request.state.user 由中间件设置，无显式 Depends） |
 | 请求 Content-Type | 无 |
 | Path 参数 | 无 |
-| Query 参数 | 无 |
+| Query 参数 | `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | 无 |
 | Form 参数 | 无 |
 | 上传文件参数 | 无 |
 | 成功响应示例 | 今日、本月、全部的成本汇总 |
 | 可能的 HTTP 状态码 | 200, 401 |
-| 可能的错误响应 | `401` — 未登录 |
+| 可能的错误响应 | `401` — 未提供有效 JWT、API Key，且不满足允许的 localhost 跳过条件 |
 | 是否使用 SSE | 否 |
 | SSE 响应头 | 无 |
 | 是否访问数据库 | 是（`db.get_cost_summary()`） |
@@ -2484,14 +2484,14 @@
 | Depends 依赖 | 无（通过 APIKeyMiddleware 鉴权，request.state.user 由中间件设置，无显式 Depends） |
 | 请求 Content-Type | 无 |
 | Path 参数 | `session_id: str` |
-| Query 参数 | 无 |
+| Query 参数 | `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | 无 |
 | Form 参数 | 无 |
 | 上传文件参数 | 无 |
 | 成功响应示例 | 单个会话的成本数据 |
 | 可能的 HTTP 状态码 | 200, 401 |
-| 可能的错误响应 | `401` — 未登录 |
+| 可能的错误响应 | `401` — 未提供有效 JWT、API Key，且不满足允许的 localhost 跳过条件 |
 | 是否使用 SSE | 否 |
 | SSE 响应头 | 无 |
 | 是否访问数据库 | 是（`db.get_session_cost()`） |
@@ -2548,7 +2548,7 @@
 | Depends 依赖 | `user: CurrentUser = Depends(get_current_user)` |
 | 请求 Content-Type | 无 |
 | Path 参数 | 无 |
-| Query 参数 | 无 |
+| Query 参数 | `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | 无 |
 | Form 参数 | 无 |
@@ -2580,7 +2580,7 @@
 | Depends 依赖 | `user: CurrentUser = Depends(require_admin)` |
 | 请求 Content-Type | 无 |
 | Path 参数 | 无 |
-| Query 参数 | 无 |
+| Query 参数 | `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | 无 |
 | Form 参数 | 无 |
@@ -2612,7 +2612,7 @@
 | Depends 依赖 | `user: CurrentUser = Depends(require_admin)` |
 | 请求 Content-Type | `application/json` |
 | Path 参数 | 无 |
-| Query 参数 | 无 |
+| Query 参数 | `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | `{"username": "string (必填, 2-64字符)", "password": "string (必填, 6-128字符)", "role": "member (默认)", "display_name": ""}` |
 | Form 参数 | 无 |
@@ -2644,7 +2644,7 @@
 | Depends 依赖 | `user: CurrentUser = Depends(require_admin)` |
 | 请求 Content-Type | 无 |
 | Path 参数 | `user_id: str` |
-| Query 参数 | 无 |
+| Query 参数 | `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | 无 |
 | Form 参数 | 无 |
@@ -2676,7 +2676,7 @@
 | Depends 依赖 | `user: CurrentUser = Depends(require_admin)` |
 | 请求 Content-Type | `application/json` + Path |
 | Path 参数 | `user_id: str` |
-| Query 参数 | 无 |
+| Query 参数 | `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | `{"display_name": "...", "role": "...", "is_active": true, "password": "..."}` |
 | Form 参数 | 无 |
@@ -2708,7 +2708,7 @@
 | Depends 依赖 | `user: CurrentUser = Depends(require_admin)` |
 | 请求 Content-Type | 无 |
 | Path 参数 | 无 |
-| Query 参数 | `limit: int (默认100, 最大500)`, `user_id: str (可选, 按用户筛选)` |
+| Query 参数 | `limit: int (默认100, 最大500)`, `user_id: str (可选, 按用户筛选)`, `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | 无 |
 | Form 参数 | 无 |
@@ -2740,7 +2740,7 @@
 | Depends 依赖 | `user: CurrentUser = Depends(require_admin)` |
 | 请求 Content-Type | 无 |
 | Path 参数 | `conv_id: str` |
-| Query 参数 | 无 |
+| Query 参数 | `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | 无 |
 | Form 参数 | 无 |
@@ -2804,7 +2804,7 @@
 | Depends 依赖 | `user: CurrentUser = Depends(require_admin)` |
 | 请求 Content-Type | 无 |
 | Path 参数 | 无 |
-| Query 参数 | `event_type: str (可选, tool_call|file_access)`, `limit: int (默认100, 最大500)`, `offset: int (默认0)` |
+| Query 参数 | `event_type: str (可选, tool_call|file_access)`, `limit: int (默认100, 最大500)`, `offset: int (默认0)`, `api_key: string（可选，全局 API Key 认证参数，仅在 auth_mode 允许 API Key 时有效）` |
 | Header 参数 | `Authorization: Bearer <JWT or API Key>`, `X-API-Key: <API Key>` |
 | Body JSON | 无 |
 | Form 参数 | 无 |
@@ -2849,7 +2849,7 @@
 | 是否访问数据库 | 否 |
 | 是否访问文件系统 | 否 |
 | 是否调用 Agent | 否 |
-| 当前安全注意事项 | **完全公开** — 任何未认证用户可以配置企业微信参数（corp_id, agent_id, corp_secret），可能导致企业微信消息劫持 |
+| 当前安全注意事项 | **完全公开** — corp_secret 被保存在全局 WorkBridge / WorkClient 的进程内存中；没有管理员认证；任意匿名请求可以覆盖已有配置 |
 | 后续建议对应的 C# Endpoint 名称 | `WeChatWorkController.Configure` |
 
 ### 85. GET /api/work/status — 企业微信状态
@@ -2913,7 +2913,7 @@
 | 是否访问数据库 | 否 |
 | 是否访问文件系统 | 否 |
 | 是否调用 Agent | 是（解析 XML 后调用 `_bridge.handle_message()`，内部使用 `KejiAdapter.chat()`） |
-| 当前安全注意事项 | 回调处理中不验证消息来源（`FromUserName` 由企业微信保证）；若未配置则返回 `"not configured"` |
+| 当前安全注意事项 | 接口位于公开前缀 /api/work 下，匿名请求可以访问；未验证 msg_signature；未验证 timestamp；未验证 nonce；未实现企业微信消息解密；未实现重放防护；FromUserName、Content、MsgType 等字段均直接来自匿名 XML，不能视为企业微信已保证；合法格式的匿名 XML 可能触发 Agent；XML 解析失败仍返回 HTTP 200 和 ok；未配置桥接时返回 HTTP 200 和 not configured |
 | 后续建议对应的 C# Endpoint 名称 | `WeChatWorkController.Callback` |
 
 ### 87. GET /api/work/callback — 企业微信验证
@@ -2945,7 +2945,7 @@
 | 是否访问数据库 | 否 |
 | 是否访问文件系统 | 否 |
 | 是否调用 Agent | 否 |
-| 当前安全注意事项 | 仅用于企业微信回调 URL 验证，不处理业务逻辑 |
+| 当前安全注意事项 | 接口公开；虽然接收 msg_signature、timestamp、nonce 和 echostr，但未验证任何签名；直接原样返回调用者提交的 echostr；当前不是完整或安全的企业微信回调 URL 验证实现；任意匿名调用者都可以获得其提交的 echostr 响应 |
 | 后续建议对应的 C# Endpoint 名称 | `WeChatWorkController.CallbackVerify` |
 
 ## 接口统计
