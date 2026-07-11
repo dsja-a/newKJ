@@ -1,0 +1,12 @@
+D:\KXA\dotnet\src\Keji.Auditing\bin\Debug\net10.0\Keji.Auditing.deps.json
+D:\KXA\dotnet\src\Keji.Auditing\bin\Debug\net10.0\Keji.Auditing.dll
+D:\KXA\dotnet\src\Keji.Auditing\bin\Debug\net10.0\Keji.Auditing.pdb
+D:\KXA\dotnet\src\Keji.Auditing\obj\Debug\net10.0\Keji.Auditing.GeneratedMSBuildEditorConfig.editorconfig
+D:\KXA\dotnet\src\Keji.Auditing\obj\Debug\net10.0\Keji.Auditing.AssemblyInfoInputs.cache
+D:\KXA\dotnet\src\Keji.Auditing\obj\Debug\net10.0\Keji.Auditing.AssemblyInfo.cs
+D:\KXA\dotnet\src\Keji.Auditing\obj\Debug\net10.0\Keji.Auditing.csproj.CoreCompileInputs.cache
+D:\KXA\dotnet\src\Keji.Auditing\obj\Debug\net10.0\Keji.Auditing.sourcelink.json
+D:\KXA\dotnet\src\Keji.Auditing\obj\Debug\net10.0\Keji.Auditing.dll
+D:\KXA\dotnet\src\Keji.Auditing\obj\Debug\net10.0\refint\Keji.Auditing.dll
+D:\KXA\dotnet\src\Keji.Auditing\obj\Debug\net10.0\Keji.Auditing.pdb
+D:\KXA\dotnet\src\Keji.Auditing\obj\Debug\net10.0\ref\Keji.Auditing.dll

@@ -1,0 +1,16 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\Keji.Contracts\Keji.Contracts.csproj" />
+    <ProjectReference Include="..\Keji.Security\Keji.Security.csproj" />
+    <ProjectReference Include="..\Keji.FileSystem\Keji.FileSystem.csproj" />
+    <ProjectReference Include="..\Keji.Auditing\Keji.Auditing.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+</Project>

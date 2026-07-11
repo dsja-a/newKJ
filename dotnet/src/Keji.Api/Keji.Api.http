@@ -1,0 +1,6 @@
+@Keji.Api_HostAddress = http://localhost:5009
+
+GET {{Keji.Api_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

@@ -2,10 +2,10 @@
 
 | Field | Value |
 |-------|-------|
-| 当前任务 | TASK-000 |
+| 当前任务 | TASK-001 |
 | 当前状态 | done |
 | Python 稳定分支 | main |
 | C# 迁移分支 | rewrite/csharp-core |
 | Python 文件是否保留 | 是 |
-| 当前 C# 完成度 | 0% |
-| 下一任务 | TASK-001 |
+| 当前 C# 完成度 | 5% |
+| 下一任务 | TASK-002 |

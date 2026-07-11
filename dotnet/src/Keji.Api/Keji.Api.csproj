@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.9" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Keji.Contracts\Keji.Contracts.csproj" />
+    <ProjectReference Include="..\Keji.Configuration\Keji.Configuration.csproj" />
+    <ProjectReference Include="..\Keji.Security\Keji.Security.csproj" />
+    <ProjectReference Include="..\Keji.Persistence\Keji.Persistence.csproj" />
+    <ProjectReference Include="..\Keji.FileSystem\Keji.FileSystem.csproj" />
+    <ProjectReference Include="..\Keji.Auditing\Keji.Auditing.csproj" />
+    <ProjectReference Include="..\Keji.Agent\Keji.Agent.csproj" />
+    <ProjectReference Include="..\Keji.Tools\Keji.Tools.csproj" />
+    <ProjectReference Include="..\Keji.SmartQuery\Keji.SmartQuery.csproj" />
+    <ProjectReference Include="..\Keji.Licensing\Keji.Licensing.csproj" />
+  </ItemGroup>
+
+</Project>

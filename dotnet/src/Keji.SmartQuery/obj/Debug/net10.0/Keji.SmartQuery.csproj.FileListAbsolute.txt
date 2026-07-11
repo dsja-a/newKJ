@@ -1,0 +1,12 @@
+D:\KXA\dotnet\src\Keji.SmartQuery\bin\Debug\net10.0\Keji.SmartQuery.deps.json
+D:\KXA\dotnet\src\Keji.SmartQuery\bin\Debug\net10.0\Keji.SmartQuery.dll
+D:\KXA\dotnet\src\Keji.SmartQuery\bin\Debug\net10.0\Keji.SmartQuery.pdb
+D:\KXA\dotnet\src\Keji.SmartQuery\obj\Debug\net10.0\Keji.SmartQuery.GeneratedMSBuildEditorConfig.editorconfig
+D:\KXA\dotnet\src\Keji.SmartQuery\obj\Debug\net10.0\Keji.SmartQuery.AssemblyInfoInputs.cache
+D:\KXA\dotnet\src\Keji.SmartQuery\obj\Debug\net10.0\Keji.SmartQuery.AssemblyInfo.cs
+D:\KXA\dotnet\src\Keji.SmartQuery\obj\Debug\net10.0\Keji.SmartQuery.csproj.CoreCompileInputs.cache
+D:\KXA\dotnet\src\Keji.SmartQuery\obj\Debug\net10.0\Keji.SmartQuery.sourcelink.json
+D:\KXA\dotnet\src\Keji.SmartQuery\obj\Debug\net10.0\Keji.SmartQuery.dll
+D:\KXA\dotnet\src\Keji.SmartQuery\obj\Debug\net10.0\refint\Keji.SmartQuery.dll
+D:\KXA\dotnet\src\Keji.SmartQuery\obj\Debug\net10.0\Keji.SmartQuery.pdb
+D:\KXA\dotnet\src\Keji.SmartQuery\obj\Debug\net10.0\ref\Keji.SmartQuery.dll

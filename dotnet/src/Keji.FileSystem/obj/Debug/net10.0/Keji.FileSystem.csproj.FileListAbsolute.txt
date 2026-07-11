@@ -1,0 +1,12 @@
+D:\KXA\dotnet\src\Keji.FileSystem\bin\Debug\net10.0\Keji.FileSystem.deps.json
+D:\KXA\dotnet\src\Keji.FileSystem\bin\Debug\net10.0\Keji.FileSystem.dll
+D:\KXA\dotnet\src\Keji.FileSystem\bin\Debug\net10.0\Keji.FileSystem.pdb
+D:\KXA\dotnet\src\Keji.FileSystem\obj\Debug\net10.0\Keji.FileSystem.GeneratedMSBuildEditorConfig.editorconfig
+D:\KXA\dotnet\src\Keji.FileSystem\obj\Debug\net10.0\Keji.FileSystem.AssemblyInfoInputs.cache
+D:\KXA\dotnet\src\Keji.FileSystem\obj\Debug\net10.0\Keji.FileSystem.AssemblyInfo.cs
+D:\KXA\dotnet\src\Keji.FileSystem\obj\Debug\net10.0\Keji.FileSystem.csproj.CoreCompileInputs.cache
+D:\KXA\dotnet\src\Keji.FileSystem\obj\Debug\net10.0\Keji.FileSystem.sourcelink.json
+D:\KXA\dotnet\src\Keji.FileSystem\obj\Debug\net10.0\Keji.FileSystem.dll
+D:\KXA\dotnet\src\Keji.FileSystem\obj\Debug\net10.0\refint\Keji.FileSystem.dll
+D:\KXA\dotnet\src\Keji.FileSystem\obj\Debug\net10.0\Keji.FileSystem.pdb
+D:\KXA\dotnet\src\Keji.FileSystem\obj\Debug\net10.0\ref\Keji.FileSystem.dll
