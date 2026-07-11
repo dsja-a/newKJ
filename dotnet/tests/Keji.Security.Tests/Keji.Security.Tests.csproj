@@ -20,6 +20,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Keji.Security\Keji.Security.csproj" />
+    <ProjectReference Include="..\..\src\Keji.Configuration\Keji.Configuration.csproj" />
   </ItemGroup>
 
 </Project>
