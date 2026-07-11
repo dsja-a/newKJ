@@ -50,3 +50,16 @@ Thumbs.db
 
 # One-off scripts (not part of the app)
 reconciliation.py
+
+# .NET
+**/bin/
+**/obj/
+.vs/
+TestResults/
+artifacts/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.nupkg
+*.snupkg
