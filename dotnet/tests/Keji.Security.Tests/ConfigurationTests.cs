@@ -876,33 +876,6 @@ public class ConfigurationTests
     }
 
     [Fact]
-    public void DotEnv_RemoveValue_ReturnsFalseForMissing()
-    {
-        using var td = new TempDir();
-        var s = new DotEnvStore(Path.Combine(td.Path, ".env"));
-        Assert.False(s.RemoveValue("NONEXIST"));
-    }
-
-    [Fact]
-    public async Task DotEnv_RemoveValue_Transactional()
-    {
-        using var td = new TempDir();
-        var p = Path.Combine(td.Path, ".env");
-        File.WriteAllLines(p, new[] { "A=1", "B=2", "C=3" });
-        var s = new DotEnvStore(p);
-
-        Assert.True(s.RemoveValue("B"));
-        Assert.Null(s.GetValue("B"));
-        Assert.Equal("1", s.GetValue("A"));
-        Assert.Equal("3", s.GetValue("C"));
-
-        var reloaded = new DotEnvStore(p);
-        Assert.Null(reloaded.GetValue("B"));
-        Assert.Equal("1", reloaded.GetValue("A"));
-        Assert.Equal("3", reloaded.GetValue("C"));
-    }
-
-    [Fact]
     public void Provider_Deepseek_Correct() { Assert.Equal("DEEPSEEK_API_KEY", ProviderSecretName.GetEnvironmentVariableName("deepseek")); }
     [Fact]
     public void Provider_OpenAI_Correct() { Assert.Equal("OPENAI_API_KEY", ProviderSecretName.GetEnvironmentVariableName("openai")); }
@@ -1049,9 +1022,7 @@ public class ConfigurationTests
         File.WriteAllText(Path.Combine(td.Path, ".env"), "TEST_SECRET=from_dotenv\n");
         File.WriteAllText(Path.Combine(td.Path, "config.yaml"), "security:\n  jwt_secret: ${TEST_SECRET}\n");
 
-        var yamlLoader = new SafeYamlConfigurationLoader();
-        var dotEnv = new DotEnvStore(Path.Combine(td.Path, ".env"));
-        var loader = new KejiConfigurationLoader(yamlLoader, dotEnv);
+        var loader = new KejiConfigurationLoader(new SafeYamlConfigurationLoader());
 
         var result = loader.Load(new KejiConfigurationLoadOptions { ProjectRoot = td.Path, RequireConfigFile = true });
 
@@ -1070,9 +1041,7 @@ public class ConfigurationTests
         Environment.SetEnvironmentVariable(envKey, "from_process");
         try
         {
-            var yamlLoader = new SafeYamlConfigurationLoader();
-            var dotEnv = new DotEnvStore(Path.Combine(td.Path, ".env"));
-            var loader = new KejiConfigurationLoader(yamlLoader, dotEnv);
+            var loader = new KejiConfigurationLoader(new SafeYamlConfigurationLoader());
 
             var result = loader.Load(new KejiConfigurationLoadOptions { ProjectRoot = td.Path, RequireConfigFile = true });
 
@@ -1090,9 +1059,7 @@ public class ConfigurationTests
         using var td = new TempDir();
         File.WriteAllText(Path.Combine(td.Path, "config.yaml"), "key: ${MISSING_VAR}\n");
 
-        var yamlLoader = new SafeYamlConfigurationLoader();
-        var dotEnv = new DotEnvStore(Path.Combine(td.Path, ".env"));
-        var loader = new KejiConfigurationLoader(yamlLoader, dotEnv);
+        var loader = new KejiConfigurationLoader(new SafeYamlConfigurationLoader());
 
         var result = loader.Load(new KejiConfigurationLoadOptions
         {
@@ -1112,9 +1079,7 @@ public class ConfigurationTests
         using var td = new TempDir();
         File.WriteAllText(Path.Combine(td.Path, "config.yaml"), "security:\n  jwt_secret: ${MISSING}\n");
 
-        var yamlLoader = new SafeYamlConfigurationLoader();
-        var dotEnv = new DotEnvStore(Path.Combine(td.Path, ".env"));
-        var loader = new KejiConfigurationLoader(yamlLoader, dotEnv);
+        var loader = new KejiConfigurationLoader(new SafeYamlConfigurationLoader());
 
         var ex = Assert.Throws<KejiConfigurationException>(() =>
             loader.Load(new KejiConfigurationLoadOptions { ProjectRoot = td.Path, RequireConfigFile = true }));
@@ -1129,9 +1094,7 @@ public class ConfigurationTests
         File.WriteAllText(Path.Combine(td.Path, ".env"), "PATH=should_not_leak\n");
         File.WriteAllText(Path.Combine(td.Path, "config.yaml"), "key: value\n");
 
-        var yamlLoader = new SafeYamlConfigurationLoader();
-        var dotEnv = new DotEnvStore(Path.Combine(td.Path, ".env"));
-        var loader = new KejiConfigurationLoader(yamlLoader, dotEnv);
+        var loader = new KejiConfigurationLoader(new SafeYamlConfigurationLoader());
 
         loader.Load(new KejiConfigurationLoadOptions { ProjectRoot = td.Path, RequireConfigFile = true });
 
@@ -1139,56 +1102,91 @@ public class ConfigurationTests
     }
 
     [Fact]
-    public void DI_Registration_WithIllegalDotEnv_RegistrationDoesNotThrow()
+    public void LoaderUsesOptionsPassedToEachCall()
     {
-        using var td = new TempDir();
-        File.WriteAllText(Path.Combine(td.Path, ".env"), "1INVALID=value\n");
+        using var root = new TempDir();
+        var projectA = System.IO.Path.Combine(root.Path, "ProjectA");
+        var projectB = System.IO.Path.Combine(root.Path, "ProjectB");
+        Directory.CreateDirectory(projectA);
+        Directory.CreateDirectory(projectB);
 
-        var services = new ServiceCollection();
-        var ex = Record.Exception(() =>
-            services.AddKejiConfigurationFoundation(o =>
-            {
-                o.ProjectRoot = td.Path;
-                o.RequireConfigFile = false;
-            }));
-        Assert.Null(ex);
+        File.WriteAllText(System.IO.Path.Combine(projectA, ".env"), "TEST_SECRET=secret_a\n");
+        File.WriteAllText(System.IO.Path.Combine(projectA, "config.yaml"), "value: ${TEST_SECRET}\n");
+        File.WriteAllText(System.IO.Path.Combine(projectB, ".env"), "TEST_SECRET=secret_b\n");
+        File.WriteAllText(System.IO.Path.Combine(projectB, "config.yaml"), "value: ${TEST_SECRET}\n");
 
-        var spEx = Record.Exception(() => services.BuildServiceProvider());
-        Assert.Null(spEx);
+        var loader = new KejiConfigurationLoader(new SafeYamlConfigurationLoader());
+
+        var resultA = loader.Load(new KejiConfigurationLoadOptions { ProjectRoot = projectA, RequireConfigFile = true });
+        Assert.Equal("secret_a", resultA.Document.GetRequiredString("value"));
+
+        var resultB = loader.Load(new KejiConfigurationLoadOptions { ProjectRoot = projectB, RequireConfigFile = true });
+        Assert.Equal("secret_b", resultB.Document.GetRequiredString("value"));
     }
 
     [Fact]
-    public void DI_Registration_WithMalformedConfig_RegistrationDoesNotThrow()
+    public void LoaderReadsFreshDotEnvOnEveryLoad()
+    {
+        using var td = new TempDir();
+        var envPath = System.IO.Path.Combine(td.Path, ".env");
+        var configPath = System.IO.Path.Combine(td.Path, "config.yaml");
+
+        File.WriteAllText(envPath, "TEST_SECRET=old_value\n");
+        File.WriteAllText(configPath, "value: ${TEST_SECRET}\n");
+
+        var loader = new KejiConfigurationLoader(new SafeYamlConfigurationLoader());
+        var opts = new KejiConfigurationLoadOptions { ProjectRoot = td.Path, RequireConfigFile = true };
+
+        var result1 = loader.Load(opts);
+        Assert.Equal("old_value", result1.Document.GetRequiredString("value"));
+
+        File.WriteAllText(envPath, "TEST_SECRET=new_value\n");
+
+        var result2 = loader.Load(opts);
+        Assert.Equal("new_value", result2.Document.GetRequiredString("value"));
+    }
+
+    [Fact]
+    public void DI_Lazy_IllegalDotEnv_ResolveLoaderDoesNotThrow_LoadThrows()
+    {
+        using var td = new TempDir();
+        File.WriteAllText(Path.Combine(td.Path, ".env"), "1INVALID=value\n");
+        File.WriteAllText(Path.Combine(td.Path, "config.yaml"), "key: value\n");
+
+        var services = new ServiceCollection();
+        services.AddKejiConfigurationFoundation(o =>
+        {
+            o.ProjectRoot = td.Path;
+            o.RequireConfigFile = false;
+        });
+
+        var sp = services.BuildServiceProvider();
+
+        var loader = sp.GetRequiredService<IKejiConfigurationLoader>();
+
+        Assert.Throws<KejiConfigurationException>(() =>
+            loader.Load(new KejiConfigurationLoadOptions { ProjectRoot = td.Path, RequireConfigFile = false }));
+    }
+
+    [Fact]
+    public void DI_Lazy_MalformedConfig_ResolveLoaderDoesNotThrow_LoadThrows()
     {
         using var td = new TempDir();
         File.WriteAllText(Path.Combine(td.Path, "config.yaml"), "key: value\nunbalanced: [\n");
 
         var services = new ServiceCollection();
-        var ex = Record.Exception(() =>
-            services.AddKejiConfigurationFoundation(o =>
-            {
-                o.ProjectRoot = td.Path;
-                o.RequireConfigFile = false;
-            }));
-        Assert.Null(ex);
-
-        var spEx = Record.Exception(() => services.BuildServiceProvider());
-        Assert.Null(spEx);
-    }
-
-    [Fact]
-    public void FullLoader_DotEnvCreatedOnDemand_NotOnRegistry()
-    {
-        using var td = new TempDir();
-        var services = new ServiceCollection();
         services.AddKejiConfigurationFoundation(o =>
         {
             o.ProjectRoot = td.Path;
-            o.DotEnvFileName = ".nonexistent_env_file";
+            o.RequireConfigFile = false;
         });
+
         var sp = services.BuildServiceProvider();
-        var store = sp.GetRequiredService<IDotEnvStore>();
-        Assert.Null(store.GetValue("ANY"));
+
+        var loader = sp.GetRequiredService<IKejiConfigurationLoader>();
+
+        Assert.Throws<KejiConfigurationException>(() =>
+            loader.Load(new KejiConfigurationLoadOptions { ProjectRoot = td.Path, RequireConfigFile = true }));
     }
 
     [Fact]

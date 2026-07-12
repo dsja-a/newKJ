@@ -179,47 +179,6 @@ public partial class DotEnvStore : IDotEnvStore
         }
     }
 
-    public bool RemoveValue(string key)
-    {
-        _semaphore.Wait();
-
-        try
-        {
-            if (!_keyIndex.TryGetValue(key, out var index))
-                return false;
-
-            var candidateLines = new List<EnvLine>(_lines);
-            var candidateIndex = new Dictionary<string, int>(_keyIndex, StringComparer.OrdinalIgnoreCase);
-
-            candidateLines.RemoveAt(index);
-            candidateIndex.Remove(key);
-
-            var reindexed = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-            for (int i = 0; i < candidateLines.Count; i++)
-            {
-                if (candidateLines[i].Type == LineType.KeyValue)
-                {
-                    reindexed[candidateLines[i].Key!] = i;
-                }
-            }
-
-            PersistCandidateAsync(candidateLines, CancellationToken.None).GetAwaiter().GetResult();
-
-            _lines = candidateLines;
-            _keyIndex = reindexed;
-
-            return true;
-        }
-        catch
-        {
-            return false;
-        }
-        finally
-        {
-            _semaphore.Release();
-        }
-    }
-
     private async Task PersistCandidateAsync(List<EnvLine> candidateLines, CancellationToken cancellationToken)
     {
         long totalByteCount = 0;

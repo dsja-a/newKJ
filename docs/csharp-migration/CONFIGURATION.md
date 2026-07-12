@@ -84,10 +84,13 @@ Both only match exact `${ENV_VAR}` patterns:
 ## `.env` File Handling
 
 ### Python (`core/security/secrets.py`)
-- `load_dotenv_file()`: reads `.env`, only writes to `os.environ` if variable does not already exist
-- `upsert_dotenv_var()`: custom implementation for writing
-- Supports `export KEY=value` format
-- Duplicate keys: last wins
+- `load_dotenv_file()`: custom implementation (not `python-dotenv`)
+- Lines parsed by splitting on first `=` only; no special `export KEY=value` support (`export KEY` is parsed as variable name `export KEY`, not `export` syntax)
+- If the same key appears multiple times in `.env`:
+  - First occurrence that successfully writes to `os.environ` wins
+  - Subsequent same-key lines are skipped because the variable is already set in `os.environ`
+- Process-pre-existing environment variables take priority over all `.env` lines
+- `upsert_dotenv_var()`: custom line-by-line update implementation
 - No file size or line length limits
 
 ### C# (`DotEnvStore`)
@@ -115,7 +118,18 @@ Both only match exact `${ENV_VAR}` patterns:
 8. On success: swaps `_lines` and `_keyIndex` with candidates
 9. On failure: cleans temp file; **both memory state and disk file remain unchanged**
 10. Supports `CancellationToken`
-11. `RemoveValue` follows same transactional pattern
+
+---
+
+## Loader Semantics
+
+### IKejiConfigurationLoader
+- `IKejiConfigurationLoader` does **not** hold a fixed `IDotEnvStore` instance
+- Each `Load(KejiConfigurationLoadOptions options)` call creates a new `DotEnvStore` using `options.ProjectRoot`, `options.DotEnvFileName`, `options.MaxDotEnvFileBytes`, and `options.MaxDotEnvLineLength`
+- A single `IKejiConfigurationLoader` instance can safely load configuration for different `ProjectRoot` values across separate `Load()` calls
+- Each `Load()` call re-reads `.env` from disk; external modifications between calls are picked up
+- DI registration of `IKejiConfigurationLoader` (via `AddKejiConfigurationFoundation()`) performs **no file I/O** — only the `ISafeYamlConfigurationLoader` is injected; `.env` and `config.yaml` are read only within `Load()`
+- The separately registered `IDotEnvStore` service (lazy factory) exists for standalone `.env` operations (e.g., `UpsertAsync`) but is **not** used by the full `IKejiConfigurationLoader`
 
 ---
 
@@ -202,12 +216,13 @@ Method: `AddKejiConfigurationFoundation()`
 
 Registers (all singleton, lazy factories):
 - `KejiConfigurationLoadOptions` (eager, no file I/O)
-- `IDotEnvStore` (lazy factory — file I/O on first resolution)
-- `IEnvironmentValueSource` (lazy)
+- `IDotEnvStore` (lazy factory — file I/O on first resolution; **not** used by `IKejiConfigurationLoader`)
 - `ISafeYamlConfigurationLoader` (eager, no file I/O)
-- `IKejiConfigurationLoader` (lazy)
+- `IKejiConfigurationLoader` (lazy; only injects `ISafeYamlConfigurationLoader`, no file I/O on resolution)
 - `ISecretMasker` (eager, no file I/O)
 
-**Registration phase performs no file I/O.** `.env` is only read when `IDotEnvStore` is first resolved. `config.yaml` is only read when `IKejiConfigurationLoader.Load()` is called.
+**Registration phase performs no file I/O.**
+- `IKejiConfigurationLoader` service resolution performs no file I/O — `.env` only read inside `Load()`, `config.yaml` only read inside `Load()`
+- `IDotEnvStore` (if resolved independently) reads `.env` on first resolution via lazy factory
 
 **No auto-registration of `KejiConfigurationDocument` singleton.** Callers must explicitly call `loader.Load(options)`.

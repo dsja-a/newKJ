@@ -42,8 +42,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IKejiConfigurationLoader>(sp =>
         {
             var yamlLoader = sp.GetRequiredService<ISafeYamlConfigurationLoader>();
-            var dotEnv = sp.GetRequiredService<IDotEnvStore>();
-            return new KejiConfigurationLoader(yamlLoader, dotEnv);
+            return new KejiConfigurationLoader(yamlLoader);
         });
 
         services.AddSingleton<ISecretMasker>(_ => new SecretMasker());

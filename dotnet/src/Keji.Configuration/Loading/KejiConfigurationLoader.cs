@@ -6,12 +6,10 @@ namespace Keji.Configuration.Loading;
 public class KejiConfigurationLoader : IKejiConfigurationLoader
 {
     private readonly ISafeYamlConfigurationLoader _yamlLoader;
-    private readonly IDotEnvStore? _dotEnvStore;
 
-    public KejiConfigurationLoader(ISafeYamlConfigurationLoader yamlLoader, IDotEnvStore? dotEnvStore = null)
+    public KejiConfigurationLoader(ISafeYamlConfigurationLoader yamlLoader)
     {
         _yamlLoader = yamlLoader;
-        _dotEnvStore = dotEnvStore;
     }
 
     public KejiConfigurationLoadResult Load(KejiConfigurationLoadOptions options)
@@ -30,24 +28,14 @@ public class KejiConfigurationLoader : IKejiConfigurationLoader
         return new KejiConfigurationLoadResult(document, resolutionResult.Diagnostics);
     }
 
-    private IEnvironmentValueSource CreateEnvironmentValueSource(KejiConfigurationLoadOptions options)
+    private static IEnvironmentValueSource CreateEnvironmentValueSource(KejiConfigurationLoadOptions options)
     {
-        var sources = new List<IEnvironmentValueSource>
-        {
+        var dotEnvPath = Path.Combine(options.ProjectRoot, options.DotEnvFileName);
+        var store = new DotEnvStore(dotEnvPath, options.MaxDotEnvFileBytes, options.MaxDotEnvLineLength);
+
+        return new CompositeEnvironmentValueSource(
             new ProcessEnvironmentValueSource(),
-        };
-
-        if (_dotEnvStore is not null)
-        {
-            sources.Add(new DotEnvEnvironmentValueSource(_dotEnvStore));
-        }
-        else
-        {
-            var dotEnvPath = Path.Combine(options.ProjectRoot, options.DotEnvFileName);
-            var store = new DotEnvStore(dotEnvPath, options.MaxDotEnvFileBytes, options.MaxDotEnvLineLength);
-            sources.Add(new DotEnvEnvironmentValueSource(store));
-        }
-
-        return new CompositeEnvironmentValueSource(sources);
+            new DotEnvEnvironmentValueSource(store)
+        );
     }
 }
