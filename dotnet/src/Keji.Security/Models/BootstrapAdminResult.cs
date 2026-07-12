@@ -17,7 +17,7 @@ public class BootstrapAdminResult
         => new(true, adminId, "Admin user created.");
 
     public static BootstrapAdminResult AlreadyCreated(string adminId)
-        => new(true, adminId, "Admin user was already created by another process.");
+        => new(false, adminId, "Admin user was already created by another process.");
 
     public static BootstrapAdminResult SkippedExistingUsers()
         => new(false, null, "Users already exist, skipping bootstrap admin creation.");

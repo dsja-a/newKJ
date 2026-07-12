@@ -24,7 +24,7 @@ public class KejiStartupInitializer : IHostedService
     {
         await _dbInitializer.InitializeAsync(cancellationToken);
 
-        if (_securityOptions.Enabled && !string.IsNullOrEmpty(_securityOptions.BootstrapAdmin.Password))
+        if (_securityOptions.Enabled)
         {
             await _bootstrapAdmin.InitializeAsync(cancellationToken);
         }

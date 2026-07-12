@@ -1,6 +1,8 @@
 using System.Net;
+using Keji.Persistence;
 using Keji.Persistence.Repositories;
 using Keji.Security.Auth;
+using Keji.Security.Exceptions;
 using Keji.Security.Models;
 using Keji.Security.Options;
 using Keji.Security.Services;
@@ -10,13 +12,13 @@ namespace Keji.Security.Authentication;
 public class KejiRequestAuthenticator : IRequestAuthenticator
 {
     private readonly KejiSecurityOptions _options;
-    private readonly IAccessTokenService _tokenService;
+    private readonly IAccessTokenService? _tokenService;
     private readonly IUserRepository _userRepository;
     private readonly TimeProvider _timeProvider;
 
     public KejiRequestAuthenticator(
         KejiSecurityOptions options,
-        IAccessTokenService tokenService,
+        IAccessTokenService? tokenService,
         IUserRepository userRepository,
         TimeProvider timeProvider)
     {
@@ -79,7 +81,7 @@ public class KejiRequestAuthenticator : IRequestAuthenticator
 
     private async Task<RequestAuthenticationResult> AuthenticateBearerAsync(string bearerToken, CancellationToken cancellationToken)
     {
-        if (_options.AuthMode != KejiAuthMode.ApiKeyOnly)
+        if (_options.AuthMode != KejiAuthMode.ApiKeyOnly && _tokenService != null)
         {
             // Try as JWT first
             var validationResult = _tokenService.ValidateToken(bearerToken);
@@ -119,9 +121,13 @@ public class KejiRequestAuthenticator : IRequestAuthenticator
         {
             throw;
         }
-        catch
+        catch (KejiPersistenceException)
         {
-            return RequestAuthenticationResult.NotAuthenticated();
+            throw;
+        }
+        catch (Exception ex)
+        {
+            throw new KejiSecurityException("Internal authentication error.", ex);
         }
     }
 

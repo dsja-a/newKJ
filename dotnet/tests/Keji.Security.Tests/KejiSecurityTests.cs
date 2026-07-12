@@ -27,6 +27,9 @@ public class KejiSecurityTests
     static KejiSecurityTests()
     {
         JwtSecurityTokenHandler.DefaultMapInboundClaims = false;
+        Environment.SetEnvironmentVariable("KEJI_JWT_SECRET", null);
+        Environment.SetEnvironmentVariable("KEJI_API_KEY", null);
+        Environment.SetEnvironmentVariable("KEJI_ADMIN_PASSWORD", null);
     }
     private const string TestJwtSecret = "this-is-a-test-secret-that-is-at-least-32-bytes-long!!";
     private const string TestApiKey = "this-is-a-test-api-key-that-is-at-least-32-bytes!!";
@@ -451,7 +454,7 @@ public class KejiSecurityTests
     public void Jwt_MissingUsername_Rejected()
     {
         var svc = CreateJwtService();
-        var token = CreateJwtWithMissingClaim("unique_name", "user1", "testuser", "member");
+        var token = CreateJwtWithMissingClaim("username", "user1", "testuser", "member");
         var validation = svc.ValidateToken(token);
         Assert.False(validation.IsValid);
     }
@@ -478,9 +481,39 @@ public class KejiSecurityTests
     public void Jwt_PythonCompatibleToken_Validates()
     {
         var svc = CreateJwtService();
-        var result = svc.CreateToken("pyuser", "python_user", "member");
-        var validation = svc.ValidateToken(result.Token);
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var exp = now + 3600;
+        var payload = $"{{\"sub\":\"py-user\",\"username\":\"python_user\",\"role\":\"member\",\"iat\":{now},\"exp\":{exp}}}";
+        var headerB64 = B64Url(Encoding.UTF8.GetBytes("{\"alg\":\"HS256\",\"typ\":\"JWT\"}"));
+        var payloadB64 = B64Url(Encoding.UTF8.GetBytes(payload));
+        using var hmac = new System.Security.Cryptography.HMACSHA256(Encoding.UTF8.GetBytes(TestJwtSecret));
+        var sig = B64Url(hmac.ComputeHash(Encoding.UTF8.GetBytes($"{headerB64}.{payloadB64}")));
+        var pythonToken = $"{headerB64}.{payloadB64}.{sig}";
+
+        var validation = svc.ValidateToken(pythonToken);
         Assert.True(validation.IsValid);
+        Assert.Equal("python_user", validation.Claims!.Username);
+    }
+
+    [Fact]
+    public void Jwt_CSharpToken_HasExactClaimNames()
+    {
+        var svc = CreateJwtService();
+        var result = svc.CreateToken("user1", "testuser", "member");
+        var parts = result.Token.Split('.');
+        var b64 = parts[1].Replace('-', '+').Replace('_', '/');
+        switch (b64.Length % 4)
+        {
+            case 2: b64 += "=="; break;
+            case 3: b64 += "="; break;
+        }
+        var payloadBytes = Convert.FromBase64String(b64);
+        var payloadJson = Encoding.UTF8.GetString(payloadBytes);
+        Assert.Contains("\"username\"", payloadJson);
+        Assert.DoesNotContain("\"unique_name\"", payloadJson);
+        Assert.Contains("\"role\"", payloadJson);
+        Assert.DoesNotContain("ClaimTypes.Role", payloadJson);
+        Assert.Contains("\"sub\"", payloadJson);
     }
 
     [Fact]
@@ -964,6 +997,25 @@ public class KejiSecurityTests
             middleware.InvokeAsync(ctx, opts, auth));
     }
 
+    [Fact]
+    public async Task Middleware_DatabaseException_Returns500_Not401()
+    {
+        var middleware = new KejiAuthenticationMiddleware(_ => Task.CompletedTask);
+        var ctx = new DefaultHttpContext();
+        ctx.Request.Path = "/api/protected";
+        ctx.Request.Headers["Authorization"] = "Bearer valid.jwt.token";
+        ctx.Response.Body = new MemoryStream();
+        var opts = new KejiSecurityOptions { Enabled = true, JwtSecret = TestJwtSecret, ApiKey = TestApiKey };
+        var auth = new ThrowingPersistenceAuth();
+        await middleware.InvokeAsync(ctx, opts, auth);
+        Assert.Equal(500, ctx.Response.StatusCode);
+        ctx.Response.Body.Seek(0, SeekOrigin.Begin);
+        var body = await new StreamReader(ctx.Response.Body).ReadToEndAsync();
+        Assert.DoesNotContain("SQLite", body, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("SQL", body, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("服务器内部错误", body);
+    }
+
     #endregion
 
     #region Login Tests (85-98)
@@ -1293,9 +1345,8 @@ public class KejiSecurityTests
     }
 
     [Fact]
-    public async Task Bootstrap_DuplicateUsername_Retries()
+    public async Task Bootstrap_DuplicateUsername_ConcurrentAdmin_ReturnsAlreadyCreated()
     {
-        var repo = new MockUserRepository();
         var hasher = new MockPasswordHasher();
         var opts = new KejiSecurityOptions
         {
@@ -1304,11 +1355,48 @@ public class KejiSecurityTests
             ApiKey = TestApiKey,
             BootstrapAdmin = new BootstrapAdminOptions { Username = "admin", Password = "test-admin-password-!!", DisplayName = "Admin" }
         };
+        var existing = new UserAccountRecord { Id = "concurrent_admin_001", Username = "admin", Role = "admin", DisplayName = "Admin" };
+        var repo = new DuplicateUsernameMockRepository(existing);
         var svc = new BootstrapAdminService(repo, hasher, opts);
         var result = await svc.InitializeAsync();
-        Assert.True(result.IsCreated);
-        var user = await repo.GetByUsernameAsync("admin");
-        Assert.NotNull(user);
+        Assert.False(result.IsCreated);
+        Assert.NotNull(result.AdminId);
+    }
+
+    [Fact]
+    public async Task Bootstrap_DuplicateUsername_ExistingMember_Throws()
+    {
+        var hasher = new MockPasswordHasher();
+        var opts = new KejiSecurityOptions
+        {
+            Enabled = true,
+            JwtSecret = TestJwtSecret,
+            ApiKey = TestApiKey,
+            BootstrapAdmin = new BootstrapAdminOptions { Username = "admin", Password = "test-admin-password-!!", DisplayName = "Admin" }
+        };
+        var existing = new UserAccountRecord { Id = "existing_member_001", Username = "admin", Role = "member", DisplayName = "Not Admin" };
+        var repo = new DuplicateUsernameMockRepository(existing);
+        var svc = new BootstrapAdminService(repo, hasher, opts);
+        var ex = await Assert.ThrowsAsync<KejiSecurityConfigurationException>(() => svc.InitializeAsync());
+        Assert.Contains("non-admin", ex.Message);
+    }
+
+    [Fact]
+    public async Task Bootstrap_DuplicateUsername_ExistingReadonly_Throws()
+    {
+        var hasher = new MockPasswordHasher();
+        var opts = new KejiSecurityOptions
+        {
+            Enabled = true,
+            JwtSecret = TestJwtSecret,
+            ApiKey = TestApiKey,
+            BootstrapAdmin = new BootstrapAdminOptions { Username = "admin", Password = "test-admin-password-!!", DisplayName = "Admin" }
+        };
+        var existing = new UserAccountRecord { Id = "existing_readonly_001", Username = "admin", Role = "readonly", DisplayName = "Not Admin" };
+        var repo = new DuplicateUsernameMockRepository(existing);
+        var svc = new BootstrapAdminService(repo, hasher, opts);
+        var ex = await Assert.ThrowsAsync<KejiSecurityConfigurationException>(() => svc.InitializeAsync());
+        Assert.Contains("non-admin", ex.Message);
     }
 
     [Fact]
@@ -1445,18 +1533,18 @@ public class KejiSecurityTests
 
     private static KejiRequestAuthenticator CreateAuthenticator(KejiSecurityOptions opts)
     {
-        var jwtSvc = !string.IsNullOrEmpty(opts.JwtSecret)
+        IAccessTokenService? jwtSvc = !string.IsNullOrEmpty(opts.JwtSecret)
             ? new JwtAccessTokenService(opts, TimeProvider.System)
-            : null!;
+            : new UnavailableAccessTokenService();
         var repo = new MockUserRepository();
         return new KejiRequestAuthenticator(opts, jwtSvc, repo, TimeProvider.System);
     }
 
     private static IRequestAuthenticator CreateAuthThatRejectsInvalidBearerThenChecksApiKey(KejiSecurityOptions opts)
     {
-        var jwtSvc = !string.IsNullOrEmpty(opts.JwtSecret)
+        IAccessTokenService? jwtSvc = !string.IsNullOrEmpty(opts.JwtSecret)
             ? new JwtAccessTokenService(opts, TimeProvider.System)
-            : null!;
+            : new UnavailableAccessTokenService();
         var repo = new MockUserRepository();
         return new KejiRequestAuthenticator(opts, jwtSvc, repo, TimeProvider.System);
     }
@@ -1469,7 +1557,7 @@ public class KejiSecurityTests
         var header = "{\"alg\":\"none\",\"typ\":\"JWT\"}";
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         var exp = now + 3600;
-        var payload = $"{{\"sub\":\"{sub}\",\"unique_name\":\"{username}\",\"role\":\"{role}\",\"iat\":{now},\"exp\":{exp}}}";
+        var payload = $"{{\"sub\":\"{sub}\",\"username\":\"{username}\",\"role\":\"{role}\",\"iat\":{now},\"exp\":{exp}}}";
         var headerB64 = B64Url(Encoding.UTF8.GetBytes(header));
         var payloadB64 = B64Url(Encoding.UTF8.GetBytes(payload));
         return $"{headerB64}.{payloadB64}.";
@@ -1486,7 +1574,7 @@ public class KejiSecurityTests
         var header = "{\"alg\":\"HS256\",\"typ\":\"JWT\"}";
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         var exp = now + expOffset;
-        var payload = $"{{\"sub\":\"{sub}\",\"unique_name\":\"{username}\",\"role\":\"{role}\",\"iat\":{now},\"exp\":{exp}}}";
+        var payload = $"{{\"sub\":\"{sub}\",\"username\":\"{username}\",\"role\":\"{role}\",\"iat\":{now},\"exp\":{exp}}}";
         var headerB64 = B64Url(Encoding.UTF8.GetBytes(header));
         var payloadB64 = B64Url(Encoding.UTF8.GetBytes(payload));
         using var hmac = new System.Security.Cryptography.HMACSHA256(Encoding.UTF8.GetBytes(TestJwtSecret));
@@ -1499,7 +1587,7 @@ public class KejiSecurityTests
         var header = $"{{\"alg\":\"{alg}\",\"typ\":\"JWT\"}}";
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         var exp = now + 3600;
-        var payload = $"{{\"sub\":\"{sub}\",\"unique_name\":\"{username}\",\"role\":\"{role}\",\"iat\":{now},\"exp\":{exp}}}";
+        var payload = $"{{\"sub\":\"{sub}\",\"username\":\"{username}\",\"role\":\"{role}\",\"iat\":{now},\"exp\":{exp}}}";
         var headerB64 = B64Url(Encoding.UTF8.GetBytes(header));
         var payloadB64 = B64Url(Encoding.UTF8.GetBytes(payload));
         var sigInput = $"{headerB64}.{payloadB64}";
@@ -1516,7 +1604,7 @@ public class KejiSecurityTests
         var claims = new List<string>
         {
             $"\"sub\":\"{sub}\"",
-            $"\"unique_name\":\"{username}\"",
+            $"\"username\":\"{username}\"",
             $"\"role\":\"{role}\"",
             $"\"iat\":{now}",
             $"\"exp\":{exp}"
@@ -1524,7 +1612,7 @@ public class KejiSecurityTests
         var filtered = claimToRemove switch
         {
             "sub" => claims.Where(c => !c.StartsWith("\"sub\"")).ToList(),
-            "unique_name" => claims.Where(c => !c.StartsWith("\"unique_name\"")).ToList(),
+            "username" => claims.Where(c => !c.StartsWith("\"username\"")).ToList(),
             "role" => claims.Where(c => !c.StartsWith("\"role\"")).ToList(),
             _ => claims
         };
@@ -1711,6 +1799,38 @@ public class KejiSecurityTests
     {
         public Task<RequestAuthenticationResult> AuthenticateAsync(string? a, string? b, string? c, string? d, CancellationToken ct)
             => Task.FromException<RequestAuthenticationResult>(new OperationCanceledException());
+    }
+
+    /// <summary>
+    /// A mock repo that simulates concurrent user creation:
+    /// CountAsync returns 0 (triggers bootstrap), CreateAsync throws DuplicateUsernameException,
+    /// and GetByUsernameAsync returns the pre-seeded user.
+    /// </summary>
+    private sealed class DuplicateUsernameMockRepository : IUserRepository
+    {
+        private readonly UserAccountRecord _existingUser;
+
+        public DuplicateUsernameMockRepository(UserAccountRecord existingUser)
+        {
+            _existingUser = existingUser;
+        }
+
+        public Task<int> CountAsync(CancellationToken ct = default) => Task.FromResult(0);
+        public Task<UserAccountRecord?> GetByUsernameAsync(string username, CancellationToken ct = default)
+            => Task.FromResult<UserAccountRecord?>(_existingUser.Username.Equals(username.Trim(), StringComparison.OrdinalIgnoreCase) ? _existingUser : null);
+        public Task<UserAccountRecord?> GetByIdAsync(string userId, CancellationToken ct = default) => Task.FromResult<UserAccountRecord?>(null);
+        public Task<List<UserSummaryRecord>> ListAsync(CancellationToken ct = default) => Task.FromResult(new List<UserSummaryRecord>());
+        public Task<string> CreateAsync(string username, string passwordHash, string role = "member", string displayName = "", CancellationToken ct = default)
+            => Task.FromException<string>(new DuplicateUsernameException(username.Trim()));
+        public Task<bool> UpdateAsync(string userId, UpdateUserCommand command, CancellationToken ct = default) => Task.FromResult(false);
+        public Task TouchLoginAsync(string userId, CancellationToken ct = default) => Task.CompletedTask;
+        public Task<bool> DeleteAsync(string userId, CancellationToken ct = default) => Task.FromResult(false);
+    }
+
+    private sealed class ThrowingPersistenceAuth : IRequestAuthenticator
+    {
+        public Task<RequestAuthenticationResult> AuthenticateAsync(string? a, string? b, string? c, string? d, CancellationToken ct)
+            => Task.FromException<RequestAuthenticationResult>(new Keji.Persistence.KejiPersistenceException("Database connection failed (SQLite error)"));
     }
 
     #endregion

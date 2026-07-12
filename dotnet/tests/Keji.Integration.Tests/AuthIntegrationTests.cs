@@ -9,6 +9,7 @@ using Keji.Persistence;
 using Keji.Persistence.Models;
 using Keji.Persistence.Repositories;
 using Keji.Security.Auth;
+using Keji.Security.Exceptions;
 using Keji.Security.Options;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
@@ -19,19 +20,32 @@ namespace Keji.Integration.Tests;
 
 public class AuthIntegrationTests : IDisposable
 {
+    private static readonly string JwtSecret = "this-is-a-test-secret-that-is-at-least-32-bytes-long!!";
+    private static readonly string ApiKey = "test-api-key-that-is-at-least-32-bytes-lon!!";
+    private static readonly string AdminPassword = "test-admin-password-123!!";
+
     private readonly string _tempDir;
     private readonly string _dbPath;
-    private readonly string _jwtSecret = "this-is-a-test-secret-that-is-at-least-32-bytes-long!!";
-    private readonly string _apiKey = "test-api-key-that-is-at-least-32-bytes-lon!!";
-    private readonly string _adminPassword = "test-admin-password-123!!";
     private readonly WebApplicationFactory<Program> _factory;
     private readonly HttpClient _client;
+
+    static AuthIntegrationTests()
+    {
+        Environment.SetEnvironmentVariable("KEJI_JWT_SECRET", null);
+        Environment.SetEnvironmentVariable("KEJI_API_KEY", null);
+        Environment.SetEnvironmentVariable("KEJI_ADMIN_PASSWORD", null);
+    }
 
     public AuthIntegrationTests()
     {
         _tempDir = Path.Combine(Path.GetTempPath(), $"keji_test_{Guid.NewGuid():N}");
         Directory.CreateDirectory(_tempDir);
         _dbPath = Path.Combine(_tempDir, "test.db");
+
+        Environment.SetEnvironmentVariable("KEJI_JWT_SECRET", JwtSecret);
+        Environment.SetEnvironmentVariable("KEJI_API_KEY", ApiKey);
+        Environment.SetEnvironmentVariable("KEJI_ADMIN_PASSWORD", AdminPassword);
+
         _factory = CreateFactory();
         _client = _factory.CreateClient();
     }
@@ -52,6 +66,10 @@ public class AuthIntegrationTests : IDisposable
         bool allowApiKeyInQuery = false,
         string? adminPassword = null)
     {
+        if (jwtSecret != null) Environment.SetEnvironmentVariable("KEJI_JWT_SECRET", jwtSecret);
+        if (apiKey != null) Environment.SetEnvironmentVariable("KEJI_API_KEY", apiKey);
+        if (adminPassword != null) Environment.SetEnvironmentVariable("KEJI_ADMIN_PASSWORD", adminPassword);
+
         return new WebApplicationFactory<Program>()
             .WithWebHostBuilder(builder =>
             {
@@ -75,17 +93,17 @@ public class AuthIntegrationTests : IDisposable
                     {
                         Enabled = true,
                         AuthMode = authMode,
-                        ApiKey = apiKey ?? _apiKey,
-                        JwtSecret = jwtSecret ?? _jwtSecret,
+                        ApiKey = apiKey ?? ApiKey,
+                        JwtSecret = jwtSecret ?? JwtSecret,
                         JwtExpireHours = 72,
                         JwtClockSkewSeconds = 0,
                         AllowLocalhostWithoutAuth = allowLocalhostWithoutAuth,
                         AllowApiKeyInQuery = allowApiKeyInQuery,
-                        PublicPaths = new List<string> { "/api/auth/login" },
+                        PublicPaths = Array.Empty<string>(),
                         BootstrapAdmin = new BootstrapAdminOptions
                         {
                             Username = "admin",
-                            Password = adminPassword ?? _adminPassword,
+                            Password = adminPassword ?? AdminPassword,
                             DisplayName = "系统管理员",
                         },
                     });
@@ -95,7 +113,7 @@ public class AuthIntegrationTests : IDisposable
 
     private async Task<LoginResponse> LoginAsAdminAsync()
     {
-        var loginReq = new LoginRequest { Username = "admin", Password = _adminPassword };
+        var loginReq = new LoginRequest { Username = "admin", Password = AdminPassword };
         var response = await _client.PostAsJsonAsync("/api/auth/login", loginReq);
         response.EnsureSuccessStatusCode();
         var result = await response.Content.ReadFromJsonAsync<LoginResponse>();
@@ -105,17 +123,17 @@ public class AuthIntegrationTests : IDisposable
 
     private string CreateValidToken(string sub, string role, string username = "testuser")
     {
-        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_jwtSecret));
+        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(JwtSecret));
         var handler = new JwtSecurityTokenHandler();
         var descriptor = new SecurityTokenDescriptor
         {
             Subject = new ClaimsIdentity(new[]
             {
-                new Claim(JwtRegisteredClaimNames.Sub, sub),
-                new Claim(JwtRegisteredClaimNames.UniqueName, username),
-                new Claim(ClaimTypes.Role, role),
-                new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString("N")),
-                new Claim(JwtRegisteredClaimNames.Iat,
+                new Claim("sub", sub),
+                new Claim("username", username),
+                new Claim("role", role),
+                new Claim("jti", Guid.NewGuid().ToString("N")),
+                new Claim("iat",
                     DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString(),
                     ClaimValueTypes.Integer64),
             }),
@@ -126,10 +144,78 @@ public class AuthIntegrationTests : IDisposable
         return handler.WriteToken(handler.CreateToken(descriptor));
     }
 
+    private void SetEnv(string? jwt, string? apiKey, string? adminPw)
+    {
+        Environment.SetEnvironmentVariable("KEJI_JWT_SECRET", jwt);
+        Environment.SetEnvironmentVariable("KEJI_API_KEY", apiKey);
+        Environment.SetEnvironmentVariable("KEJI_ADMIN_PASSWORD", adminPw);
+    }
+
+    // ── Default public paths tests ────────────────────
+
+    [Fact]
+    public async Task Login_Public_Without_Credentials()
+    {
+        var loginReq = new LoginRequest { Username = "admin", Password = AdminPassword };
+        var response = await _client.PostAsJsonAsync("/api/auth/login", loginReq);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task LoginEvil_Returns_401()
+    {
+        var response = await _client.GetAsync("/api/auth/login-evil");
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Static_Path_Is_Public()
+    {
+        var response = await _client.GetAsync("/static/test.js");
+        Assert.NotEqual(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task SecurityStatus_Path_Is_Public()
+    {
+        var response = await _client.GetAsync("/api/security/status");
+        Assert.NotEqual(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task WorkPath_Is_Public()
+    {
+        var response = await _client.GetAsync("/api/work/callback");
+        Assert.NotEqual(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Health_Is_Public()
+    {
+        var response = await _client.GetAsync("/health");
+        Assert.NotEqual(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Root_Is_Public()
+    {
+        var response = await _client.GetAsync("/");
+        Assert.NotEqual(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Favicon_Is_Public()
+    {
+        var response = await _client.GetAsync("/favicon.ico");
+        Assert.NotEqual(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    // ── Login tests ───────────────────────────────────
+
     [Fact]
     public async Task Login_Succeeds_With_Correct_Credentials()
     {
-        var loginReq = new LoginRequest { Username = "admin", Password = _adminPassword };
+        var loginReq = new LoginRequest { Username = "admin", Password = AdminPassword };
         var response = await _client.PostAsJsonAsync("/api/auth/login", loginReq);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -143,7 +229,7 @@ public class AuthIntegrationTests : IDisposable
     [Fact]
     public async Task Login_Response_Uses_Expires_In_Field()
     {
-        var loginReq = new LoginRequest { Username = "admin", Password = _adminPassword };
+        var loginReq = new LoginRequest { Username = "admin", Password = AdminPassword };
         var response = await _client.PostAsJsonAsync("/api/auth/login", loginReq);
         response.EnsureSuccessStatusCode();
 
@@ -158,7 +244,7 @@ public class AuthIntegrationTests : IDisposable
     [Fact]
     public async Task Login_User_Json_Uses_Snake_Case_Fields()
     {
-        var loginReq = new LoginRequest { Username = "admin", Password = _adminPassword };
+        var loginReq = new LoginRequest { Username = "admin", Password = AdminPassword };
         var response = await _client.PostAsJsonAsync("/api/auth/login", loginReq);
         response.EnsureSuccessStatusCode();
 
@@ -183,7 +269,7 @@ public class AuthIntegrationTests : IDisposable
     [Fact]
     public async Task Non_Existent_User_Returns_401()
     {
-        var loginReq = new LoginRequest { Username = "nonexistent_user", Password = _adminPassword };
+        var loginReq = new LoginRequest { Username = "nonexistent_user", Password = AdminPassword };
         var response = await _client.PostAsJsonAsync("/api/auth/login", loginReq);
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
@@ -199,7 +285,7 @@ public class AuthIntegrationTests : IDisposable
         var userId = loginData.User.Id;
         await userRepo.UpdateAsync(userId, new UpdateUserCommand { IsActive = false });
 
-        var loginReq = new LoginRequest { Username = "admin", Password = _adminPassword };
+        var loginReq = new LoginRequest { Username = "admin", Password = AdminPassword };
         var response = await _client.PostAsJsonAsync("/api/auth/login", loginReq);
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
@@ -216,6 +302,8 @@ public class AuthIntegrationTests : IDisposable
         var response2 = await _client.PostAsJsonAsync("/api/auth/login", missingFields);
         Assert.Equal(422, (int)response2.StatusCode);
     }
+
+    // ── Me endpoint tests ─────────────────────────────
 
     [Fact]
     public async Task Jwt_Token_Can_Call_Me()
@@ -235,25 +323,27 @@ public class AuthIntegrationTests : IDisposable
     }
 
     [Fact]
-    public async Task No_Token_Calling_Me_Returns_401()
+    public async Task Me_401_Body_Exact_Match()
     {
         var response = await _client.GetAsync("/api/auth/me");
-
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        var body = await response.Content.ReadAsStringAsync();
+        var expected = "{\"detail\":\"未授权：请登录（/api/auth/login）或使用有效 API Key\"}";
+        Assert.Equal(expected, body);
     }
 
     [Fact]
     public async Task Expired_Jwt_Returns_401()
     {
-        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_jwtSecret));
+        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(JwtSecret));
         var handler = new JwtSecurityTokenHandler();
         var descriptor = new SecurityTokenDescriptor
         {
             Subject = new ClaimsIdentity(new[]
             {
-                new Claim(JwtRegisteredClaimNames.Sub, "anyuser"),
-                new Claim(JwtRegisteredClaimNames.UniqueName, "anyuser"),
-                new Claim(ClaimTypes.Role, "member"),
+                new Claim("sub", "anyuser"),
+                new Claim("username", "anyuser"),
+                new Claim("role", "member"),
             }),
             IssuedAt = DateTime.UtcNow.AddHours(-2),
             NotBefore = DateTime.UtcNow.AddHours(-2),
@@ -275,7 +365,7 @@ public class AuthIntegrationTests : IDisposable
         var validToken = CreateValidToken("someuser", "member");
         var parts = validToken.Split('.');
         var tamperedPayload = Base64UrlEncoder.Encode(
-            Encoding.UTF8.GetBytes("{\"sub\":\"hacker\",\"unique_name\":\"hacker\",\"role\":\"admin\"}"));
+            Encoding.UTF8.GetBytes("{\"sub\":\"hacker\",\"username\":\"hacker\",\"role\":\"admin\"}"));
         var tamperedToken = $"{parts[0]}.{tamperedPayload}.{parts[2]}";
 
         var request = new HttpRequestMessage(HttpMethod.Get, "/api/auth/me");
@@ -322,27 +412,14 @@ public class AuthIntegrationTests : IDisposable
         Assert.Equal("readonly", meResult.User.Role);
     }
 
+    // ── API Key tests ─────────────────────────────────
+
     [Fact]
     public async Task Api_Key_Calling_Me_Returns_401_With_Account_Disabled()
     {
         var request = new HttpRequestMessage(HttpMethod.Get, "/api/auth/me");
-        request.Headers.Add("X-API-Key", _apiKey);
+        request.Headers.Add("X-API-Key", ApiKey);
         var response = await _client.SendAsync(request);
-
-        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
-        var body = await response.Content.ReadAsStringAsync();
-        Assert.Contains("账号已禁用或不存在", body);
-    }
-
-    [Fact]
-    public async Task Localhost_Identity_Follows_DB_Semantics()
-    {
-        using var localhostFactory = CreateFactory(allowLocalhostWithoutAuth: true);
-        using var localhostClient = localhostFactory.CreateClient();
-
-        var request = new HttpRequestMessage(HttpMethod.Get, "/api/auth/me");
-        request.Headers.Add("X-API-Key", _apiKey);
-        var response = await localhostClient.SendAsync(request);
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
         var body = await response.Content.ReadAsStringAsync();
@@ -355,11 +432,11 @@ public class AuthIntegrationTests : IDisposable
         using var userOnlyFactory = CreateFactory(
             authMode: KejiAuthMode.UserOnly,
             apiKey: null,
-            adminPassword: _adminPassword);
+            adminPassword: AdminPassword);
         using var userOnlyClient = userOnlyFactory.CreateClient();
 
         var request = new HttpRequestMessage(HttpMethod.Get, "/api/auth/me");
-        request.Headers.Add("X-API-Key", _apiKey);
+        request.Headers.Add("X-API-Key", ApiKey);
         var response = await userOnlyClient.SendAsync(request);
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
@@ -370,8 +447,8 @@ public class AuthIntegrationTests : IDisposable
     {
         using var apiKeyOnlyFactory = CreateFactory(
             authMode: KejiAuthMode.ApiKeyOnly,
-            jwtSecret: _jwtSecret,
-            adminPassword: _adminPassword);
+            jwtSecret: null,
+            adminPassword: AdminPassword);
         using var apiKeyOnlyClient = apiKeyOnlyFactory.CreateClient();
 
         var token = CreateValidToken("testuser", "member");
@@ -394,7 +471,7 @@ public class AuthIntegrationTests : IDisposable
         Assert.Equal(HttpStatusCode.OK, jwtResponse.StatusCode);
 
         var apiKeyRequest = new HttpRequestMessage(HttpMethod.Get, "/api/auth/me");
-        apiKeyRequest.Headers.Add("X-API-Key", _apiKey);
+        apiKeyRequest.Headers.Add("X-API-Key", ApiKey);
         var apiKeyResponse = await _client.SendAsync(apiKeyRequest);
         Assert.Equal(HttpStatusCode.Unauthorized, apiKeyResponse.StatusCode);
         var body = await apiKeyResponse.Content.ReadAsStringAsync();
@@ -404,15 +481,36 @@ public class AuthIntegrationTests : IDisposable
     [Fact]
     public async Task Query_API_Key_Is_Rejected_By_Default()
     {
-        var response = await _client.GetAsync($"/api/auth/me?api_key={_apiKey}");
+        var response = await _client.GetAsync($"/api/auth/me?api_key={ApiKey}");
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
 
+    // ── Auth mode specific tests ──────────────────────
+
+    [Fact]
+    public async Task ApiKeyOnly_Login_Returns_503()
+    {
+        using var apiKeyOnlyFactory = CreateFactory(
+            authMode: KejiAuthMode.ApiKeyOnly,
+            jwtSecret: null,
+            adminPassword: AdminPassword);
+        using var apiKeyOnlyClient = apiKeyOnlyFactory.CreateClient();
+
+        var loginReq = new LoginRequest { Username = "admin", Password = AdminPassword };
+        var response = await apiKeyOnlyClient.PostAsJsonAsync("/api/auth/login", loginReq);
+
+        Assert.Equal(503, (int)response.StatusCode);
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.Contains("当前认证模式不支持用户登录", body);
+    }
+
+    // ── Bootstrap tests ───────────────────────────────
+
     [Fact]
     public async Task Bootstrap_Admin_Is_Created_Only_Once()
     {
-        var loginReq = new LoginRequest { Username = "admin", Password = _adminPassword };
+        var loginReq = new LoginRequest { Username = "admin", Password = AdminPassword };
         var response = await _client.PostAsJsonAsync("/api/auth/login", loginReq);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
@@ -424,6 +522,20 @@ public class AuthIntegrationTests : IDisposable
         var count = await userRepo.CountAsync();
         Assert.Equal(1, count);
     }
+
+    [Fact]
+    public async Task Program_Startup_Completes_DB_Init_Before_Accepting_Requests()
+    {
+        var loginReq = new LoginRequest { Username = "admin", Password = AdminPassword };
+        var response = await _client.PostAsJsonAsync("/api/auth/login", loginReq);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var userRepo = _factory.Services.GetRequiredService<IUserRepository>();
+        var count = await userRepo.CountAsync();
+        Assert.Equal(1, count);
+    }
+
+    // ── Security response tests ───────────────────────
 
     [Fact]
     public async Task Response_Does_Not_Contain_PasswordHash()
@@ -448,35 +560,41 @@ public class AuthIntegrationTests : IDisposable
         var loginData = await LoginAsAdminAsync();
 
         var json = JsonSerializer.Serialize(loginData);
-        Assert.DoesNotContain(_apiKey, json, StringComparison.Ordinal);
-        Assert.DoesNotContain(_jwtSecret, json, StringComparison.Ordinal);
-        Assert.DoesNotContain(_adminPassword, json, StringComparison.Ordinal);
+        Assert.DoesNotContain(ApiKey, json, StringComparison.Ordinal);
+        Assert.DoesNotContain(JwtSecret, json, StringComparison.Ordinal);
+        Assert.DoesNotContain(AdminPassword, json, StringComparison.Ordinal);
 
         var meRequest = new HttpRequestMessage(HttpMethod.Get, "/api/auth/me");
         meRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", loginData.Token);
         var meResponse = await _client.SendAsync(meRequest);
         var meJson = await meResponse.Content.ReadAsStringAsync();
-        Assert.DoesNotContain(_apiKey, meJson, StringComparison.Ordinal);
-        Assert.DoesNotContain(_jwtSecret, meJson, StringComparison.Ordinal);
-        Assert.DoesNotContain(_adminPassword, meJson, StringComparison.Ordinal);
+        Assert.DoesNotContain(ApiKey, meJson, StringComparison.Ordinal);
+        Assert.DoesNotContain(JwtSecret, meJson, StringComparison.Ordinal);
+        Assert.DoesNotContain(AdminPassword, meJson, StringComparison.Ordinal);
     }
 
     [Fact]
-    public async Task Program_Startup_Completes_DB_Init_Before_Accepting_Requests()
+    public async Task Localhost_Identity_Follows_DB_Semantics()
     {
-        var loginReq = new LoginRequest { Username = "admin", Password = _adminPassword };
-        var response = await _client.PostAsJsonAsync("/api/auth/login", loginReq);
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var localhostFactory = CreateFactory(allowLocalhostWithoutAuth: true);
+        using var localhostClient = localhostFactory.CreateClient();
 
-        var userRepo = _factory.Services.GetRequiredService<IUserRepository>();
-        var count = await userRepo.CountAsync();
-        Assert.Equal(1, count);
+        var request = new HttpRequestMessage(HttpMethod.Get, "/api/auth/me");
+        request.Headers.Add("X-API-Key", ApiKey);
+        var response = await localhostClient.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.Contains("账号已禁用或不存在", body);
     }
 
+    // ── Fail-closed tests ─────────────────────────────
+
     [Fact]
-    public async Task Fail_Closed_When_Config_Lacks_Secrets()
+    public void Fail_Closed_When_No_JwtSecret_UserOnly()
     {
-        using var brokenFactory = new WebApplicationFactory<Program>()
+        SetEnv(null, ApiKey, AdminPassword);
+        using var factory = new WebApplicationFactory<Program>()
             .WithWebHostBuilder(builder =>
             {
                 builder.ConfigureServices(services =>
@@ -492,34 +610,107 @@ public class AuthIntegrationTests : IDisposable
                         EnableForeignKeys = true,
                         CreateDirectoryIfMissing = true,
                     });
+                });
+            });
+        var ex = Assert.Throws<KejiSecurityConfigurationException>(() => factory.CreateClient());
+        Assert.Contains("JWT Secret", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.False(File.Exists(Path.Combine(_tempDir, "..", "..", "data", "keji.db")));
+    }
 
-                    var sDesc = services.SingleOrDefault(d => d.ServiceType == typeof(KejiSecurityOptions));
-                    if (sDesc != null) services.Remove(sDesc);
-                    services.AddSingleton(new KejiSecurityOptions
+    [Fact]
+    public void Fail_Closed_When_No_ApiKey_ApiKeyOnly()
+    {
+        SetEnv(JwtSecret, null, AdminPassword);
+        using var factory = new WebApplicationFactory<Program>()
+            .WithWebHostBuilder(builder =>
+            {
+                builder.ConfigureServices(services =>
+                {
+                    var pDesc = services.SingleOrDefault(d => d.ServiceType == typeof(KejiPersistenceOptions));
+                    if (pDesc != null) services.Remove(pDesc);
+                    services.AddSingleton(new KejiPersistenceOptions
                     {
-                        Enabled = true,
-                        AuthMode = KejiAuthMode.UserOnly,
-                        JwtSecret = null,
-                        ApiKey = null,
-                        JwtExpireHours = 72,
-                        JwtClockSkewSeconds = 0,
-                        AllowLocalhostWithoutAuth = false,
-                        AllowApiKeyInQuery = false,
-                        PublicPaths = new List<string> { "/api/auth/login" },
-                        BootstrapAdmin = new BootstrapAdminOptions
-                        {
-                            Username = "admin",
-                            Password = _adminPassword,
-                            DisplayName = "系统管理员",
-                        },
+                        ProjectRoot = _tempDir,
+                        DatabasePath = _dbPath,
+                        BusyTimeoutMilliseconds = 5000,
+                        EnableWal = true,
+                        EnableForeignKeys = true,
+                        CreateDirectoryIfMissing = true,
                     });
                 });
             });
+        var ex = Assert.Throws<KejiSecurityConfigurationException>(() => factory.CreateClient());
+        Assert.Contains("API Key", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
 
-        using var brokenClient = brokenFactory.CreateClient();
+    [Fact]
+    public void Fail_Closed_When_No_BootstrapPassword_ZeroUsers()
+    {
+        SetEnv(JwtSecret, ApiKey, null);
+        var freshDir = Path.Combine(Path.GetTempPath(), $"keji_test_nopw_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(freshDir);
+        var freshDb = Path.Combine(freshDir, "test.db");
+        try
+        {
+            using var factory = new WebApplicationFactory<Program>()
+                .WithWebHostBuilder(builder =>
+                {
+                    builder.ConfigureServices(services =>
+                    {
+                        var pDesc = services.SingleOrDefault(d => d.ServiceType == typeof(KejiPersistenceOptions));
+                        if (pDesc != null) services.Remove(pDesc);
+                        services.AddSingleton(new KejiPersistenceOptions
+                        {
+                            ProjectRoot = freshDir,
+                            DatabasePath = freshDb,
+                            BusyTimeoutMilliseconds = 5000,
+                            EnableWal = true,
+                            EnableForeignKeys = true,
+                            CreateDirectoryIfMissing = true,
+                        });
+                    });
+                });
+            var ex = Assert.Throws<KejiSecurityConfigurationException>(() => factory.CreateClient());
+            Assert.Contains("password", ex.Message, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            if (Directory.Exists(freshDir))
+                Directory.Delete(freshDir, recursive: true);
+        }
+    }
 
-        var response = await brokenClient.GetAsync("/api/auth/me");
+    [Fact]
+    public async Task ExistingUser_WithoutBootstrapPassword_StartsSuccessfully()
+    {
+        // Bootstrap first with password
+        var loginReq = new LoginRequest { Username = "admin", Password = AdminPassword };
+        var response = await _client.PostAsJsonAsync("/api/auth/login", loginReq);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
-        Assert.NotEqual(HttpStatusCode.OK, response.StatusCode);
+        // Now create a factory without bootstrap password - should work since user exists
+        SetEnv(JwtSecret, ApiKey, null);
+        using var factory2 = new WebApplicationFactory<Program>()
+            .WithWebHostBuilder(builder =>
+            {
+                builder.ConfigureServices(services =>
+                {
+                    var pDesc = services.SingleOrDefault(d => d.ServiceType == typeof(KejiPersistenceOptions));
+                    if (pDesc != null) services.Remove(pDesc);
+                    services.AddSingleton(new KejiPersistenceOptions
+                    {
+                        ProjectRoot = _tempDir,
+                        DatabasePath = _dbPath,
+                        BusyTimeoutMilliseconds = 5000,
+                        EnableWal = true,
+                        EnableForeignKeys = true,
+                        CreateDirectoryIfMissing = true,
+                    });
+                });
+            });
+        using var client2 = factory2.CreateClient();
+        var response2 = await client2.GetAsync("/api/auth/me");
+        Assert.Equal(HttpStatusCode.Unauthorized, response2.StatusCode);
     }
 }

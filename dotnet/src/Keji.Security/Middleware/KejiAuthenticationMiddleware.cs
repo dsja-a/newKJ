@@ -19,7 +19,7 @@ public class KejiAuthenticationMiddleware
 
     private static readonly string[] DefaultPublicPaths =
     {
-        "/", "/health", "/favicon.ico",
+        "/", "/health", "/favicon.ico", "/static", "/api/security/status", "/api/auth/login", "/api/work",
     };
 
     public KejiAuthenticationMiddleware(RequestDelegate next)
@@ -43,38 +43,59 @@ public class KejiAuthenticationMiddleware
             return;
         }
 
-        var authHeader = context.Request.Headers["Authorization"].FirstOrDefault();
-        var xApiKey = context.Request.Headers["X-API-Key"].FirstOrDefault();
-        var queryApiKey = context.Request.Query["api_key"].FirstOrDefault();
-        var remoteIp = context.Connection.RemoteIpAddress?.ToString();
-
-        var result = await authenticator.AuthenticateAsync(authHeader, xApiKey, queryApiKey, remoteIp, context.RequestAborted);
-
-        if (result.IsAuthenticated && result.User != null)
+        try
         {
-            var claims = new List<Claim>
+            var authHeader = context.Request.Headers["Authorization"].FirstOrDefault();
+            var xApiKey = context.Request.Headers["X-API-Key"].FirstOrDefault();
+            var queryApiKey = context.Request.Query["api_key"].FirstOrDefault();
+            var remoteIp = context.Connection.RemoteIpAddress?.ToString();
+
+            var result = await authenticator.AuthenticateAsync(authHeader, xApiKey, queryApiKey, remoteIp, context.RequestAborted);
+
+            if (result.IsAuthenticated && result.User != null)
             {
-                new(ClaimTypes.NameIdentifier, result.User.Id),
-                new(ClaimTypes.Name, result.User.Username),
-                new(ClaimTypes.Role, result.User.Role),
-                new(KejiClaimTypes.DisplayName, result.User.DisplayName),
-                new(KejiClaimTypes.AuthenticationKind, result.User.AuthenticationKind.ToString()),
-            };
+                var claims = new List<Claim>
+                {
+                    new(ClaimTypes.NameIdentifier, result.User.Id),
+                    new(ClaimTypes.Name, result.User.Username),
+                    new(ClaimTypes.Role, result.User.Role),
+                    new(KejiClaimTypes.DisplayName, result.User.DisplayName),
+                    new(KejiClaimTypes.AuthenticationKind, result.User.AuthenticationKind.ToString()),
+                };
 
-            var identity = new ClaimsIdentity(claims, "KejiAuth");
-            context.User = new ClaimsPrincipal(identity);
+                var identity = new ClaimsIdentity(claims, "KejiAuth");
+                context.User = new ClaimsPrincipal(identity);
 
-            await _next(context);
-            return;
+                await _next(context);
+                return;
+            }
+
+            context.Response.StatusCode = 401;
+            context.Response.ContentType = "application/json";
+            var body = JsonSerializer.Serialize(new
+            {
+                detail = "未授权：请登录（/api/auth/login）或使用有效 API Key"
+            }, JsonOptions);
+            await context.Response.WriteAsync(body, context.RequestAborted);
         }
-
-        context.Response.StatusCode = 401;
-        context.Response.ContentType = "application/json";
-        var body = JsonSerializer.Serialize(new
+        catch (OperationCanceledException)
         {
-            detail = "未授权：请登录（/api/auth/login）或使用有效 API Key"
-        }, JsonOptions);
-        await context.Response.WriteAsync(body, context.RequestAborted);
+            throw;
+        }
+        catch (Keji.Persistence.KejiPersistenceException)
+        {
+            context.Response.StatusCode = 500;
+            context.Response.ContentType = "application/json";
+            var body = JsonSerializer.Serialize(new { detail = "服务器内部错误" }, JsonOptions);
+            await context.Response.WriteAsync(body, context.RequestAborted);
+        }
+        catch (Keji.Security.Exceptions.KejiSecurityException)
+        {
+            context.Response.StatusCode = 500;
+            context.Response.ContentType = "application/json";
+            var body = JsonSerializer.Serialize(new { detail = "服务器内部错误" }, JsonOptions);
+            await context.Response.WriteAsync(body, context.RequestAborted);
+        }
     }
 
     private static bool IsPublicPath(string path, KejiSecurityOptions options)

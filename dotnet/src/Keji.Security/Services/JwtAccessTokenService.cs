@@ -50,11 +50,11 @@ public class JwtAccessTokenService : IAccessTokenService
         var unixNow = now.ToUnixTimeSeconds();
         var claims = new[]
         {
-            new Claim(JwtRegisteredClaimNames.Sub, userId),
-            new Claim(JwtRegisteredClaimNames.UniqueName, username),
-            new Claim(ClaimTypes.Role, role),
-            new Claim(JwtRegisteredClaimNames.Jti, jti),
-            new Claim(JwtRegisteredClaimNames.Iat, unixNow.ToString(), ClaimValueTypes.Integer64),
+            new Claim("sub", userId),
+            new Claim("username", username),
+            new Claim("role", role),
+            new Claim("jti", jti),
+            new Claim("iat", unixNow.ToString(), ClaimValueTypes.Integer64),
         };
 
         var tokenDescriptor = new SecurityTokenDescriptor
@@ -89,12 +89,12 @@ public class JwtAccessTokenService : IAccessTokenService
                 return AccessTokenValidationResult.Fail("Invalid algorithm. Only HS256 is supported.");
             }
 
-            var sub = principal.FindFirst(JwtRegisteredClaimNames.Sub)?.Value;
-            var username = principal.FindFirst(JwtRegisteredClaimNames.UniqueName)?.Value;
-            var role = principal.FindFirst("role")?.Value ?? principal.FindFirst(ClaimTypes.Role)?.Value;
-            var jti = principal.FindFirst(JwtRegisteredClaimNames.Jti)?.Value;
-            var iatVal = principal.FindFirst(JwtRegisteredClaimNames.Iat)?.Value;
-            var expVal = principal.FindFirst(JwtRegisteredClaimNames.Exp)?.Value;
+            var sub = principal.FindFirst("sub")?.Value;
+            var username = principal.FindFirst("username")?.Value;
+            var role = principal.FindFirst("role")?.Value;
+            var jti = principal.FindFirst("jti")?.Value;
+            var iatVal = principal.FindFirst("iat")?.Value;
+            var expVal = principal.FindFirst("exp")?.Value;
 
             if (string.IsNullOrEmpty(sub))
                 return AccessTokenValidationResult.Fail("Token missing 'sub' claim.");

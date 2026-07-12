@@ -41,8 +41,10 @@ public class KejiSecurityOptions
             _ => throw new KejiSecurityConfigurationException($"Invalid auth_mode '{authModeStr}'. Must be 'both', 'user_only', or 'api_key_only'.")
         };
 
-        opts.ApiKey = document.GetOptionalString("security.api_key");
-        opts.JwtSecret = document.GetOptionalString("security.jwt_secret");
+        opts.ApiKey = document.GetOptionalString("security.api_key")
+            ?? Environment.GetEnvironmentVariable("KEJI_API_KEY");
+        opts.JwtSecret = document.GetOptionalString("security.jwt_secret")
+            ?? Environment.GetEnvironmentVariable("KEJI_JWT_SECRET");
 
         if (opts.Enabled)
         {
@@ -66,7 +68,8 @@ public class KejiSecurityOptions
         opts.BootstrapAdmin = new BootstrapAdminOptions
         {
             Username = document.GetOptionalString("security.bootstrap_admin.username")?.Trim() ?? "admin",
-            Password = document.GetOptionalString("security.bootstrap_admin.password"),
+            Password = document.GetOptionalString("security.bootstrap_admin.password")
+                ?? Environment.GetEnvironmentVariable("KEJI_ADMIN_PASSWORD"),
             DisplayName = document.GetOptionalString("security.bootstrap_admin.display_name") ?? "系统管理员"
         };
 

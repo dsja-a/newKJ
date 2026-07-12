@@ -42,6 +42,8 @@ public class BootstrapAdminService : IBootstrapAdminService
         if (password.Length < 12)
             throw new KejiSecurityConfigurationException("Bootstrap admin password must be at least 12 characters.");
 
+        cancellationToken.ThrowIfCancellationRequested();
+
         var passwordHash = _passwordHasher.Hash(password);
 
         try
@@ -52,10 +54,11 @@ public class BootstrapAdminService : IBootstrapAdminService
         catch (DuplicateUsernameException)
         {
             var existing = await _userRepository.GetByUsernameAsync(username, cancellationToken);
-            if (existing != null)
+            if (existing != null && existing.Role == "admin")
                 return BootstrapAdminResult.AlreadyCreated(existing.Id);
 
-            throw;
+            throw new KejiSecurityConfigurationException(
+                $"Cannot bootstrap admin: username '{username}' is already taken by a non-admin user.");
         }
     }
 }

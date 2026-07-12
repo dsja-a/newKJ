@@ -18,7 +18,14 @@ public static class ServiceCollectionExtensions
         services.AddSingleton(new PasswordHashOptions { WorkFactor = 12 });
         services.AddSingleton<IPasswordHasher, BCryptPasswordHasher>();
 
-        services.AddSingleton<IAccessTokenService, JwtAccessTokenService>();
+        if (options.Enabled && (options.AuthMode == KejiAuthMode.UserOnly || options.AuthMode == KejiAuthMode.Both))
+        {
+            services.AddSingleton<IAccessTokenService, JwtAccessTokenService>();
+        }
+        else
+        {
+            services.AddSingleton<IAccessTokenService, UnavailableAccessTokenService>();
+        }
 
         services.AddSingleton<IRequestAuthenticator, KejiRequestAuthenticator>();
 
