@@ -6,12 +6,13 @@ namespace Microsoft.Extensions.DependencyInjection;
 
 public static class ServiceCollectionExtensions
 {
-    public static IServiceCollection AddKejiConfiguration(this IServiceCollection services)
+    public static IServiceCollection AddKejiConfigurationFoundation(
+        this IServiceCollection services)
     {
-        return AddKejiConfiguration(services, _ => { });
+        return AddKejiConfigurationFoundation(services, _ => { });
     }
 
-    public static IServiceCollection AddKejiConfiguration(
+    public static IServiceCollection AddKejiConfigurationFoundation(
         this IServiceCollection services,
         Action<KejiConfigurationLoadOptions> configureOptions)
     {
@@ -21,7 +22,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton(options);
 
         var dotEnvPath = Path.Combine(options.ProjectRoot, options.DotEnvFileName);
-        var dotEnvStore = new DotEnvStore(dotEnvPath, options.MaxDotEnvFileBytes);
+        var dotEnvStore = new DotEnvStore(dotEnvPath, options.MaxDotEnvFileBytes, options.MaxDotEnvLineLength);
         services.AddSingleton<IDotEnvStore>(dotEnvStore);
 
         services.AddSingleton<IEnvironmentValueSource>(sp =>
@@ -33,26 +34,8 @@ public static class ServiceCollectionExtensions
             );
         });
 
-        services.AddSingleton<IKejiConfigurationLoader>(sp =>
-        {
-            return new SafeYamlConfigurationLoader();
-        });
-
+        services.AddSingleton<IKejiConfigurationLoader>(_ => new SafeYamlConfigurationLoader());
         services.AddSingleton<ISecretMasker>(_ => new SecretMasker());
-
-        services.AddSingleton(sp =>
-        {
-            var loader = sp.GetRequiredService<IKejiConfigurationLoader>();
-            var options = sp.GetRequiredService<KejiConfigurationLoadOptions>();
-            var doc = loader.Load(options);
-
-            var envSource = sp.GetRequiredService<IEnvironmentValueSource>();
-            var resolver = new EnvironmentReferenceResolver(envSource, options.FailOnMissingEnvironmentVariable);
-            var resolved = resolver.Resolve(doc.Root);
-
-            return new KejiConfigurationDocument(
-                resolved as ConfigMap ?? throw new InvalidOperationException("Root node must be a map"));
-        });
 
         return services;
     }

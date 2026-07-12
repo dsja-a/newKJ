@@ -7,29 +7,82 @@ public class SecretMasker : ISecretMasker
 {
     private static readonly FrozenSet<string> SensitiveKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
-        "password",
-        "passwd",
-        "pwd",
-        "secret",
         "api_key",
         "apikey",
-        "api-key",
+        "app_secret",
+        "client_secret",
+        "secret",
+        "password",
         "token",
-        "auth_token",
-        "authtoken",
         "access_token",
-        "accesstoken",
+        "refresh_token",
+        "verification_token",
+        "encrypt_key",
+        "work_secret",
+        "jwt_secret",
         "private_key",
-        "privatekey",
         "connection_string",
-        "connectionstring",
-        "master_key",
-        "masterkey",
     }.ToFrozenSet();
+
+    private const string MaskValue = "***";
 
     public ConfigNode Mask(ConfigNode node)
     {
         return Visit(node);
+    }
+
+    public IReadOnlyDictionary<string, object?> Mask(IReadOnlyDictionary<string, object?> dictionary)
+    {
+        var result = new Dictionary<string, object?>(dictionary.Count, StringComparer.Ordinal);
+        foreach (var kvp in dictionary)
+        {
+            if (SensitiveKeys.Contains(kvp.Key))
+            {
+                result[kvp.Key] = MaskValue;
+            }
+            else if (kvp.Value is IReadOnlyDictionary<string, object?> nestedDict)
+            {
+                result[kvp.Key] = Mask(nestedDict);
+            }
+            else if (kvp.Value is IEnumerable<object?> list)
+            {
+                result[kvp.Key] = Mask(list);
+            }
+            else
+            {
+                result[kvp.Key] = kvp.Value;
+            }
+        }
+        return new System.Collections.ObjectModel.ReadOnlyDictionary<string, object?>(result);
+    }
+
+    public IReadOnlyList<object?> Mask(IEnumerable<object?> sequence)
+    {
+        var result = new List<object?>();
+        foreach (var item in sequence)
+        {
+            if (item is IReadOnlyDictionary<string, object?> nestedDict)
+            {
+                result.Add(Mask(nestedDict));
+            }
+            else if (item is IEnumerable<object?> list)
+            {
+                result.Add(Mask(list));
+            }
+            else
+            {
+                result.Add(item);
+            }
+        }
+        return result.AsReadOnly();
+    }
+
+    public static ApiKeySettingsMask MaskApiKeyForSettings(string? raw)
+    {
+        if (string.IsNullOrEmpty(raw))
+            return new ApiKeySettingsMask(false, string.Empty);
+
+        return new ApiKeySettingsMask(true, "***");
     }
 
     private ConfigNode Visit(ConfigNode node)
@@ -54,7 +107,7 @@ public class SecretMasker : ISecretMasker
         {
             if (SensitiveKeys.Contains(kvp.Key))
             {
-                entries.Add(new KeyValuePair<string, ConfigNode>(kvp.Key, new ConfigScalar("---")));
+                entries.Add(new KeyValuePair<string, ConfigNode>(kvp.Key, new ConfigScalar(MaskValue)));
             }
             else
             {

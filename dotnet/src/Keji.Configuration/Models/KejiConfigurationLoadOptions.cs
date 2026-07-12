@@ -9,6 +9,7 @@ public class KejiConfigurationLoadOptions
     public bool FailOnMissingEnvironmentVariable { get; set; } = true;
     public long MaxConfigFileBytes { get; set; } = 1 * 1024 * 1024;
     public long MaxDotEnvFileBytes { get; set; } = 1 * 1024 * 1024;
+    public int MaxDotEnvLineLength { get; set; } = 16384;
     public int MaxDepth { get; set; } = 32;
     public int MaxNodeCount { get; set; } = 10000;
 }

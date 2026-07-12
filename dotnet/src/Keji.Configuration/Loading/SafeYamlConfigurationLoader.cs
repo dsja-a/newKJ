@@ -6,20 +6,6 @@ namespace Keji.Configuration.Loading;
 
 public class SafeYamlConfigurationLoader : IKejiConfigurationLoader
 {
-    private static readonly HashSet<Type> AllowedEvents = new()
-    {
-        typeof(StreamStart),
-        typeof(StreamEnd),
-        typeof(DocumentStart),
-        typeof(DocumentEnd),
-        typeof(Scalar),
-        typeof(MappingStart),
-        typeof(MappingEnd),
-        typeof(SequenceStart),
-        typeof(SequenceEnd),
-        typeof(AnchorAlias),
-    };
-
     public KejiConfigurationDocument Load(KejiConfigurationLoadOptions options)
     {
         var configPath = Path.Combine(options.ProjectRoot, options.ConfigFileName);
@@ -48,22 +34,44 @@ public class SafeYamlConfigurationLoader : IKejiConfigurationLoader
             throw new KejiConfigurationException($"Failed to read configuration file: {configPath}", ex);
         }
 
-        var visitor = new SafeYamlVisitor(options);
-        var root = visitor.Visit(yamlContent);
+        try
+        {
+            var visitor = new SafeYamlVisitor(options, configPath);
+            var root = visitor.Visit(yamlContent);
 
-        return new KejiConfigurationDocument(root);
+            if (root is not ConfigMap rootMap)
+                throw new KejiConfigurationException(
+                    $"Configuration file root must be a mapping, but got {root.NodeType}.", configPath);
+
+            return new KejiConfigurationDocument(rootMap);
+        }
+        catch (YamlException ex)
+        {
+            throw new KejiConfigurationException(
+                $"YAML parse error in '{configPath}' at line {ex.Start.Line}, column {ex.Start.Column}: {ex.Message}",
+                configPath);
+        }
+        catch (KejiConfigurationException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            throw new KejiConfigurationException($"Unexpected error parsing configuration: {configPath}", ex);
+        }
     }
 
     private sealed class SafeYamlVisitor
     {
         private readonly KejiConfigurationLoadOptions _options;
+        private readonly string _configPath;
         private int _depth;
         private int _nodeCount;
-        private readonly HashSet<string> _seenAliases = new();
 
-        public SafeYamlVisitor(KejiConfigurationLoadOptions options)
+        public SafeYamlVisitor(KejiConfigurationLoadOptions options, string configPath)
         {
             _options = options;
+            _configPath = configPath;
         }
 
         public ConfigMap Visit(string yamlContent)
@@ -73,23 +81,27 @@ public class SafeYamlConfigurationLoader : IKejiConfigurationLoader
             parser.Consume<StreamStart>();
             parser.Consume<DocumentStart>();
 
-            var result = ParseMapping(parser);
+            var result = ParseNode(parser);
 
             parser.Consume<DocumentEnd>();
             parser.Consume<StreamEnd>();
 
-            return result;
+            if (result is not ConfigMap rootMap)
+                throw new KejiConfigurationException(
+                    "Root of configuration file must be a mapping.", _configPath);
+
+            return rootMap;
         }
 
         private ConfigNode ParseNode(IParser parser)
         {
-            if (_depth > _options.MaxDepth)
+            if (_depth >= _options.MaxDepth)
                 throw new KejiConfigurationException(
-                    $"Configuration exceeds maximum depth of {_options.MaxDepth}");
+                    $"Configuration exceeds maximum depth of {_options.MaxDepth}.", _configPath);
 
-            if (_nodeCount > _options.MaxNodeCount)
+            if (_nodeCount >= _options.MaxNodeCount)
                 throw new KejiConfigurationException(
-                    $"Configuration exceeds maximum node count of {_options.MaxNodeCount}");
+                    $"Configuration exceeds maximum node count of {_options.MaxNodeCount}.", _configPath);
 
             _depth++;
 
@@ -98,6 +110,15 @@ public class SafeYamlConfigurationLoader : IKejiConfigurationLoader
                 if (parser.TryConsume<Scalar>(out var scalar))
                 {
                     _nodeCount++;
+
+                    if (!scalar.Tag.IsEmpty)
+                        throw new KejiConfigurationException(
+                            $"Custom YAML tag '{scalar.Tag}' on scalar is not allowed.", _configPath);
+
+                    if (!scalar.Anchor.IsEmpty)
+                        throw new KejiConfigurationException(
+                            "YAML anchors are not allowed for security.", _configPath);
+
                     return new ConfigScalar(scalar.Value);
                 }
 
@@ -105,27 +126,30 @@ public class SafeYamlConfigurationLoader : IKejiConfigurationLoader
                 {
                     _nodeCount++;
 
-                    if (mappingStart.IsCanonical)
-                        throw new KejiConfigurationException("YAML mapping with canonical format is not allowed.");
+                    if (!mappingStart.Tag.IsEmpty)
+                        throw new KejiConfigurationException(
+                            $"Custom YAML tag '{mappingStart.Tag}' on mapping is not allowed.", _configPath);
+
+                    if (!mappingStart.Anchor.IsEmpty)
+                        throw new KejiConfigurationException(
+                            "YAML anchors are not allowed for security.", _configPath);
 
                     var entries = new List<KeyValuePair<string, ConfigNode>>();
                     var seenKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
                     while (!parser.TryConsume<MappingEnd>(out _))
                     {
-                        if (!parser.TryConsume<Scalar>(out var keyScalar))
-                            throw new KejiConfigurationException(
-                                "Mapping keys must be scalar strings.");
+                        var keyNode = ParseNode(parser);
 
-                        if (keyScalar.Style != ScalarStyle.Plain && keyScalar.Style != ScalarStyle.SingleQuoted && keyScalar.Style != ScalarStyle.DoubleQuoted)
+                        if (keyNode is not ConfigScalar keyScalar)
                             throw new KejiConfigurationException(
-                                $"Unsupported key style: {keyScalar.Style}");
+                                "Mapping keys must be scalar strings.", _configPath);
 
-                        var key = keyScalar.Value;
+                        var key = keyScalar.Value ?? string.Empty;
 
                         if (!seenKeys.Add(key))
                             throw new KejiConfigurationException(
-                                $"Duplicate key '{key}' in YAML mapping.");
+                                $"Duplicate key '{key}' (case-insensitive) in YAML mapping.", _configPath);
 
                         var value = ParseNode(parser);
                         entries.Add(new KeyValuePair<string, ConfigNode>(key, value));
@@ -137,6 +161,15 @@ public class SafeYamlConfigurationLoader : IKejiConfigurationLoader
                 if (parser.TryConsume<SequenceStart>(out var seqStart))
                 {
                     _nodeCount++;
+
+                    if (!seqStart.Tag.IsEmpty)
+                        throw new KejiConfigurationException(
+                            $"Custom YAML tag '{seqStart.Tag}' on sequence is not allowed.", _configPath);
+
+                    if (!seqStart.Anchor.IsEmpty)
+                        throw new KejiConfigurationException(
+                            "YAML anchors are not allowed for security.", _configPath);
+
                     var items = new List<ConfigNode>();
 
                     while (!parser.TryConsume<SequenceEnd>(out _))
@@ -147,54 +180,19 @@ public class SafeYamlConfigurationLoader : IKejiConfigurationLoader
                     return new ConfigSequence(items);
                 }
 
-                if (parser.TryConsume<AnchorAlias>(out var alias))
+                if (parser.TryConsume<AnchorAlias>(out _))
                 {
-                    var aliasValue = alias.Value.Value ?? string.Empty;
-
-                    if (!_seenAliases.Add(aliasValue))
-                        throw new KejiConfigurationException(
-                            $"Duplicate YAML alias '{aliasValue}' detected.");
-
-                    _nodeCount++;
-
-                    if (aliasValue.Length > 0)
-                    {
-                        return new ConfigScalar(null);
-                    }
-
                     throw new KejiConfigurationException(
-                        "YAML anchors/aliases are not supported for security.");
+                        "YAML aliases (*) are not allowed for security.", _configPath);
                 }
 
                 throw new KejiConfigurationException(
-                    "Unsupported YAML construct encountered.");
+                    "Unsupported YAML construct encountered.", _configPath);
             }
             finally
             {
                 _depth--;
             }
-        }
-
-        private ConfigMap ParseMapping(IParser parser)
-        {
-            parser.Consume<MappingStart>();
-            var entries = new List<KeyValuePair<string, ConfigNode>>();
-            var seenKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-            while (!parser.TryConsume<MappingEnd>(out _))
-            {
-                var keyScalar = parser.Consume<Scalar>();
-                var key = keyScalar.Value;
-
-                if (!seenKeys.Add(key))
-                    throw new KejiConfigurationException(
-                        $"Duplicate key '{key}' in YAML mapping.");
-
-                var value = ParseNode(parser);
-                entries.Add(new KeyValuePair<string, ConfigNode>(key, value));
-            }
-
-            return new ConfigMap(entries);
         }
     }
 }
