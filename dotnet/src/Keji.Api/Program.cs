@@ -1,4 +1,5 @@
 using Keji.Api.HostedServices;
+using Keji.Api.Middleware;
 using Microsoft.Extensions.DependencyInjection;
 using Keji.Configuration.Loading;
 using Keji.Configuration.Models;
@@ -9,7 +10,8 @@ using Keji.Security.Options;
 
 var builder = WebApplication.CreateBuilder(args);
 
-var projectRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
+var projectRoot = builder.Configuration["Keji:ProjectRoot"]
+    ?? Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
 
 builder.Services.AddKejiConfigurationFoundation(o =>
 {
@@ -51,6 +53,7 @@ if (app.Environment.IsDevelopment())
     app.MapOpenApi();
 }
 
+app.UseMiddleware<KejiApiExceptionMiddleware>();
 app.UseMiddleware<KejiAuthenticationMiddleware>();
 app.MapControllers();
 

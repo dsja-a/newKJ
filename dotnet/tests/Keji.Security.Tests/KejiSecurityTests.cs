@@ -27,14 +27,11 @@ public class KejiSecurityTests
     static KejiSecurityTests()
     {
         JwtSecurityTokenHandler.DefaultMapInboundClaims = false;
-        Environment.SetEnvironmentVariable("KEJI_JWT_SECRET", null);
-        Environment.SetEnvironmentVariable("KEJI_API_KEY", null);
-        Environment.SetEnvironmentVariable("KEJI_ADMIN_PASSWORD", null);
     }
     private const string TestJwtSecret = "this-is-a-test-secret-that-is-at-least-32-bytes-long!!";
     private const string TestApiKey = "this-is-a-test-api-key-that-is-at-least-32-bytes!!";
     private const string TestPassword = "test_password_123";
-    private const string PythonBcryptFixture = "$2a$12$OcqTVPvKF43yxT2Kcmb/nOaBRg0icXiWTCRL3WYr46C5vQNw6GtGS";
+    private const string PythonBcryptFixture = "$2b$12$NALYZS3Y4x5WDT2L0SgC0u5G08Zlx7zXIMnO1L.PCNsNRdzLDx.I6";
 
     #region Configuration Tests (1-15)
 
@@ -97,6 +94,52 @@ public class KejiSecurityTests
     {
         var opts = Parse(new[] { ("enabled", "false"), ("auth_mode", "both") });
         Assert.False(opts.Enabled);
+    }
+
+    [Fact]
+    public void Config_DoesNotReadEnvironmentVariables()
+    {
+        var origJwt = Environment.GetEnvironmentVariable("KEJI_JWT_SECRET");
+        var origApi = Environment.GetEnvironmentVariable("KEJI_API_KEY");
+        var origPw = Environment.GetEnvironmentVariable("KEJI_ADMIN_PASSWORD");
+        try
+        {
+            Environment.SetEnvironmentVariable("KEJI_JWT_SECRET", "sentinel_secret_that_is_32_bytes_long!!sentinel");
+            Environment.SetEnvironmentVariable("KEJI_API_KEY", "sentinel_api_key_that_is_32_bytes_long!!sentinel");
+            Environment.SetEnvironmentVariable("KEJI_ADMIN_PASSWORD", "sentinel_admin_password_123!!sentinel");
+            var doc = new KejiConfigurationDocument(new ConfigMap(new[] {
+                KV("security", new ConfigMap(new[] {
+                    KV("enabled", S("false")),
+                })),
+            }));
+            var opts = KejiSecurityOptions.FromConfiguration(doc);
+            Assert.False(opts.Enabled);
+            Assert.Null(opts.JwtSecret);
+            Assert.Null(opts.ApiKey);
+            Assert.Null(opts.BootstrapAdmin.Password);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("KEJI_JWT_SECRET", origJwt);
+            Environment.SetEnvironmentVariable("KEJI_API_KEY", origApi);
+            Environment.SetEnvironmentVariable("KEJI_ADMIN_PASSWORD", origPw);
+        }
+    }
+
+    [Fact]
+    public void Config_DocumentValueWinsOverEnvVar()
+    {
+        var origJwt = Environment.GetEnvironmentVariable("KEJI_JWT_SECRET");
+        try
+        {
+            Environment.SetEnvironmentVariable("KEJI_JWT_SECRET", "wrong_value_that_should_not_be_used_!!");
+            var opts = Parse(new[] { ("jwt_secret", TestJwtSecret), ("api_key", TestApiKey) });
+            Assert.Equal(TestJwtSecret, opts.JwtSecret);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("KEJI_JWT_SECRET", origJwt);
+        }
     }
 
     [Fact]
@@ -194,23 +237,34 @@ public class KejiSecurityTests
     [Fact]
     public void Config_DoesNotReadProcessEnvDirectly()
     {
-        var envKey = "KJ_TEST_SECRET_" + Guid.NewGuid().ToString("N")[..8];
-        Environment.SetEnvironmentVariable(envKey, "leaked_secret");
+        var origJwt = Environment.GetEnvironmentVariable("KEJI_JWT_SECRET");
+        var origApi = Environment.GetEnvironmentVariable("KEJI_API_KEY");
+        var origPw = Environment.GetEnvironmentVariable("KEJI_ADMIN_PASSWORD");
         try
         {
-            var entries = new List<KeyValuePair<string, ConfigNode>>
-            {
-                KV("jwt_secret", S(TestJwtSecret)),
-                KV("api_key", S(TestApiKey)),
-            };
-            var doc = new KejiConfigurationDocument(new ConfigMap(new[] { KV("security", new ConfigMap(entries)) }));
+            Environment.SetEnvironmentVariable("KEJI_JWT_SECRET", "env_jwt_32_bytes_long_sentinel_value_!!");
+            Environment.SetEnvironmentVariable("KEJI_API_KEY", "env_api_32_bytes_long_sentinel_value_!!");
+            Environment.SetEnvironmentVariable("KEJI_ADMIN_PASSWORD", "env_pw_123_sentinel_value_!!");
+            var doc = new KejiConfigurationDocument(new ConfigMap(new[] {
+                KV("security", new ConfigMap(new[] {
+                    KV("enabled", S("true")),
+                    KV("auth_mode", S("both")),
+                    KV("jwt_secret", S(TestJwtSecret)),
+                    KV("api_key", S(TestApiKey)),
+                })),
+            }));
             var opts = KejiSecurityOptions.FromConfiguration(doc);
-            Assert.NotEqual("leaked_secret", opts.JwtSecret);
             Assert.Equal(TestJwtSecret, opts.JwtSecret);
+            Assert.Equal(TestApiKey, opts.ApiKey);
+            Assert.DoesNotContain("env_jwt", opts.JwtSecret);
+            Assert.DoesNotContain("env_api", opts.ApiKey);
+            Assert.Null(opts.BootstrapAdmin.Password);
         }
         finally
         {
-            Environment.SetEnvironmentVariable(envKey, null);
+            Environment.SetEnvironmentVariable("KEJI_JWT_SECRET", origJwt);
+            Environment.SetEnvironmentVariable("KEJI_API_KEY", origApi);
+            Environment.SetEnvironmentVariable("KEJI_ADMIN_PASSWORD", origPw);
         }
     }
 
@@ -514,6 +568,37 @@ public class KejiSecurityTests
         Assert.Contains("\"role\"", payloadJson);
         Assert.DoesNotContain("ClaimTypes.Role", payloadJson);
         Assert.Contains("\"sub\"", payloadJson);
+    }
+
+    [Fact]
+    public void Jwt_TimeProvider_Validation()
+    {
+        var fakeTime = new FakeTimeProvider();
+        fakeTime.SetUtcNow(new DateTimeOffset(2025, 1, 1, 0, 0, 0, TimeSpan.Zero));
+        var svc = CreateJwtService(clockSkewSeconds: 0, timeProvider: fakeTime);
+        var result = svc.CreateToken("u1", "user", "member");
+        var validation1 = svc.ValidateToken(result.Token);
+        Assert.True(validation1.IsValid);
+        fakeTime.Advance(TimeSpan.FromDays(400));
+        var validation2 = svc.ValidateToken(result.Token);
+        Assert.False(validation2.IsValid);
+    }
+
+    [Fact]
+    public void Jwt_TimeProvider_ClockSkew()
+    {
+        var fakeTime = new FakeTimeProvider();
+        fakeTime.SetUtcNow(new DateTimeOffset(2025, 1, 1, 0, 0, 0, TimeSpan.Zero));
+        var svc = CreateJwtService(clockSkewSeconds: 60, timeProvider: fakeTime);
+        var result = svc.CreateToken("u1", "user", "member");
+        var validation1 = svc.ValidateToken(result.Token);
+        Assert.True(validation1.IsValid);
+        fakeTime.Advance(TimeSpan.FromHours(72));
+        var validation2 = svc.ValidateToken(result.Token);
+        Assert.True(validation2.IsValid, "Should still be valid within 60s clock skew");
+        fakeTime.Advance(TimeSpan.FromSeconds(70));
+        var validation3 = svc.ValidateToken(result.Token);
+        Assert.False(validation3.IsValid, "Should expire after clock skew boundary");
     }
 
     [Fact]
@@ -1014,6 +1099,13 @@ public class KejiSecurityTests
         Assert.DoesNotContain("SQLite", body, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("SQL", body, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("服务器内部错误", body);
+    }
+
+    [Fact]
+    public void SecurityException_InnerException_Null()
+    {
+        var ex = new KejiSecurityException("Internal authentication error.");
+        Assert.Null(ex.InnerException);
     }
 
     #endregion
@@ -1634,9 +1726,11 @@ public class KejiSecurityTests
     private sealed class FakeTimeProvider : TimeProvider
     {
         private DateTimeOffset _now;
+        public FakeTimeProvider() { _now = DateTimeOffset.UtcNow; }
         public FakeTimeProvider(DateTimeOffset now) { _now = now; }
-        public override DateTimeOffset GetUtcNow() => _now;
+        public void SetUtcNow(DateTimeOffset now) => _now = now;
         public void Advance(TimeSpan delta) => _now = _now.Add(delta);
+        public override DateTimeOffset GetUtcNow() => _now;
     }
 
     private sealed class MockUserRepository : IUserRepository

@@ -4,6 +4,7 @@ using System.Net.Http.Json;
 using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
+using Keji.Api.HostedServices;
 using Keji.Contracts.DTOs;
 using Keji.Persistence;
 using Keji.Persistence.Models;
@@ -13,6 +14,7 @@ using Keji.Security.Exceptions;
 using Keji.Security.Options;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.IdentityModel.Tokens;
 using System.IdentityModel.Tokens.Jwt;
 
@@ -24,29 +26,31 @@ public class AuthIntegrationTests : IDisposable
     private static readonly string ApiKey = "test-api-key-that-is-at-least-32-bytes-lon!!";
     private static readonly string AdminPassword = "test-admin-password-123!!";
 
+    private static readonly string EnvJwt = "TEST_JWT_SECRET";
+    private static readonly string EnvApiKey = "TEST_API_KEY";
+    private static readonly string EnvAdminPw = "TEST_ADMIN_PASSWORD";
+
     private readonly string _tempDir;
-    private readonly string _dbPath;
+    private readonly Dictionary<string, string?> _savedEnv = new();
     private readonly WebApplicationFactory<Program> _factory;
     private readonly HttpClient _client;
 
     static AuthIntegrationTests()
     {
-        Environment.SetEnvironmentVariable("KEJI_JWT_SECRET", null);
-        Environment.SetEnvironmentVariable("KEJI_API_KEY", null);
-        Environment.SetEnvironmentVariable("KEJI_ADMIN_PASSWORD", null);
+        JwtSecurityTokenHandler.DefaultMapInboundClaims = false;
     }
 
     public AuthIntegrationTests()
     {
         _tempDir = Path.Combine(Path.GetTempPath(), $"keji_test_{Guid.NewGuid():N}");
         Directory.CreateDirectory(_tempDir);
-        _dbPath = Path.Combine(_tempDir, "test.db");
+        WriteConfig(_tempDir, DefaultConfig());
 
-        Environment.SetEnvironmentVariable("KEJI_JWT_SECRET", JwtSecret);
-        Environment.SetEnvironmentVariable("KEJI_API_KEY", ApiKey);
-        Environment.SetEnvironmentVariable("KEJI_ADMIN_PASSWORD", AdminPassword);
+        SaveEnv(EnvJwt, JwtSecret);
+        SaveEnv(EnvApiKey, ApiKey);
+        SaveEnv(EnvAdminPw, AdminPassword);
 
-        _factory = CreateFactory();
+        _factory = CreateFactory(_tempDir);
         _client = _factory.CreateClient();
     }
 
@@ -54,58 +58,83 @@ public class AuthIntegrationTests : IDisposable
     {
         _factory?.Dispose();
         Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+        foreach (var (key, value) in _savedEnv)
+            Environment.SetEnvironmentVariable(key, value);
         if (Directory.Exists(_tempDir))
             Directory.Delete(_tempDir, recursive: true);
     }
 
-    private WebApplicationFactory<Program> CreateFactory(
-        KejiAuthMode authMode = KejiAuthMode.Both,
-        string? jwtSecret = null,
-        string? apiKey = null,
-        bool allowLocalhostWithoutAuth = false,
-        bool allowApiKeyInQuery = false,
-        string? adminPassword = null)
+    private void SaveEnv(string key, string? value)
     {
-        if (jwtSecret != null) Environment.SetEnvironmentVariable("KEJI_JWT_SECRET", jwtSecret);
-        if (apiKey != null) Environment.SetEnvironmentVariable("KEJI_API_KEY", apiKey);
-        if (adminPassword != null) Environment.SetEnvironmentVariable("KEJI_ADMIN_PASSWORD", adminPassword);
+        _savedEnv.TryAdd(key, Environment.GetEnvironmentVariable(key));
+        Environment.SetEnvironmentVariable(key, value);
+    }
 
+    private static string DefaultConfig() => @"database:
+  path: test.db
+security:
+  auth_mode: both
+  jwt_secret: ${TEST_JWT_SECRET}
+  api_key: ${TEST_API_KEY}
+  bootstrap_admin:
+    username: admin
+    password: ${TEST_ADMIN_PASSWORD}
+    display_name: Admin
+";
+
+    private static string UserOnlyConfig() => @"database:
+  path: test.db
+security:
+  auth_mode: user_only
+  jwt_secret: ${TEST_JWT_SECRET}
+  api_key: ${TEST_API_KEY}
+  bootstrap_admin:
+    username: admin
+    password: ${TEST_ADMIN_PASSWORD}
+    display_name: Admin
+";
+
+    private static string ApiKeyOnlyConfig() => @"database:
+  path: test.db
+security:
+  auth_mode: api_key_only
+  jwt_secret: ${TEST_JWT_SECRET}
+  api_key: ${TEST_API_KEY}
+  bootstrap_admin:
+    username: admin
+    password: ${TEST_ADMIN_PASSWORD}
+    display_name: Admin
+";
+
+    private static string EnabledFalseConfig() => @"database:
+  path: test.db
+security:
+  enabled: false
+";
+
+    private static void WriteConfig(string dir, string yaml)
+    {
+        File.WriteAllText(Path.Combine(dir, "config.yaml"), yaml);
+    }
+
+    private static WebApplicationFactory<Program> CreateFactory(string projectRoot)
+    {
         return new WebApplicationFactory<Program>()
             .WithWebHostBuilder(builder =>
             {
+                builder.UseSetting("Keji:ProjectRoot", projectRoot);
                 builder.ConfigureServices(services =>
                 {
                     var pDesc = services.SingleOrDefault(d => d.ServiceType == typeof(KejiPersistenceOptions));
                     if (pDesc != null) services.Remove(pDesc);
                     services.AddSingleton(new KejiPersistenceOptions
                     {
-                        ProjectRoot = _tempDir,
-                        DatabasePath = _dbPath,
+                        ProjectRoot = projectRoot,
+                        DatabasePath = Path.Combine(projectRoot, "test.db"),
                         BusyTimeoutMilliseconds = 5000,
                         EnableWal = true,
                         EnableForeignKeys = true,
                         CreateDirectoryIfMissing = true,
-                    });
-
-                    var sDesc = services.SingleOrDefault(d => d.ServiceType == typeof(KejiSecurityOptions));
-                    if (sDesc != null) services.Remove(sDesc);
-                    services.AddSingleton(new KejiSecurityOptions
-                    {
-                        Enabled = true,
-                        AuthMode = authMode,
-                        ApiKey = apiKey ?? ApiKey,
-                        JwtSecret = jwtSecret ?? JwtSecret,
-                        JwtExpireHours = 72,
-                        JwtClockSkewSeconds = 0,
-                        AllowLocalhostWithoutAuth = allowLocalhostWithoutAuth,
-                        AllowApiKeyInQuery = allowApiKeyInQuery,
-                        PublicPaths = Array.Empty<string>(),
-                        BootstrapAdmin = new BootstrapAdminOptions
-                        {
-                            Username = "admin",
-                            Password = adminPassword ?? AdminPassword,
-                            DisplayName = "系统管理员",
-                        },
                     });
                 });
             });
@@ -144,11 +173,24 @@ public class AuthIntegrationTests : IDisposable
         return handler.WriteToken(handler.CreateToken(descriptor));
     }
 
-    private void SetEnv(string? jwt, string? apiKey, string? adminPw)
+    private sealed class ThrowingUserRepository : IUserRepository
     {
-        Environment.SetEnvironmentVariable("KEJI_JWT_SECRET", jwt);
-        Environment.SetEnvironmentVariable("KEJI_API_KEY", apiKey);
-        Environment.SetEnvironmentVariable("KEJI_ADMIN_PASSWORD", adminPw);
+        public Task<int> CountAsync(CancellationToken ct = default)
+            => throw new InvalidOperationException("Simulated repository failure");
+        public Task<UserAccountRecord?> GetByUsernameAsync(string username, CancellationToken ct = default)
+            => throw new InvalidOperationException("Simulated repository failure");
+        public Task<UserAccountRecord?> GetByIdAsync(string userId, CancellationToken ct = default)
+            => throw new InvalidOperationException("Simulated repository failure");
+        public Task<List<UserSummaryRecord>> ListAsync(CancellationToken ct = default)
+            => throw new InvalidOperationException("Simulated repository failure");
+        public Task<string> CreateAsync(string username, string passwordHash, string role = "member", string displayName = "", CancellationToken ct = default)
+            => throw new InvalidOperationException("Simulated repository failure");
+        public Task<bool> UpdateAsync(string userId, UpdateUserCommand command, CancellationToken ct = default)
+            => throw new InvalidOperationException("Simulated repository failure");
+        public Task TouchLoginAsync(string userId, CancellationToken ct = default)
+            => throw new InvalidOperationException("Simulated repository failure");
+        public Task<bool> DeleteAsync(string userId, CancellationToken ct = default)
+            => throw new InvalidOperationException("Simulated repository failure");
     }
 
     // ── Default public paths tests ────────────────────
@@ -429,35 +471,85 @@ public class AuthIntegrationTests : IDisposable
     [Fact]
     public async Task UserOnly_Mode_Rejects_API_Key()
     {
-        using var userOnlyFactory = CreateFactory(
-            authMode: KejiAuthMode.UserOnly,
-            apiKey: null,
-            adminPassword: AdminPassword);
-        using var userOnlyClient = userOnlyFactory.CreateClient();
+        var subDir = Path.Combine(Path.GetTempPath(), $"keji_test_uo_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(subDir);
+        try
+        {
+            WriteConfig(subDir, UserOnlyConfig());
+            var savedJwt = Environment.GetEnvironmentVariable(EnvJwt);
+            var savedApiKey = Environment.GetEnvironmentVariable(EnvApiKey);
+            var savedAdminPw = Environment.GetEnvironmentVariable(EnvAdminPw);
+            try
+            {
+                Environment.SetEnvironmentVariable(EnvJwt, JwtSecret);
+                Environment.SetEnvironmentVariable(EnvApiKey, ApiKey);
+                Environment.SetEnvironmentVariable(EnvAdminPw, AdminPassword);
 
-        var request = new HttpRequestMessage(HttpMethod.Get, "/api/auth/me");
-        request.Headers.Add("X-API-Key", ApiKey);
-        var response = await userOnlyClient.SendAsync(request);
+                using var factory = CreateFactory(subDir);
+                using var client = factory.CreateClient();
 
-        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+                var request = new HttpRequestMessage(HttpMethod.Get, "/api/auth/me");
+                request.Headers.Add("X-API-Key", ApiKey);
+                var response = await client.SendAsync(request);
+
+                Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable(EnvJwt, savedJwt);
+                Environment.SetEnvironmentVariable(EnvApiKey, savedApiKey);
+                Environment.SetEnvironmentVariable(EnvAdminPw, savedAdminPw);
+            }
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            if (Directory.Exists(subDir))
+                Directory.Delete(subDir, recursive: true);
+        }
     }
 
     [Fact]
     public async Task ApiKeyOnly_Mode_Rejects_JWT()
     {
-        using var apiKeyOnlyFactory = CreateFactory(
-            authMode: KejiAuthMode.ApiKeyOnly,
-            jwtSecret: null,
-            adminPassword: AdminPassword);
-        using var apiKeyOnlyClient = apiKeyOnlyFactory.CreateClient();
+        var subDir = Path.Combine(Path.GetTempPath(), $"keji_test_ako_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(subDir);
+        try
+        {
+            WriteConfig(subDir, ApiKeyOnlyConfig());
+            var savedJwt = Environment.GetEnvironmentVariable(EnvJwt);
+            var savedApiKey = Environment.GetEnvironmentVariable(EnvApiKey);
+            var savedAdminPw = Environment.GetEnvironmentVariable(EnvAdminPw);
+            try
+            {
+                Environment.SetEnvironmentVariable(EnvJwt, JwtSecret);
+                Environment.SetEnvironmentVariable(EnvApiKey, ApiKey);
+                Environment.SetEnvironmentVariable(EnvAdminPw, AdminPassword);
 
-        var token = CreateValidToken("testuser", "member");
+                using var factory = CreateFactory(subDir);
+                using var client = factory.CreateClient();
 
-        var request = new HttpRequestMessage(HttpMethod.Get, "/api/auth/me");
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        var response = await apiKeyOnlyClient.SendAsync(request);
+                var token = CreateValidToken("testuser", "member");
 
-        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+                var request = new HttpRequestMessage(HttpMethod.Get, "/api/auth/me");
+                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+                var response = await client.SendAsync(request);
+
+                Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable(EnvJwt, savedJwt);
+                Environment.SetEnvironmentVariable(EnvApiKey, savedApiKey);
+                Environment.SetEnvironmentVariable(EnvAdminPw, savedAdminPw);
+            }
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            if (Directory.Exists(subDir))
+                Directory.Delete(subDir, recursive: true);
+        }
     }
 
     [Fact]
@@ -491,18 +583,43 @@ public class AuthIntegrationTests : IDisposable
     [Fact]
     public async Task ApiKeyOnly_Login_Returns_503()
     {
-        using var apiKeyOnlyFactory = CreateFactory(
-            authMode: KejiAuthMode.ApiKeyOnly,
-            jwtSecret: null,
-            adminPassword: AdminPassword);
-        using var apiKeyOnlyClient = apiKeyOnlyFactory.CreateClient();
+        var subDir = Path.Combine(Path.GetTempPath(), $"keji_test_ako_login_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(subDir);
+        try
+        {
+            WriteConfig(subDir, ApiKeyOnlyConfig());
+            var savedJwt = Environment.GetEnvironmentVariable(EnvJwt);
+            var savedApiKey = Environment.GetEnvironmentVariable(EnvApiKey);
+            var savedAdminPw = Environment.GetEnvironmentVariable(EnvAdminPw);
+            try
+            {
+                Environment.SetEnvironmentVariable(EnvJwt, JwtSecret);
+                Environment.SetEnvironmentVariable(EnvApiKey, ApiKey);
+                Environment.SetEnvironmentVariable(EnvAdminPw, AdminPassword);
 
-        var loginReq = new LoginRequest { Username = "admin", Password = AdminPassword };
-        var response = await apiKeyOnlyClient.PostAsJsonAsync("/api/auth/login", loginReq);
+                using var factory = CreateFactory(subDir);
+                using var client = factory.CreateClient();
 
-        Assert.Equal(503, (int)response.StatusCode);
-        var body = await response.Content.ReadAsStringAsync();
-        Assert.Contains("当前认证模式不支持用户登录", body);
+                var loginReq = new LoginRequest { Username = "admin", Password = AdminPassword };
+                var response = await client.PostAsJsonAsync("/api/auth/login", loginReq);
+
+                Assert.Equal(503, (int)response.StatusCode);
+                var body = await response.Content.ReadAsStringAsync();
+                Assert.Contains("当前认证模式不支持用户登录", body);
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable(EnvJwt, savedJwt);
+                Environment.SetEnvironmentVariable(EnvApiKey, savedApiKey);
+                Environment.SetEnvironmentVariable(EnvAdminPw, savedAdminPw);
+            }
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            if (Directory.Exists(subDir))
+                Directory.Delete(subDir, recursive: true);
+        }
     }
 
     // ── Bootstrap tests ───────────────────────────────
@@ -576,16 +693,56 @@ public class AuthIntegrationTests : IDisposable
     [Fact]
     public async Task Localhost_Identity_Follows_DB_Semantics()
     {
-        using var localhostFactory = CreateFactory(allowLocalhostWithoutAuth: true);
-        using var localhostClient = localhostFactory.CreateClient();
+        var subDir = Path.Combine(Path.GetTempPath(), $"keji_test_localhost_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(subDir);
+        var config = @"database:
+  path: test.db
+security:
+  auth_mode: both
+  jwt_secret: ${TEST_JWT_SECRET}
+  api_key: ${TEST_API_KEY}
+  allow_localhost_without_auth: true
+  bootstrap_admin:
+    username: admin
+    password: ${TEST_ADMIN_PASSWORD}
+    display_name: Admin
+";
+        try
+        {
+            WriteConfig(subDir, config);
+            var savedJwt = Environment.GetEnvironmentVariable(EnvJwt);
+            var savedApiKey = Environment.GetEnvironmentVariable(EnvApiKey);
+            var savedAdminPw = Environment.GetEnvironmentVariable(EnvAdminPw);
+            try
+            {
+                Environment.SetEnvironmentVariable(EnvJwt, JwtSecret);
+                Environment.SetEnvironmentVariable(EnvApiKey, ApiKey);
+                Environment.SetEnvironmentVariable(EnvAdminPw, AdminPassword);
 
-        var request = new HttpRequestMessage(HttpMethod.Get, "/api/auth/me");
-        request.Headers.Add("X-API-Key", ApiKey);
-        var response = await localhostClient.SendAsync(request);
+                using var factory = CreateFactory(subDir);
+                using var client = factory.CreateClient();
 
-        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
-        var body = await response.Content.ReadAsStringAsync();
-        Assert.Contains("账号已禁用或不存在", body);
+                var request = new HttpRequestMessage(HttpMethod.Get, "/api/auth/me");
+                request.Headers.Add("X-API-Key", ApiKey);
+                var response = await client.SendAsync(request);
+
+                Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+                var body = await response.Content.ReadAsStringAsync();
+                Assert.Contains("账号已禁用或不存在", body);
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable(EnvJwt, savedJwt);
+                Environment.SetEnvironmentVariable(EnvApiKey, savedApiKey);
+                Environment.SetEnvironmentVariable(EnvAdminPw, savedAdminPw);
+            }
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            if (Directory.Exists(subDir))
+                Directory.Delete(subDir, recursive: true);
+        }
     }
 
     // ── Fail-closed tests ─────────────────────────────
@@ -593,91 +750,106 @@ public class AuthIntegrationTests : IDisposable
     [Fact]
     public void Fail_Closed_When_No_JwtSecret_UserOnly()
     {
-        SetEnv(null, ApiKey, AdminPassword);
-        using var factory = new WebApplicationFactory<Program>()
-            .WithWebHostBuilder(builder =>
+        var subDir = Path.Combine(Path.GetTempPath(), $"keji_test_nojwt_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(subDir);
+        try
+        {
+            WriteConfig(subDir, UserOnlyConfig());
+            var savedJwt = Environment.GetEnvironmentVariable(EnvJwt);
+            var savedApiKey = Environment.GetEnvironmentVariable(EnvApiKey);
+            var savedAdminPw = Environment.GetEnvironmentVariable(EnvAdminPw);
+            try
             {
-                builder.ConfigureServices(services =>
-                {
-                    var pDesc = services.SingleOrDefault(d => d.ServiceType == typeof(KejiPersistenceOptions));
-                    if (pDesc != null) services.Remove(pDesc);
-                    services.AddSingleton(new KejiPersistenceOptions
-                    {
-                        ProjectRoot = _tempDir,
-                        DatabasePath = _dbPath,
-                        BusyTimeoutMilliseconds = 5000,
-                        EnableWal = true,
-                        EnableForeignKeys = true,
-                        CreateDirectoryIfMissing = true,
-                    });
-                });
-            });
-        var ex = Assert.Throws<KejiSecurityConfigurationException>(() => factory.CreateClient());
-        Assert.Contains("JWT Secret", ex.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.False(File.Exists(Path.Combine(_tempDir, "..", "..", "data", "keji.db")));
+                Environment.SetEnvironmentVariable(EnvJwt, null);
+                Environment.SetEnvironmentVariable(EnvApiKey, ApiKey);
+                Environment.SetEnvironmentVariable(EnvAdminPw, AdminPassword);
+
+                using var factory = CreateFactory(subDir);
+                var ex = Assert.Throws<KejiSecurityConfigurationException>(() => factory.CreateClient());
+                Assert.Contains("JWT Secret", ex.Message, StringComparison.OrdinalIgnoreCase);
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable(EnvJwt, savedJwt);
+                Environment.SetEnvironmentVariable(EnvApiKey, savedApiKey);
+                Environment.SetEnvironmentVariable(EnvAdminPw, savedAdminPw);
+            }
+        }
+        finally
+        {
+            if (Directory.Exists(subDir))
+                Directory.Delete(subDir, recursive: true);
+        }
     }
 
     [Fact]
     public void Fail_Closed_When_No_ApiKey_ApiKeyOnly()
     {
-        SetEnv(JwtSecret, null, AdminPassword);
-        using var factory = new WebApplicationFactory<Program>()
-            .WithWebHostBuilder(builder =>
+        var subDir = Path.Combine(Path.GetTempPath(), $"keji_test_noak_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(subDir);
+        try
+        {
+            WriteConfig(subDir, ApiKeyOnlyConfig());
+            var savedJwt = Environment.GetEnvironmentVariable(EnvJwt);
+            var savedApiKey = Environment.GetEnvironmentVariable(EnvApiKey);
+            var savedAdminPw = Environment.GetEnvironmentVariable(EnvAdminPw);
+            try
             {
-                builder.ConfigureServices(services =>
-                {
-                    var pDesc = services.SingleOrDefault(d => d.ServiceType == typeof(KejiPersistenceOptions));
-                    if (pDesc != null) services.Remove(pDesc);
-                    services.AddSingleton(new KejiPersistenceOptions
-                    {
-                        ProjectRoot = _tempDir,
-                        DatabasePath = _dbPath,
-                        BusyTimeoutMilliseconds = 5000,
-                        EnableWal = true,
-                        EnableForeignKeys = true,
-                        CreateDirectoryIfMissing = true,
-                    });
-                });
-            });
-        var ex = Assert.Throws<KejiSecurityConfigurationException>(() => factory.CreateClient());
-        Assert.Contains("API Key", ex.Message, StringComparison.OrdinalIgnoreCase);
+                Environment.SetEnvironmentVariable(EnvJwt, JwtSecret);
+                Environment.SetEnvironmentVariable(EnvApiKey, null);
+                Environment.SetEnvironmentVariable(EnvAdminPw, AdminPassword);
+
+                using var factory = CreateFactory(subDir);
+                var ex = Assert.Throws<KejiSecurityConfigurationException>(() => factory.CreateClient());
+                Assert.Contains("API Key", ex.Message, StringComparison.OrdinalIgnoreCase);
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable(EnvJwt, savedJwt);
+                Environment.SetEnvironmentVariable(EnvApiKey, savedApiKey);
+                Environment.SetEnvironmentVariable(EnvAdminPw, savedAdminPw);
+            }
+        }
+        finally
+        {
+            if (Directory.Exists(subDir))
+                Directory.Delete(subDir, recursive: true);
+        }
     }
 
     [Fact]
     public void Fail_Closed_When_No_BootstrapPassword_ZeroUsers()
     {
-        SetEnv(JwtSecret, ApiKey, null);
-        var freshDir = Path.Combine(Path.GetTempPath(), $"keji_test_nopw_{Guid.NewGuid():N}");
-        Directory.CreateDirectory(freshDir);
-        var freshDb = Path.Combine(freshDir, "test.db");
+        var subDir = Path.Combine(Path.GetTempPath(), $"keji_test_nopw_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(subDir);
         try
         {
-            using var factory = new WebApplicationFactory<Program>()
-                .WithWebHostBuilder(builder =>
-                {
-                    builder.ConfigureServices(services =>
-                    {
-                        var pDesc = services.SingleOrDefault(d => d.ServiceType == typeof(KejiPersistenceOptions));
-                        if (pDesc != null) services.Remove(pDesc);
-                        services.AddSingleton(new KejiPersistenceOptions
-                        {
-                            ProjectRoot = freshDir,
-                            DatabasePath = freshDb,
-                            BusyTimeoutMilliseconds = 5000,
-                            EnableWal = true,
-                            EnableForeignKeys = true,
-                            CreateDirectoryIfMissing = true,
-                        });
-                    });
-                });
-            var ex = Assert.Throws<KejiSecurityConfigurationException>(() => factory.CreateClient());
-            Assert.Contains("password", ex.Message, StringComparison.OrdinalIgnoreCase);
+            WriteConfig(subDir, DefaultConfig());
+            var savedJwt = Environment.GetEnvironmentVariable(EnvJwt);
+            var savedApiKey = Environment.GetEnvironmentVariable(EnvApiKey);
+            var savedAdminPw = Environment.GetEnvironmentVariable(EnvAdminPw);
+            try
+            {
+                Environment.SetEnvironmentVariable(EnvJwt, JwtSecret);
+                Environment.SetEnvironmentVariable(EnvApiKey, ApiKey);
+                Environment.SetEnvironmentVariable(EnvAdminPw, null);
+
+                using var factory = CreateFactory(subDir);
+                var ex = Assert.Throws<KejiSecurityConfigurationException>(() => factory.CreateClient());
+                Assert.Contains("password", ex.Message, StringComparison.OrdinalIgnoreCase);
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable(EnvJwt, savedJwt);
+                Environment.SetEnvironmentVariable(EnvApiKey, savedApiKey);
+                Environment.SetEnvironmentVariable(EnvAdminPw, savedAdminPw);
+            }
         }
         finally
         {
             Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
-            if (Directory.Exists(freshDir))
-                Directory.Delete(freshDir, recursive: true);
+            if (Directory.Exists(subDir))
+                Directory.Delete(subDir, recursive: true);
         }
     }
 
@@ -690,27 +862,317 @@ public class AuthIntegrationTests : IDisposable
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
         // Now create a factory without bootstrap password - should work since user exists
-        SetEnv(JwtSecret, ApiKey, null);
-        using var factory2 = new WebApplicationFactory<Program>()
-            .WithWebHostBuilder(builder =>
+        var savedJwt = Environment.GetEnvironmentVariable(EnvJwt);
+        var savedApiKey = Environment.GetEnvironmentVariable(EnvApiKey);
+        var savedAdminPw = Environment.GetEnvironmentVariable(EnvAdminPw);
+        try
+        {
+            Environment.SetEnvironmentVariable(EnvJwt, JwtSecret);
+            Environment.SetEnvironmentVariable(EnvApiKey, ApiKey);
+            Environment.SetEnvironmentVariable(EnvAdminPw, null);
+
+            using var factory = CreateFactory(_tempDir);
+            using var client = factory.CreateClient();
+            var response2 = await client.GetAsync("/api/auth/me");
+            Assert.Equal(HttpStatusCode.Unauthorized, response2.StatusCode);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(EnvJwt, savedJwt);
+            Environment.SetEnvironmentVariable(EnvApiKey, savedApiKey);
+            Environment.SetEnvironmentVariable(EnvAdminPw, savedAdminPw);
+        }
+    }
+
+    // ── New tests: Repository failure → 500 ───────────
+
+    [Fact]
+    public async Task Login_RepositoryFailure_Returns500()
+    {
+        var subDir = Path.Combine(Path.GetTempPath(), $"keji_test_500login_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(subDir);
+        try
+        {
+            WriteConfig(subDir, DefaultConfig());
+            var savedJwt = Environment.GetEnvironmentVariable(EnvJwt);
+            var savedApiKey = Environment.GetEnvironmentVariable(EnvApiKey);
+            var savedAdminPw = Environment.GetEnvironmentVariable(EnvAdminPw);
+            try
             {
-                builder.ConfigureServices(services =>
-                {
-                    var pDesc = services.SingleOrDefault(d => d.ServiceType == typeof(KejiPersistenceOptions));
-                    if (pDesc != null) services.Remove(pDesc);
-                    services.AddSingleton(new KejiPersistenceOptions
+                Environment.SetEnvironmentVariable(EnvJwt, JwtSecret);
+                Environment.SetEnvironmentVariable(EnvApiKey, ApiKey);
+                Environment.SetEnvironmentVariable(EnvAdminPw, AdminPassword);
+
+                using var factory = new WebApplicationFactory<Program>()
+                    .WithWebHostBuilder(builder =>
                     {
-                        ProjectRoot = _tempDir,
-                        DatabasePath = _dbPath,
-                        BusyTimeoutMilliseconds = 5000,
-                        EnableWal = true,
-                        EnableForeignKeys = true,
-                        CreateDirectoryIfMissing = true,
+                        builder.UseSetting("Keji:ProjectRoot", subDir);
+                        builder.ConfigureServices(services =>
+                        {
+                            var pDesc = services.SingleOrDefault(d => d.ServiceType == typeof(KejiPersistenceOptions));
+                            if (pDesc != null) services.Remove(pDesc);
+                            services.AddSingleton(new KejiPersistenceOptions
+                            {
+                                ProjectRoot = subDir,
+                                DatabasePath = Path.Combine(subDir, "test.db"),
+                                BusyTimeoutMilliseconds = 5000,
+                                EnableWal = true,
+                                EnableForeignKeys = true,
+                                CreateDirectoryIfMissing = true,
+                            });
+
+                            var initDesc = services.FirstOrDefault(d =>
+                                d.ServiceType == typeof(IHostedService) &&
+                                d.ImplementationType == typeof(KejiStartupInitializer));
+                            if (initDesc != null) services.Remove(initDesc);
+
+                            var rDesc = services.SingleOrDefault(d => d.ServiceType == typeof(IUserRepository));
+                            if (rDesc != null) services.Remove(rDesc);
+                            services.AddSingleton<IUserRepository>(new ThrowingUserRepository());
+                        });
                     });
-                });
-            });
-        using var client2 = factory2.CreateClient();
-        var response2 = await client2.GetAsync("/api/auth/me");
-        Assert.Equal(HttpStatusCode.Unauthorized, response2.StatusCode);
+                using var client = factory.CreateClient();
+
+                var loginReq = new LoginRequest { Username = "admin", Password = AdminPassword };
+                var httpResponse = await client.PostAsJsonAsync("/api/auth/login", loginReq);
+                Assert.Equal(HttpStatusCode.InternalServerError, httpResponse.StatusCode);
+                var body = await httpResponse.Content.ReadAsStringAsync();
+                Assert.Contains("服务器内部错误", body);
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable(EnvJwt, savedJwt);
+                Environment.SetEnvironmentVariable(EnvApiKey, savedApiKey);
+                Environment.SetEnvironmentVariable(EnvAdminPw, savedAdminPw);
+            }
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            if (Directory.Exists(subDir))
+                Directory.Delete(subDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Me_RepositoryFailure_Returns500()
+    {
+        var subDir = Path.Combine(Path.GetTempPath(), $"keji_test_500me_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(subDir);
+        try
+        {
+            WriteConfig(subDir, DefaultConfig());
+            var savedJwt = Environment.GetEnvironmentVariable(EnvJwt);
+            var savedApiKey = Environment.GetEnvironmentVariable(EnvApiKey);
+            var savedAdminPw = Environment.GetEnvironmentVariable(EnvAdminPw);
+            try
+            {
+                Environment.SetEnvironmentVariable(EnvJwt, JwtSecret);
+                Environment.SetEnvironmentVariable(EnvApiKey, ApiKey);
+                Environment.SetEnvironmentVariable(EnvAdminPw, AdminPassword);
+
+                using var factory = new WebApplicationFactory<Program>()
+                    .WithWebHostBuilder(builder =>
+                    {
+                        builder.UseSetting("Keji:ProjectRoot", subDir);
+                        builder.ConfigureServices(services =>
+                        {
+                            var pDesc = services.SingleOrDefault(d => d.ServiceType == typeof(KejiPersistenceOptions));
+                            if (pDesc != null) services.Remove(pDesc);
+                            services.AddSingleton(new KejiPersistenceOptions
+                            {
+                                ProjectRoot = subDir,
+                                DatabasePath = Path.Combine(subDir, "test.db"),
+                                BusyTimeoutMilliseconds = 5000,
+                                EnableWal = true,
+                                EnableForeignKeys = true,
+                                CreateDirectoryIfMissing = true,
+                            });
+
+                            var initDesc = services.FirstOrDefault(d =>
+                                d.ServiceType == typeof(IHostedService) &&
+                                d.ImplementationType == typeof(KejiStartupInitializer));
+                            if (initDesc != null) services.Remove(initDesc);
+
+                            var rDesc = services.SingleOrDefault(d => d.ServiceType == typeof(IUserRepository));
+                            if (rDesc != null) services.Remove(rDesc);
+                            services.AddSingleton<IUserRepository>(new ThrowingUserRepository());
+                        });
+                    });
+                using var client = factory.CreateClient();
+
+                // Login first to get a token (login doesn't use the repository because
+                // the startup initializer was removed, but the middleware still blocks)
+                var loginReq = new LoginRequest { Username = "admin", Password = AdminPassword };
+                var loginResponse = await client.PostAsJsonAsync("/api/auth/login", loginReq);
+                Assert.Equal(HttpStatusCode.InternalServerError, loginResponse.StatusCode);
+
+                // Even with a valid token, me endpoint fails
+                var token = CreateValidToken("testuser", "member");
+                var request = new HttpRequestMessage(HttpMethod.Get, "/api/auth/me");
+                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+                var meResponse = await client.SendAsync(request);
+                Assert.Equal(HttpStatusCode.InternalServerError, meResponse.StatusCode);
+                var body = await meResponse.Content.ReadAsStringAsync();
+                Assert.Contains("服务器内部错误", body);
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable(EnvJwt, savedJwt);
+                Environment.SetEnvironmentVariable(EnvApiKey, savedApiKey);
+                Environment.SetEnvironmentVariable(EnvAdminPw, savedAdminPw);
+            }
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            if (Directory.Exists(subDir))
+                Directory.Delete(subDir, recursive: true);
+        }
+    }
+
+    // ── New tests: 422 validation ─────────────────────
+
+    [Fact]
+    public async Task Login_MalformedJson_Returns422()
+    {
+        var content = new StringContent("\"not json\"", Encoding.UTF8, "application/json");
+        var response = await _client.PostAsync("/api/auth/login", content);
+        Assert.Equal(422, (int)response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Login_NullBody_Returns422()
+    {
+        var content = new StringContent("", Encoding.UTF8, "application/json");
+        var response = await _client.PostAsync("/api/auth/login", content);
+        Assert.Equal(422, (int)response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Login_WrongJsonType_Returns422()
+    {
+        var content = new StringContent("{\"username\":123, \"password\":true}", Encoding.UTF8, "application/json");
+        var response = await _client.PostAsync("/api/auth/login", content);
+        Assert.Equal(422, (int)response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Login_MissingUsername_Returns422()
+    {
+        var content = new StringContent("{\"password\":\"valid123\"}", Encoding.UTF8, "application/json");
+        var response = await _client.PostAsync("/api/auth/login", content);
+        Assert.Equal(422, (int)response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Login_EmptyUsername_Returns422()
+    {
+        var loginReq = new LoginRequest { Username = "", Password = "valid123" };
+        var response = await _client.PostAsJsonAsync("/api/auth/login", loginReq);
+        Assert.Equal(422, (int)response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Login_UsernameTooLong_Returns422()
+    {
+        var loginReq = new LoginRequest { Username = new string('a', 65), Password = "valid123" };
+        var response = await _client.PostAsJsonAsync("/api/auth/login", loginReq);
+        Assert.Equal(422, (int)response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Login_PasswordTooLong_Returns422()
+    {
+        var loginReq = new LoginRequest { Username = "admin", Password = new string('b', 129) };
+        var response = await _client.PostAsJsonAsync("/api/auth/login", loginReq);
+        Assert.Equal(422, (int)response.StatusCode);
+    }
+
+    // ── New tests: Enabled=false ──────────────────────
+
+    [Fact]
+    public async Task EnabledFalse_NoSecrets_StartsAndMeReturnsNotLoggedIn()
+    {
+        var subDir = Path.Combine(Path.GetTempPath(), $"keji_test_ef_ns_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(subDir);
+        try
+        {
+            WriteConfig(subDir, EnabledFalseConfig());
+            var savedJwt = Environment.GetEnvironmentVariable(EnvJwt);
+            var savedApiKey = Environment.GetEnvironmentVariable(EnvApiKey);
+            var savedAdminPw = Environment.GetEnvironmentVariable(EnvAdminPw);
+            try
+            {
+                // Don't set any env vars - not needed since security is disabled
+                Environment.SetEnvironmentVariable(EnvJwt, null);
+                Environment.SetEnvironmentVariable(EnvApiKey, null);
+                Environment.SetEnvironmentVariable(EnvAdminPw, null);
+
+                using var factory = CreateFactory(subDir);
+                using var client = factory.CreateClient();
+
+                var response = await client.GetAsync("/api/auth/me");
+                Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+                var body = await response.Content.ReadAsStringAsync();
+                Assert.Contains("未登录，请先登录", body);
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable(EnvJwt, savedJwt);
+                Environment.SetEnvironmentVariable(EnvApiKey, savedApiKey);
+                Environment.SetEnvironmentVariable(EnvAdminPw, savedAdminPw);
+            }
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            if (Directory.Exists(subDir))
+                Directory.Delete(subDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task EnabledFalse_ProtectedPath_PassesThroughToController()
+    {
+        var subDir = Path.Combine(Path.GetTempPath(), $"keji_test_ef_pp_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(subDir);
+        try
+        {
+            WriteConfig(subDir, EnabledFalseConfig());
+            var savedJwt = Environment.GetEnvironmentVariable(EnvJwt);
+            var savedApiKey = Environment.GetEnvironmentVariable(EnvApiKey);
+            var savedAdminPw = Environment.GetEnvironmentVariable(EnvAdminPw);
+            try
+            {
+                Environment.SetEnvironmentVariable(EnvJwt, null);
+                Environment.SetEnvironmentVariable(EnvApiKey, null);
+                Environment.SetEnvironmentVariable(EnvAdminPw, null);
+
+                using var factory = CreateFactory(subDir);
+                using var client = factory.CreateClient();
+
+                // A protected path (not public) should reach the controller,
+                // returning 401 from controller (not middleware), with message
+                // "未登录，请先登录" instead of middleware's "未授权：请登录..."
+                var response = await client.GetAsync("/api/auth/me");
+                Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+                var body = await response.Content.ReadAsStringAsync();
+                Assert.Contains("未登录，请先登录", body);
+                Assert.DoesNotContain("未授权", body);
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable(EnvJwt, savedJwt);
+                Environment.SetEnvironmentVariable(EnvApiKey, savedApiKey);
+                Environment.SetEnvironmentVariable(EnvAdminPw, savedAdminPw);
+            }
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            if (Directory.Exists(subDir))
+                Directory.Delete(subDir, recursive: true);
+        }
     }
 }

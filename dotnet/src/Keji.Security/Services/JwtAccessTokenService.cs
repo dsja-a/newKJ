@@ -37,6 +37,15 @@ public class JwtAccessTokenService : IAccessTokenService
             ValidateLifetime = true,
             ClockSkew = TimeSpan.FromSeconds(options.JwtClockSkewSeconds),
             ValidAlgorithms = new[] { SecurityAlgorithms.HmacSha256 },
+            LifetimeValidator = (DateTime? notBefore, DateTime? expires, SecurityToken token, TokenValidationParameters parameters) =>
+            {
+                var now = _timeProvider.GetUtcNow().UtcDateTime;
+                if (expires.HasValue && expires.Value < now.Add(-parameters.ClockSkew))
+                    return false;
+                if (notBefore.HasValue && notBefore.Value > now.Add(parameters.ClockSkew))
+                    return false;
+                return true;
+            },
         };
     }
 
@@ -60,6 +69,7 @@ public class JwtAccessTokenService : IAccessTokenService
         var tokenDescriptor = new SecurityTokenDescriptor
         {
             Subject = new ClaimsIdentity(claims),
+            NotBefore = now.UtcDateTime,
             Expires = expires.UtcDateTime,
             IssuedAt = now.UtcDateTime,
             SigningCredentials = new SigningCredentials(_signingKey, SecurityAlgorithms.HmacSha256),
@@ -68,7 +78,6 @@ public class JwtAccessTokenService : IAccessTokenService
         var tokenHandler = new JwtSecurityTokenHandler();
         var token = tokenHandler.CreateToken(tokenDescriptor);
         var tokenString = tokenHandler.WriteToken(token);
-        var actualIat = new DateTimeOffset(now.UtcDateTime).ToUnixTimeSeconds();
 
         return new AccessTokenResult(tokenString, expiresIn);
     }

@@ -125,9 +125,9 @@ public class KejiRequestAuthenticator : IRequestAuthenticator
         {
             throw;
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            throw new KejiSecurityException("Internal authentication error.", ex);
+            throw new KejiSecurityException("Internal authentication error.");
         }
     }
 
