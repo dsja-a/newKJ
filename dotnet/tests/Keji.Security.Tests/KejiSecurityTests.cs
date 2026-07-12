@@ -532,21 +532,103 @@ public class KejiSecurityTests
     }
 
     [Fact]
-    public void Jwt_PythonCompatibleToken_Validates()
+    public void Jwt_PythonCompatibleToken_WithFakeTime_Validates()
     {
-        var svc = CreateJwtService();
-        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-        var exp = now + 3600;
-        var payload = $"{{\"sub\":\"py-user\",\"username\":\"python_user\",\"role\":\"member\",\"iat\":{now},\"exp\":{exp}}}";
-        var headerB64 = B64Url(Encoding.UTF8.GetBytes("{\"alg\":\"HS256\",\"typ\":\"JWT\"}"));
-        var payloadB64 = B64Url(Encoding.UTF8.GetBytes(payload));
-        using var hmac = new System.Security.Cryptography.HMACSHA256(Encoding.UTF8.GetBytes(TestJwtSecret));
-        var sig = B64Url(hmac.ComputeHash(Encoding.UTF8.GetBytes($"{headerB64}.{payloadB64}")));
-        var pythonToken = $"{headerB64}.{payloadB64}.{sig}";
+        var fakeTime = new FakeTimeProvider();
+        fakeTime.SetUtcNow(new DateTimeOffset(2025, 1, 1, 0, 0, 0, TimeSpan.Zero));
+        var svc = CreateJwtService(clockSkewSeconds: 0, timeProvider: fakeTime);
+        var iat = ((DateTimeOffset)new DateTime(2025, 1, 1, 0, 0, 0, DateTimeKind.Utc)).ToUnixTimeSeconds();
+        var exp = iat + 3600;
+        var pythonToken = CreatePythonJwt(iat, exp);
 
         var validation = svc.ValidateToken(pythonToken);
         Assert.True(validation.IsValid);
         Assert.Equal("python_user", validation.Claims!.Username);
+        var payloadB64 = pythonToken.Split('.')[1].Replace('-', '+').Replace('_', '/');
+        var remainder = payloadB64.Length % 4;
+        if (remainder == 2) payloadB64 += "==";
+        else if (remainder == 3) payloadB64 += "=";
+        var payloadJson = Encoding.UTF8.GetString(Convert.FromBase64String(payloadB64));
+        Assert.Contains("\"username\"", payloadJson);
+        Assert.DoesNotContain("\"unique_name\"", payloadJson);
+    }
+
+    [Fact]
+    public void Jwt_PythonCompatibleToken_Expired_WithFakeTime()
+    {
+        var fakeTime = new FakeTimeProvider();
+        fakeTime.SetUtcNow(new DateTimeOffset(2025, 1, 1, 0, 0, 0, TimeSpan.Zero));
+        var svc = CreateJwtService(clockSkewSeconds: 0, timeProvider: fakeTime);
+        var iat = ((DateTimeOffset)new DateTime(2025, 1, 1, 0, 0, 0, DateTimeKind.Utc)).ToUnixTimeSeconds();
+        var exp = iat + 3600;
+        var pythonToken = CreatePythonJwt(iat, exp);
+
+        var validation1 = svc.ValidateToken(pythonToken);
+        Assert.True(validation1.IsValid);
+
+        fakeTime.Advance(TimeSpan.FromSeconds(3601));
+        var validation2 = svc.ValidateToken(pythonToken);
+        Assert.False(validation2.IsValid);
+    }
+
+    [Fact]
+    public void Jwt_PythonCompatibleToken_ClockSkew_WithFakeTime()
+    {
+        var fakeTime = new FakeTimeProvider();
+        fakeTime.SetUtcNow(new DateTimeOffset(2025, 1, 1, 0, 0, 0, TimeSpan.Zero));
+        var svc = CreateJwtService(clockSkewSeconds: 60, timeProvider: fakeTime);
+        var iat = ((DateTimeOffset)new DateTime(2025, 1, 1, 0, 0, 0, DateTimeKind.Utc)).ToUnixTimeSeconds();
+        var exp = iat + 3600;
+        var pythonToken = CreatePythonJwt(iat, exp);
+
+        var validation1 = svc.ValidateToken(pythonToken);
+        Assert.True(validation1.IsValid);
+
+        fakeTime.Advance(TimeSpan.FromSeconds(3600));
+        var validation2 = svc.ValidateToken(pythonToken);
+        Assert.True(validation2.IsValid, "Should still be valid within 60s clock skew");
+
+        fakeTime.Advance(TimeSpan.FromSeconds(70));
+        var validation3 = svc.ValidateToken(pythonToken);
+        Assert.False(validation3.IsValid, "Should expire after clock skew boundary");
+    }
+
+    [Fact]
+    public void Jwt_MissingExp_Rejected()
+    {
+        var svc = CreateJwtService();
+        var token = CreateJwtWithMissingClaim("exp", "user1", "testuser", "member");
+        var validation = svc.ValidateToken(token);
+        Assert.False(validation.IsValid);
+        Assert.DoesNotContain(token, validation.FailureReason, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(TestJwtSecret, validation.FailureReason, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Jwt_InvalidExp_Rejected()
+    {
+        var svc = CreateJwtService();
+        var token = CreateJwtWithMissingClaim("exp", "user1", "testuser", "member", invalidValue: "\"not-a-number\"");
+        var validation = svc.ValidateToken(token);
+        Assert.False(validation.IsValid);
+    }
+
+    [Fact]
+    public void Jwt_MissingIat_Rejected()
+    {
+        var svc = CreateJwtService();
+        var token = CreateJwtWithMissingClaim("iat", "user1", "testuser", "member");
+        var validation = svc.ValidateToken(token);
+        Assert.False(validation.IsValid);
+    }
+
+    [Fact]
+    public void Jwt_InvalidIat_Rejected()
+    {
+        var svc = CreateJwtService();
+        var token = CreateJwtWithMissingClaim("iat", "user1", "testuser", "member", invalidValue: "\"nan\"");
+        var validation = svc.ValidateToken(token);
+        Assert.False(validation.IsValid);
     }
 
     [Fact]
@@ -1688,7 +1770,7 @@ public class KejiSecurityTests
         return $"{headerB64}.{payloadB64}.{sig}";
     }
 
-    private static string CreateJwtWithMissingClaim(string claimToRemove, string sub, string username, string role)
+    private static string CreateJwtWithMissingClaim(string claimToRemove, string sub, string username, string role, string? invalidValue = null)
     {
         var header = "{\"alg\":\"HS256\",\"typ\":\"JWT\"}";
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
@@ -1701,14 +1783,39 @@ public class KejiSecurityTests
             $"\"iat\":{now}",
             $"\"exp\":{exp}"
         };
-        var filtered = claimToRemove switch
+        List<string> filtered;
+        if (claimToRemove is "exp" or "iat" && invalidValue != null)
         {
-            "sub" => claims.Where(c => !c.StartsWith("\"sub\"")).ToList(),
-            "username" => claims.Where(c => !c.StartsWith("\"username\"")).ToList(),
-            "role" => claims.Where(c => !c.StartsWith("\"role\"")).ToList(),
-            _ => claims
-        };
+            filtered = claims.Select(c =>
+            {
+                if (c.StartsWith($"\"{claimToRemove}\":")) return $"\"{claimToRemove}\":{invalidValue}";
+                return c;
+            }).ToList();
+        }
+        else
+        {
+            filtered = claimToRemove switch
+            {
+                "sub" => claims.Where(c => !c.StartsWith("\"sub\"")).ToList(),
+                "username" => claims.Where(c => !c.StartsWith("\"username\"")).ToList(),
+                "role" => claims.Where(c => !c.StartsWith("\"role\"")).ToList(),
+                "exp" => claims.Where(c => !c.StartsWith("\"exp\"")).ToList(),
+                "iat" => claims.Where(c => !c.StartsWith("\"iat\"")).ToList(),
+                _ => claims
+            };
+        }
         var payload = "{" + string.Join(",", filtered) + "}";
+        var headerB64 = B64Url(Encoding.UTF8.GetBytes(header));
+        var payloadB64 = B64Url(Encoding.UTF8.GetBytes(payload));
+        using var hmac = new System.Security.Cryptography.HMACSHA256(Encoding.UTF8.GetBytes(TestJwtSecret));
+        var sig = B64Url(hmac.ComputeHash(Encoding.UTF8.GetBytes($"{headerB64}.{payloadB64}")));
+        return $"{headerB64}.{payloadB64}.{sig}";
+    }
+
+    private static string CreatePythonJwt(long iat, long exp, string sub = "py-user", string username = "python_user", string role = "member")
+    {
+        var header = "{\"alg\":\"HS256\",\"typ\":\"JWT\"}";
+        var payload = $"{{\"sub\":\"{sub}\",\"username\":\"{username}\",\"role\":\"{role}\",\"iat\":{iat},\"exp\":{exp}}}";
         var headerB64 = B64Url(Encoding.UTF8.GetBytes(header));
         var payloadB64 = B64Url(Encoding.UTF8.GetBytes(payload));
         using var hmac = new System.Security.Cryptography.HMACSHA256(Encoding.UTF8.GetBytes(TestJwtSecret));

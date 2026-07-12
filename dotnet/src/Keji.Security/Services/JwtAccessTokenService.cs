@@ -39,8 +39,10 @@ public class JwtAccessTokenService : IAccessTokenService
             ValidAlgorithms = new[] { SecurityAlgorithms.HmacSha256 },
             LifetimeValidator = (DateTime? notBefore, DateTime? expires, SecurityToken token, TokenValidationParameters parameters) =>
             {
+                if (expires == null)
+                    return false;
                 var now = _timeProvider.GetUtcNow().UtcDateTime;
-                if (expires.HasValue && expires.Value < now.Add(-parameters.ClockSkew))
+                if (expires.Value < now.Add(-parameters.ClockSkew))
                     return false;
                 if (notBefore.HasValue && notBefore.Value > now.Add(parameters.ClockSkew))
                     return false;
@@ -114,10 +116,11 @@ public class JwtAccessTokenService : IAccessTokenService
             if (string.IsNullOrEmpty(role) || !ValidRoles.Contains(role))
                 return AccessTokenValidationResult.Fail("Token has invalid or missing 'role' claim.");
 
-            long iat = 0;
-            long exp = 0;
-            long.TryParse(iatVal, out iat);
-            long.TryParse(expVal, out exp);
+            if (string.IsNullOrEmpty(expVal) || !long.TryParse(expVal, out var exp))
+                return AccessTokenValidationResult.Fail("Token missing or invalid 'exp' claim.");
+
+            if (string.IsNullOrEmpty(iatVal) || !long.TryParse(iatVal, out var iat))
+                return AccessTokenValidationResult.Fail("Token missing or invalid 'iat' claim.");
 
             var claims = new AccessTokenClaims(sub, username, role, iat, exp, jti ?? "");
             return AccessTokenValidationResult.Success(claims);

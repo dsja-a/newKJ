@@ -87,7 +87,6 @@ security:
 security:
   auth_mode: user_only
   jwt_secret: ${TEST_JWT_SECRET}
-  api_key: ${TEST_API_KEY}
   bootstrap_admin:
     username: admin
     password: ${TEST_ADMIN_PASSWORD}
@@ -98,7 +97,6 @@ security:
   path: test.db
 security:
   auth_mode: api_key_only
-  jwt_secret: ${TEST_JWT_SECRET}
   api_key: ${TEST_API_KEY}
   bootstrap_admin:
     username: admin
@@ -171,6 +169,14 @@ security:
             SigningCredentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256),
         };
         return handler.WriteToken(handler.CreateToken(descriptor));
+    }
+
+    private static async Task AssertJsonResponseAsync(HttpResponseMessage response, HttpStatusCode expectedStatus, string expectedBody)
+    {
+        Assert.Equal(expectedStatus, response.StatusCode);
+        Assert.Equal("application/json", response.Content.Headers.ContentType?.MediaType);
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.Equal(expectedBody, body);
     }
 
     private sealed class ThrowingUserRepository : IUserRepository
@@ -305,7 +311,7 @@ security:
         var loginReq = new LoginRequest { Username = "admin", Password = "wrong-password-123!!" };
         var response = await _client.PostAsJsonAsync("/api/auth/login", loginReq);
 
-        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        await AssertJsonResponseAsync(response, HttpStatusCode.Unauthorized, "{\"detail\":\"用户名或密码错误\"}");
     }
 
     [Fact]
@@ -314,7 +320,7 @@ security:
         var loginReq = new LoginRequest { Username = "nonexistent_user", Password = AdminPassword };
         var response = await _client.PostAsJsonAsync("/api/auth/login", loginReq);
 
-        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        await AssertJsonResponseAsync(response, HttpStatusCode.Unauthorized, "{\"detail\":\"用户名或密码错误\"}");
     }
 
     [Fact]
@@ -330,7 +336,7 @@ security:
         var loginReq = new LoginRequest { Username = "admin", Password = AdminPassword };
         var response = await _client.PostAsJsonAsync("/api/auth/login", loginReq);
 
-        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        await AssertJsonResponseAsync(response, HttpStatusCode.Unauthorized, "{\"detail\":\"用户名或密码错误\"}");
     }
 
     [Fact]
@@ -338,11 +344,11 @@ security:
     {
         var emptyReq = new LoginRequest { Username = "", Password = "" };
         var response1 = await _client.PostAsJsonAsync("/api/auth/login", emptyReq);
-        Assert.Equal(422, (int)response1.StatusCode);
+        await AssertJsonResponseAsync(response1, HttpStatusCode.UnprocessableEntity, "{\"detail\":\"请求格式错误\"}");
 
         var missingFields = new { };
         var response2 = await _client.PostAsJsonAsync("/api/auth/login", missingFields);
-        Assert.Equal(422, (int)response2.StatusCode);
+        await AssertJsonResponseAsync(response2, HttpStatusCode.UnprocessableEntity, "{\"detail\":\"请求格式错误\"}");
     }
 
     // ── Me endpoint tests ─────────────────────────────
@@ -463,9 +469,7 @@ security:
         request.Headers.Add("X-API-Key", ApiKey);
         var response = await _client.SendAsync(request);
 
-        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
-        var body = await response.Content.ReadAsStringAsync();
-        Assert.Contains("账号已禁用或不存在", body);
+        await AssertJsonResponseAsync(response, HttpStatusCode.Unauthorized, "{\"detail\":\"账号已禁用或不存在\"}");
     }
 
     [Fact]
@@ -565,9 +569,7 @@ security:
         var apiKeyRequest = new HttpRequestMessage(HttpMethod.Get, "/api/auth/me");
         apiKeyRequest.Headers.Add("X-API-Key", ApiKey);
         var apiKeyResponse = await _client.SendAsync(apiKeyRequest);
-        Assert.Equal(HttpStatusCode.Unauthorized, apiKeyResponse.StatusCode);
-        var body = await apiKeyResponse.Content.ReadAsStringAsync();
-        Assert.Contains("账号已禁用或不存在", body);
+        await AssertJsonResponseAsync(apiKeyResponse, HttpStatusCode.Unauthorized, "{\"detail\":\"账号已禁用或不存在\"}");
     }
 
     [Fact]
@@ -603,9 +605,7 @@ security:
                 var loginReq = new LoginRequest { Username = "admin", Password = AdminPassword };
                 var response = await client.PostAsJsonAsync("/api/auth/login", loginReq);
 
-                Assert.Equal(503, (int)response.StatusCode);
-                var body = await response.Content.ReadAsStringAsync();
-                Assert.Contains("当前认证模式不支持用户登录", body);
+                await AssertJsonResponseAsync(response, (HttpStatusCode)503, "{\"detail\":\"当前认证模式不支持用户登录\"}");
             }
             finally
             {
@@ -726,9 +726,7 @@ security:
                 request.Headers.Add("X-API-Key", ApiKey);
                 var response = await client.SendAsync(request);
 
-                Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
-                var body = await response.Content.ReadAsStringAsync();
-                Assert.Contains("账号已禁用或不存在", body);
+                await AssertJsonResponseAsync(response, HttpStatusCode.Unauthorized, "{\"detail\":\"账号已禁用或不存在\"}");
             }
             finally
             {
@@ -935,9 +933,7 @@ security:
 
                 var loginReq = new LoginRequest { Username = "admin", Password = AdminPassword };
                 var httpResponse = await client.PostAsJsonAsync("/api/auth/login", loginReq);
-                Assert.Equal(HttpStatusCode.InternalServerError, httpResponse.StatusCode);
-                var body = await httpResponse.Content.ReadAsStringAsync();
-                Assert.Contains("服务器内部错误", body);
+                await AssertJsonResponseAsync(httpResponse, HttpStatusCode.InternalServerError, "{\"detail\":\"服务器内部错误\"}");
             }
             finally
             {
@@ -1001,20 +997,17 @@ security:
                     });
                 using var client = factory.CreateClient();
 
-                // Login first to get a token (login doesn't use the repository because
-                // the startup initializer was removed, but the middleware still blocks)
+                // Login fails due to repository failure
                 var loginReq = new LoginRequest { Username = "admin", Password = AdminPassword };
                 var loginResponse = await client.PostAsJsonAsync("/api/auth/login", loginReq);
-                Assert.Equal(HttpStatusCode.InternalServerError, loginResponse.StatusCode);
+                await AssertJsonResponseAsync(loginResponse, HttpStatusCode.InternalServerError, "{\"detail\":\"服务器内部错误\"}");
 
                 // Even with a valid token, me endpoint fails
                 var token = CreateValidToken("testuser", "member");
                 var request = new HttpRequestMessage(HttpMethod.Get, "/api/auth/me");
                 request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
                 var meResponse = await client.SendAsync(request);
-                Assert.Equal(HttpStatusCode.InternalServerError, meResponse.StatusCode);
-                var body = await meResponse.Content.ReadAsStringAsync();
-                Assert.Contains("服务器内部错误", body);
+                await AssertJsonResponseAsync(meResponse, HttpStatusCode.InternalServerError, "{\"detail\":\"服务器内部错误\"}");
             }
             finally
             {
@@ -1036,9 +1029,17 @@ security:
     [Fact]
     public async Task Login_MalformedJson_Returns422()
     {
+        var content = new StringContent("{", Encoding.UTF8, "application/json");
+        var response = await _client.PostAsync("/api/auth/login", content);
+        await AssertJsonResponseAsync(response, HttpStatusCode.UnprocessableEntity, "{\"detail\":\"请求格式错误\"}");
+    }
+
+    [Fact]
+    public async Task Login_WrongRootType_Returns422()
+    {
         var content = new StringContent("\"not json\"", Encoding.UTF8, "application/json");
         var response = await _client.PostAsync("/api/auth/login", content);
-        Assert.Equal(422, (int)response.StatusCode);
+        await AssertJsonResponseAsync(response, HttpStatusCode.UnprocessableEntity, "{\"detail\":\"请求格式错误\"}");
     }
 
     [Fact]
@@ -1046,7 +1047,7 @@ security:
     {
         var content = new StringContent("", Encoding.UTF8, "application/json");
         var response = await _client.PostAsync("/api/auth/login", content);
-        Assert.Equal(422, (int)response.StatusCode);
+        await AssertJsonResponseAsync(response, HttpStatusCode.UnprocessableEntity, "{\"detail\":\"请求格式错误\"}");
     }
 
     [Fact]
@@ -1054,7 +1055,7 @@ security:
     {
         var content = new StringContent("{\"username\":123, \"password\":true}", Encoding.UTF8, "application/json");
         var response = await _client.PostAsync("/api/auth/login", content);
-        Assert.Equal(422, (int)response.StatusCode);
+        await AssertJsonResponseAsync(response, HttpStatusCode.UnprocessableEntity, "{\"detail\":\"请求格式错误\"}");
     }
 
     [Fact]
@@ -1062,7 +1063,7 @@ security:
     {
         var content = new StringContent("{\"password\":\"valid123\"}", Encoding.UTF8, "application/json");
         var response = await _client.PostAsync("/api/auth/login", content);
-        Assert.Equal(422, (int)response.StatusCode);
+        await AssertJsonResponseAsync(response, HttpStatusCode.UnprocessableEntity, "{\"detail\":\"请求格式错误\"}");
     }
 
     [Fact]
@@ -1070,7 +1071,7 @@ security:
     {
         var loginReq = new LoginRequest { Username = "", Password = "valid123" };
         var response = await _client.PostAsJsonAsync("/api/auth/login", loginReq);
-        Assert.Equal(422, (int)response.StatusCode);
+        await AssertJsonResponseAsync(response, HttpStatusCode.UnprocessableEntity, "{\"detail\":\"请求格式错误\"}");
     }
 
     [Fact]
@@ -1078,7 +1079,7 @@ security:
     {
         var loginReq = new LoginRequest { Username = new string('a', 65), Password = "valid123" };
         var response = await _client.PostAsJsonAsync("/api/auth/login", loginReq);
-        Assert.Equal(422, (int)response.StatusCode);
+        await AssertJsonResponseAsync(response, HttpStatusCode.UnprocessableEntity, "{\"detail\":\"请求格式错误\"}");
     }
 
     [Fact]
@@ -1086,7 +1087,7 @@ security:
     {
         var loginReq = new LoginRequest { Username = "admin", Password = new string('b', 129) };
         var response = await _client.PostAsJsonAsync("/api/auth/login", loginReq);
-        Assert.Equal(422, (int)response.StatusCode);
+        await AssertJsonResponseAsync(response, HttpStatusCode.UnprocessableEntity, "{\"detail\":\"请求格式错误\"}");
     }
 
     // ── New tests: Enabled=false ──────────────────────
@@ -1113,9 +1114,7 @@ security:
                 using var client = factory.CreateClient();
 
                 var response = await client.GetAsync("/api/auth/me");
-                Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
-                var body = await response.Content.ReadAsStringAsync();
-                Assert.Contains("未登录，请先登录", body);
+                await AssertJsonResponseAsync(response, HttpStatusCode.Unauthorized, "{\"detail\":\"未登录，请先登录\"}");
             }
             finally
             {
@@ -1152,14 +1151,8 @@ security:
                 using var factory = CreateFactory(subDir);
                 using var client = factory.CreateClient();
 
-                // A protected path (not public) should reach the controller,
-                // returning 401 from controller (not middleware), with message
-                // "未登录，请先登录" instead of middleware's "未授权：请登录..."
                 var response = await client.GetAsync("/api/auth/me");
-                Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
-                var body = await response.Content.ReadAsStringAsync();
-                Assert.Contains("未登录，请先登录", body);
-                Assert.DoesNotContain("未授权", body);
+                await AssertJsonResponseAsync(response, HttpStatusCode.Unauthorized, "{\"detail\":\"未登录，请先登录\"}");
             }
             finally
             {
