@@ -1,4 +1,4 @@
-using Microsoft.Data.Sqlite;
+﻿using Microsoft.Data.Sqlite;
 
 namespace Keji.Persistence;
 
@@ -40,6 +40,8 @@ public class SqliteConnectionFactory : ISqliteConnectionFactory
             }
         }
 
+        cancellationToken.ThrowIfCancellationRequested();
+
         var conn = new SqliteConnection(_connectionString);
         try
         {
@@ -57,7 +59,15 @@ public class SqliteConnectionFactory : ISqliteConnectionFactory
 
             if (_options.EnableWal && !_walEnsured)
             {
-                await _walLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    await _walLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    conn.Dispose();
+                    throw;
+                }
                 try
                 {
                     if (!_walEnsured)
@@ -76,6 +86,17 @@ public class SqliteConnectionFactory : ISqliteConnectionFactory
             }
 
             return conn;
+        }
+        catch (OperationCanceledException)
+        {
+            conn.Dispose();
+            throw;
+        }
+        catch (SqliteException ex)
+        {
+            conn.Dispose();
+            SqliteExceptionTranslator.ThrowTranslated(ex, "OpenConnection");
+            throw;
         }
         catch
         {

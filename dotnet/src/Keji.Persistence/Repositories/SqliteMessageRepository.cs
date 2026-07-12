@@ -1,4 +1,4 @@
-using Keji.Persistence.Models;
+﻿using Keji.Persistence.Models;
 using Microsoft.Data.Sqlite;
 
 namespace Keji.Persistence.Repositories;
@@ -62,11 +62,22 @@ public class SqliteMessageRepository : IMessageRepository
             await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
             return msgId;
         }
+        catch (OperationCanceledException)
+        {
+            await tx.RollbackAsync(cancellationToken).ConfigureAwait(false);
+            throw;
+        }
         catch (KejiPersistenceException)
         {
             throw;
         }
-        catch
+        catch (SqliteException ex)
+        {
+            await tx.RollbackAsync(cancellationToken).ConfigureAwait(false);
+            SqliteExceptionTranslator.ThrowTranslated(ex, "AddMessage", conversationId);
+            return 0;
+        }
+        catch (Exception)
         {
             await tx.RollbackAsync(cancellationToken).ConfigureAwait(false);
             throw new KejiPersistenceException($"Conversation '{conversationId}' not found.");

@@ -1,9 +1,11 @@
-namespace Keji.Persistence;
+﻿namespace Keji.Persistence;
 
 public class KejiPersistenceException : Exception
 {
-    public KejiPersistenceException(string message) : base(message) { }
-    public KejiPersistenceException(string message, Exception inner) : base(message, inner) { }
+    public int ErrorCode { get; }
+
+    public KejiPersistenceException(string message) : base(message) { ErrorCode = 0; }
+    public KejiPersistenceException(string message, int errorCode) : base(message) { ErrorCode = errorCode; }
 }
 
 public class DuplicateUsernameException : KejiPersistenceException

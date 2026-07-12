@@ -1,4 +1,4 @@
-using Microsoft.Data.Sqlite;
+﻿using Microsoft.Data.Sqlite;
 
 namespace Keji.Persistence.Repositories;
 
@@ -33,15 +33,22 @@ public class SqliteSettingsRepository : ISettingsRepository
 
         var now = _timeProvider.Now;
         using var conn = await _connectionFactory.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            INSERT INTO settings (key, value, updated_at) VALUES (@k, @v, @t)
-            ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
-            """;
-        cmd.Parameters.AddWithValue("@k", key);
-        cmd.Parameters.AddWithValue("@v", value);
-        cmd.Parameters.AddWithValue("@t", now);
-        await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = """
+                INSERT INTO settings (key, value, updated_at) VALUES (@k, @v, @t)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+                """;
+            cmd.Parameters.AddWithValue("@k", key);
+            cmd.Parameters.AddWithValue("@v", value);
+            cmd.Parameters.AddWithValue("@t", now);
+            await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (SqliteException ex)
+        {
+            SqliteExceptionTranslator.ThrowTranslated(ex, "SetSettings", key);
+        }
     }
 
     public async Task<Dictionary<string, string>> GetAllAsync(CancellationToken cancellationToken = default)

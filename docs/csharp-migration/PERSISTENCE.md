@@ -1,18 +1,24 @@
-# Persistence Layer (TASK-004)
+﻿# Persistence Layer (TASK-004)
 
 ## Overview
 
-SQLite persistence infrastructure for Keji C# migration. Schema-compatible with Python, with intentionally strengthened unsafe behaviors.
+SQLite persistence infrastructure for Keji C# migration. Schema-compatible with Python 9 business tables, with intentionally strengthened unsafe behaviors.
 
 ## Python Current SQLite
 
 - **Path**: `data/keji.db` relative to project root
-- **Connection**: `sqlite3.connect()` with default journal mode (usually delete), no WAL, no FK enforcement, no busy_timeout
-- **Time**: Unix epoch seconds via `time.time()` stored as REAL
-- **No connection pooling**
-- **Per-operation connections**: each function opens/closes its own connection
+- **Connection**: `sqlite3.connect()` at `Database.__init__()`, stored per-thread via `threading.local()`. Same connection reused for all operations on the same thread — NOT per-operation connections.
+- **Journal**: `PRAGMA journal_mode=WAL` set once in `_get_conn()` on each new thread connection.
+- **FK enforcement**: `PRAGMA foreign_keys=ON` set once in `_get_conn()`.
+- **busy_timeout**: NOT explicitly set; relies on SQLite default (0 ms — no busy wait).
+- **Time**: Unix epoch seconds via `time.time()` stored as REAL.
+- **No connection pooling** — each thread keeps its own persistent connection via `threading.local`.
+- **9 business tables**: `conversations`, `messages`, `documents`, `settings`, `database_configs`, `table_metadata`, `tool_usage_log`, `audit_events`, `users`. No `schema_migrations` table in Python.
+- **DB directory**: Created at `__init__` via `os.makedirs(os.path.dirname(db_path), exist_ok=True)`, not deferred.
+- **Init**: `_init_tables()` runs all CREATE TABLE IF NOT EXISTS + CREATE INDEX + migrate_schema inside `Database.__init__()`, committed via `conn.commit()` (no explicit transaction).
+- **No explicit busy_timeout** anywhere in Python.
 
-## Python All 10 Tables
+## Python 9 Business Tables (no schema_migrations)
 
 | Table | Purpose |
 |-------|---------|
@@ -25,12 +31,11 @@ SQLite persistence infrastructure for Keji C# migration. Schema-compatible with 
 | `table_metadata` | Metadata for external DB tables |
 | `tool_usage_log` | LLM tool usage audit log |
 | `audit_events` | General audit events |
-| `schema_migrations` | Database schema migration tracking |
 
 ## C# Schema Compatibility
 
-All 10 Python tables are created with matching schemas. Additional columns/extensions:
-- `conversations.owner_user_id` — Python added this later via migration; C# unconditionally creates it.
+All 9 Python tables are created with matching schemas. C# additionally creates a `schema_migrations` table (10 total) for migration tracking. Additional columns/extensions:
+- `conversations.owner_user_id` — Python added via `_migrate_schema()`; C# unconditionally creates it.
 - `idx_conv_owner` — always created on `conversations(owner_user_id, updated_at)`.
 
 ## schema_migrations
@@ -42,7 +47,7 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 );
 ```
 
-Version `001_add_owner_user_id` records the owner_user_id migration.
+Version `001_add_owner_user_id` records the owner_user_id migration. C# adds this table; Python does not have it.
 
 ## owner_user_id Migration
 
@@ -79,6 +84,14 @@ In `SqliteConnectionFactory.OpenConnectionAsync()`:
 4. Then open `SqliteConnection`.
 
 Directory creation NEVER happens during constructor or DI registration.
+
+## DB Creation Timing
+
+- DI registration (`AddKejiPersistenceFoundation()`) does NOT create directory or database file.
+- Service resolution (`sp.GetRequiredService<>()`) does NOT create directory or database file.
+- First `OpenConnectionAsync()` MAY create the database file due to `ReadWriteCreate` mode.
+- Normal business use requires explicit `IKejiDatabaseInitializer.InitializeAsync()` call.
+- Uninitialized repositories may get a safe `KejiPersistenceException` from SQLite errors.
 
 ## REAL Unix Seconds
 
@@ -152,6 +165,16 @@ All business values are passed as parameterized SQL. No string concatenation for
 
 `SqliteUserRepository.UpdateAsync` only updates fields with non-null values from `UpdateUserCommand`. Whitelist: `display_name`, `password_hash`, `is_active`, `role`. Empty command checks existence without modifying.
 
+## Role Normalization
+
+Roles are normalized via `SqliteExceptionTranslator.NormalizeRole(string?)`:
+- Trims whitespace.
+- Converts to lowercase invariant.
+- Rejects null, empty, or whitespace.
+- Only allows `"admin"`, `"member"`, `"readonly"`.
+- Throws `KejiPersistenceException` for invalid values.
+- Used by both `CreateAsync` and `UpdateAsync` before SQL execution.
+
 ## Transaction Boundaries
 
 ### DeleteUser
@@ -166,7 +189,7 @@ BEGIN TRANSACTION
 COMMIT
 ```
 
-If any failure (e.g. trigger abort), the entire transaction is rolled back. The exception is wrapped in `KejiPersistenceException`.
+If any failure (e.g. trigger abort), the entire transaction is rolled back. The exception is wrapped in `KejiPersistenceException` without retaining the raw `SqliteException` as a public `InnerException`.
 
 ### DeleteConversation
 ```
@@ -193,12 +216,46 @@ EXCEPTION → ROLLBACK → rethrow
 ```
 BEGIN TRANSACTION
   UPDATE conversations SET updated_at = @now, message_count + 1 WHERE id = @cid
-  IF rows == 0 → ROLLBACK → throw KejiPersistenceException (safe)
+  IF rows == 0 → ROLLBACK → throw KejiPersistenceException (safe, conv not found)
   INSERT INTO messages (conversation_id, role, content, created_at)
   SELECT last_insert_rowid()
 COMMIT
-EXCEPTION → ROLLBACK → throw KejiPersistenceException (wraps original)
+EXCEPTION (SqliteException) → ROLLBACK → throw KejiPersistenceException (translated, safe)
+EXCEPTION (OperationCanceledException) → ROLLBACK → rethrow (not converted)
+EXCEPTION (other) → ROLLBACK → throw KejiPersistenceException (safe)
 ```
+
+## Exception Handling
+
+### `SqliteExceptionTranslator`
+
+Static helper class wrapping all `SqliteException` occurrences into safe `KejiPersistenceException`:
+- Uses `SqliteExtendedErrorCode == 2067` (SQLITE_CONSTRAINT_UNIQUE) to detect `DuplicateUsernameException` for username UNIQUE constraint violations.
+- Does NOT convert primary key ID conflicts into `DuplicateUsernameException`.
+- Constructs `KejiPersistenceException` with safe message including operation name and optional entity ID.
+- Does NOT retain the raw `SqliteException` as a public `InnerException`.
+- Does NOT leak SQL text, password hashes, setting values, message content, database password, or raw SQLite error description text in `Message` or `ToString()`.
+- Numeric SQLite error code may be preserved via `KejiPersistenceException.ErrorCode`.
+
+### `DuplicateUsernameException`
+
+- Only thrown for SQLITE_CONSTRAINT_UNIQUE (extended error code 2067) on the `users.username` column.
+- Not thrown for primary key ID conflicts or any other constraint violation.
+- Contains the username but NOT the password hash.
+
+### `OperationCanceledException`
+
+- Propagated unmodified through all repository methods.
+- NOT converted into `KejiPersistenceException` or any other exception type.
+- Transaction rollback occurs before rethrow when within a transaction scope.
+
+### Exception Message Security
+
+- Settings values never appear in exception messages.
+- Message content never appears in exception messages.
+- Password hash values never appear in exception messages.
+- `DuplicateUsernameException` includes the username but not the password hash.
+- Raw SQLite exception text is not exposed in `ToString()`.
 
 ## Security: Password Hash
 
@@ -206,26 +263,22 @@ Password hash is stored as an opaque string. It is not hashed, verified, or gene
 
 `ListAsync()` returns `UserSummaryRecord` which explicitly excludes the `PasswordHash` field.
 
-## Security: Exception Messages
-
-- Settings values never appear in exception messages.
-- Message content never appears in exception messages.
-- Password hash values never appear in exception messages.
-- `DuplicateUsernameException` includes the username but not the password hash.
-
 ## Security Differences from Python
 
 | Behavior | Python | C# |
 |----------|--------|----|
+| Connection lifecycle | `threading.local` per-thread persistent connection | Per-operation new connection (pooled) |
+| WAL journal mode | Set on each new thread connection | Set on first connection with double-check locking |
+| FK enforcement | ON | ON |
+| Busy timeout | Not set (default 0ms) | 5000ms by default |
 | Conversation ownership | Missing conv = belongs to caller | Explicit `ConversationOwnershipResult` enum |
 | Concurrent ownership claim | Race condition (read-then-write) | Atomic transaction |
-| User delete | No transaction | Transactional (messages + conversations + user) |
+| User delete | Per-operation delete (no explicit tx) | Transactional (messages + conversations + user) |
 | Message count | May be inconsistent | Atomic increment |
-| Database exceptions | Raw SQLite exceptions visible to caller | Wrapped in `KejiPersistenceException` |
+| Database exceptions | Raw SQLite exceptions visible to caller | Wrapped in `KejiPersistenceException` with no public InnerException |
 | Sensitive values in errors | May leak | Stripped from messages |
-| FK enforcement | Off | On by default |
-| WAL journal mode | Off (default delete) | On by default |
-| Busy timeout | None | 5000ms by default |
+| Directory creation | At `__init__` (synchronous) | Deferred to first `OpenConnectionAsync` or `InitializeAsync` |
+| schema_migrations | Not present | Created as 10th table |
 
 ## Things NOT Implemented
 
@@ -257,4 +310,4 @@ TASK-005 will:
 - `IMessageRepository` → `SqliteMessageRepository` (Singleton, factory-based)
 - `ISettingsRepository` → `SqliteSettingsRepository` (Singleton, factory-based)
 
-No file I/O occurs during registration or service resolution. Database file is created only when `IKejiDatabaseInitializer.InitializeAsync()` is called.
+No file I/O occurs during registration or service resolution. Database file is created only when `IKejiDatabaseInitializer.InitializeAsync()` is called (or on first `OpenConnectionAsync` due to `ReadWriteCreate` mode).

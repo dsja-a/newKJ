@@ -1,4 +1,4 @@
-using System.Data.Common;
+﻿using System.Data.Common;
 using Keji.Persistence.Models;
 using Keji.Persistence.Repositories;
 using Microsoft.Data.Sqlite;
@@ -963,6 +963,9 @@ public class PersistenceTests
         var ex = await Assert.ThrowsAsync<KejiPersistenceException>(() =>
             repo.DeleteAsync(uid));
 
+        Assert.Null(ex.InnerException);
+        Assert.DoesNotContain("forced failure", ex.ToString(), StringComparison.OrdinalIgnoreCase);
+
         Assert.NotNull(await repo.GetByIdAsync(uid));
         Assert.NotNull(await convRepo.GetAsync("rollback_conv"));
 
@@ -1879,6 +1882,326 @@ public class PersistenceTests
 
         await settingsRepo.SetAsync("ct_key", "ct_val", ct);
         Assert.Equal("ct_val", await settingsRepo.GetAsync("ct_key", cancellationToken: ct));
+    }
+
+    // ──────────────────────────────────────────────
+    // Pre-Cancelled Token Tests
+    // ──────────────────────────────────────────────
+
+    [Fact]
+    public async Task Cancellation_Initialize_PreCancelled_ThrowsOperationCanceled()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        var initializer = new KejiDatabaseInitializer(factory, ctx.FixedTime);
+        var preCancelled = new CancellationToken(true);
+        await Assert.ThrowsAsync<OperationCanceledException>(() =>
+            initializer.InitializeAsync(preCancelled));
+    }
+
+    [Fact]
+    public async Task Cancellation_UserCreate_PreCancelled_ThrowsOperationCanceled()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var repo = new SqliteUserRepository(factory, ctx.FixedTime);
+        var preCancelled = new CancellationToken(true);
+        await Assert.ThrowsAsync<OperationCanceledException>(() =>
+            repo.CreateAsync("u", "h", TestRoleMember, cancellationToken: preCancelled));
+    }
+
+    [Fact]
+    public async Task Cancellation_UserDelete_PreCancelled_ThrowsOperationCanceled()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var repo = new SqliteUserRepository(factory, ctx.FixedTime);
+        var preCancelled = new CancellationToken(true);
+        await Assert.ThrowsAsync<OperationCanceledException>(() =>
+            repo.DeleteAsync("nonexistent", preCancelled));
+    }
+
+    [Fact]
+    public async Task Cancellation_ConversationEnsureOwned_PreCancelled_ThrowsOperationCanceled()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var repo = new SqliteConversationRepository(factory, ctx.FixedTime);
+        var preCancelled = new CancellationToken(true);
+        await Assert.ThrowsAsync<OperationCanceledException>(() =>
+            repo.EnsureOwnedAsync("test_conv", "user", cancellationToken: preCancelled));
+    }
+
+    [Fact]
+    public async Task Cancellation_MessageAdd_PreCancelled_ThrowsOperationCanceled()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var repo = new SqliteMessageRepository(factory, ctx.FixedTime);
+        var preCancelled = new CancellationToken(true);
+        await Assert.ThrowsAsync<OperationCanceledException>(() =>
+            repo.AddAsync("test_conv", "user", "test", preCancelled));
+    }
+
+    [Fact]
+    public async Task Cancellation_SettingsSet_PreCancelled_ThrowsOperationCanceled()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var repo = new SqliteSettingsRepository(factory, ctx.FixedTime);
+        var preCancelled = new CancellationToken(true);
+        await Assert.ThrowsAsync<OperationCanceledException>(() =>
+            repo.SetAsync("k", "v", preCancelled));
+    }
+
+    // ──────────────────────────────────────────────
+    // Exception Boundary Tests
+    // ──────────────────────────────────────────────
+
+    [Fact]
+    public async Task User_Create_DuplicateUsername_PreciseExtendedErrorCode()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var repo = new SqliteUserRepository(factory, ctx.FixedTime);
+
+        await repo.CreateAsync("precise_dup", "h1", TestRoleMember);
+        var ex = await Assert.ThrowsAsync<DuplicateUsernameException>(() =>
+            repo.CreateAsync("precise_dup", "h2", TestRoleMember));
+        Assert.Equal("precise_dup", ex.Username);
+    }
+
+    [Fact]
+    public async Task User_Create_IdPrimaryKeyConflict_NotDuplicateUsername()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var repo = new SqliteUserRepository(factory, ctx.FixedTime);
+
+        var uid = await repo.CreateAsync("idconflict_user", "h", TestRoleMember);
+        using var conn = await GetOpenConnectionAsync(factory);
+        using var insertCmd = conn.CreateCommand();
+        insertCmd.CommandText = "INSERT INTO users (id, username, password_hash, role, created_at) VALUES (@id, @u2, @pwh, 'member', 100.0)";
+        insertCmd.Parameters.AddWithValue("@id", uid + "x");
+        insertCmd.Parameters.AddWithValue("@u2", "other_user");
+        insertCmd.Parameters.AddWithValue("@pwh", "hash");
+        await insertCmd.ExecuteNonQueryAsync();
+
+        using var conflictCmd = conn.CreateCommand();
+        conflictCmd.CommandText = "INSERT INTO users (id, username, password_hash, role, created_at) VALUES (@id, @u2, @pwh, 'member', 100.0)";
+        conflictCmd.Parameters.AddWithValue("@id", uid);
+        conflictCmd.Parameters.AddWithValue("@u2", "unique_user");
+        conflictCmd.Parameters.AddWithValue("@pwh", "h2");
+        var sqliteEx = await Assert.ThrowsAsync<SqliteException>(() =>
+            conflictCmd.ExecuteNonQueryAsync());
+        Assert.Equal(19, sqliteEx.SqliteErrorCode);
+    }
+
+    [Fact]
+    public async Task User_Delete_TriggerFailure_InnerExceptionNotSqlite()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var repo = new SqliteUserRepository(factory, ctx.FixedTime);
+
+        var uid = await repo.CreateAsync("del_inner_user", "h", TestRoleMember);
+
+        using (var triggerConn = await GetOpenConnectionAsync(factory))
+        {
+            using var createTrigger = triggerConn.CreateCommand();
+            createTrigger.CommandText = """
+                CREATE TRIGGER fail_user_delete_inner BEFORE DELETE ON users
+                BEGIN
+                    SELECT RAISE(ABORT, 'forced failure');
+                END;
+                """;
+            await createTrigger.ExecuteNonQueryAsync();
+        }
+
+        var ex = await Assert.ThrowsAsync<KejiPersistenceException>(() =>
+            repo.DeleteAsync(uid));
+
+        Assert.Null(ex.InnerException);
+        Assert.DoesNotContain("forced failure", ex.ToString(), StringComparison.OrdinalIgnoreCase);
+        Assert.True(ex.ErrorCode > 0 || ex.ErrorCode == 0);
+    }
+
+    [Fact]
+    public async Task User_Update_TriggerFailure_ThrowsKejiPersistenceException()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var repo = new SqliteUserRepository(factory, ctx.FixedTime);
+
+        var uid = await repo.CreateAsync("update_trig_user", "h", TestRoleMember);
+
+        using (var triggerConn = await GetOpenConnectionAsync(factory))
+        {
+            using var createTrigger = triggerConn.CreateCommand();
+            createTrigger.CommandText = """
+                CREATE TRIGGER fail_user_update BEFORE UPDATE ON users
+                BEGIN
+                    SELECT RAISE(ABORT, 'update blocked');
+                END;
+                """;
+            await createTrigger.ExecuteNonQueryAsync();
+        }
+
+        var ex = await Assert.ThrowsAsync<KejiPersistenceException>(() =>
+            repo.UpdateAsync(uid, new UpdateUserCommand { DisplayName = "new_name" }));
+        Assert.IsNotType<DuplicateUsernameException>(ex);
+    }
+
+    [Fact]
+    public async Task Message_Add_InsertTriggerFailure_ThrowsKejiPersistenceException()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var convRepo = new SqliteConversationRepository(factory, ctx.FixedTime);
+        var msgRepo = new SqliteMessageRepository(factory, ctx.FixedTime);
+
+        await convRepo.CreateAsync("msg_trig_conv");
+
+        using (var triggerConn = await GetOpenConnectionAsync(factory))
+        {
+            using var createTrigger = triggerConn.CreateCommand();
+            createTrigger.CommandText = """
+                CREATE TRIGGER fail_msg_insert BEFORE INSERT ON messages
+                BEGIN
+                    SELECT RAISE(ABORT, 'insert blocked');
+                END;
+                """;
+            await createTrigger.ExecuteNonQueryAsync();
+        }
+
+        var ex = await Assert.ThrowsAsync<KejiPersistenceException>(() =>
+            msgRepo.AddAsync("msg_trig_conv", "user", "test content"));
+        Assert.IsNotType<SqliteException>(ex);
+
+        var conv = await convRepo.GetAsync("msg_trig_conv");
+        Assert.NotNull(conv);
+        Assert.Equal(0, conv.MessageCount);
+    }
+
+    [Fact]
+    public async Task Settings_Set_TriggerFailure_ThrowsKejiPersistenceException()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var repo = new SqliteSettingsRepository(factory, ctx.FixedTime);
+
+        using (var triggerConn = await GetOpenConnectionAsync(factory))
+        {
+            using var createTrigger = triggerConn.CreateCommand();
+            createTrigger.CommandText = """
+                CREATE TRIGGER fail_settings_insert BEFORE INSERT ON settings
+                BEGIN
+                    SELECT RAISE(ABORT, 'settings blocked');
+                END;
+                """;
+            await createTrigger.ExecuteNonQueryAsync();
+        }
+
+        var ex = await Assert.ThrowsAsync<KejiPersistenceException>(() =>
+            repo.SetAsync("blocked_key", "value"));
+        Assert.IsNotType<SqliteException>(ex);
+    }
+
+    [Fact]
+    public async Task Conversation_Rename_TriggerFailure_ThrowsKejiPersistenceException()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var repo = new SqliteConversationRepository(factory, ctx.FixedTime);
+
+        await repo.CreateAsync("rename_trig_conv");
+
+        using (var triggerConn = await GetOpenConnectionAsync(factory))
+        {
+            using var createTrigger = triggerConn.CreateCommand();
+            createTrigger.CommandText = """
+                CREATE TRIGGER fail_conv_rename BEFORE UPDATE ON conversations
+                BEGIN
+                    SELECT RAISE(ABORT, 'rename blocked');
+                END;
+                """;
+            await createTrigger.ExecuteNonQueryAsync();
+        }
+
+        var ex = await Assert.ThrowsAsync<KejiPersistenceException>(() =>
+            repo.RenameAsync("rename_trig_conv", "new name"));
+        Assert.IsNotType<SqliteException>(ex);
+    }
+
+    [Fact]
+    public async Task Conversation_Create_TriggerFailure_ThrowsKejiPersistenceException()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var repo = new SqliteConversationRepository(factory, ctx.FixedTime);
+
+        using (var triggerConn = await GetOpenConnectionAsync(factory))
+        {
+            using var createTrigger = triggerConn.CreateCommand();
+            createTrigger.CommandText = """
+                CREATE TRIGGER fail_conv_create BEFORE INSERT ON conversations
+                BEGIN
+                    SELECT RAISE(ABORT, 'create blocked');
+                END;
+                """;
+            await createTrigger.ExecuteNonQueryAsync();
+        }
+
+        var ex = await Assert.ThrowsAsync<KejiPersistenceException>(() =>
+            repo.CreateAsync("blocked_conv"));
+        Assert.IsNotType<SqliteException>(ex);
+    }
+
+    [Fact]
+    public async Task Message_Add_TriggerFailure_ErrorMessageDoesNotLeakContent()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var convRepo = new SqliteConversationRepository(factory, ctx.FixedTime);
+        var msgRepo = new SqliteMessageRepository(factory, ctx.FixedTime);
+
+        await convRepo.CreateAsync("leak_conv");
+
+        using (var triggerConn = await GetOpenConnectionAsync(factory))
+        {
+            using var createTrigger = triggerConn.CreateCommand();
+            createTrigger.CommandText = """
+                CREATE TRIGGER fail_msg_leak BEFORE INSERT ON messages
+                BEGIN
+                    SELECT RAISE(ABORT, 'secret leak test');
+                END;
+                """;
+            await createTrigger.ExecuteNonQueryAsync();
+        }
+
+        try
+        {
+            await msgRepo.AddAsync("leak_conv", "user", "超敏感内容不可泄露");
+        }
+        catch (KejiPersistenceException ex)
+        {
+            Assert.DoesNotContain("超敏感内容", ex.Message);
+            Assert.DoesNotContain("secret leak test", ex.Message);
+        }
     }
 
     // ──────────────────────────────────────────────

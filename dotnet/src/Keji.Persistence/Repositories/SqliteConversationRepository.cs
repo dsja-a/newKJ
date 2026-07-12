@@ -1,4 +1,4 @@
-using Keji.Persistence.Models;
+﻿using Keji.Persistence.Models;
 using Microsoft.Data.Sqlite;
 
 namespace Keji.Persistence.Repositories;
@@ -19,31 +19,39 @@ public class SqliteConversationRepository : IConversationRepository
         var now = _timeProvider.Now;
         using var conn = await _connectionFactory.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
 
-        using var insertCmd = conn.CreateCommand();
-        insertCmd.CommandText = """
-            INSERT OR IGNORE INTO conversations (id, title, created_at, updated_at, owner_user_id)
-            VALUES (@id, @title, @now, @now, @owner)
-            """;
-        insertCmd.Parameters.AddWithValue("@id", convId);
-        insertCmd.Parameters.AddWithValue("@title", title);
-        insertCmd.Parameters.AddWithValue("@now", now);
-        insertCmd.Parameters.AddWithValue("@owner", (object?)ownerUserId ?? DBNull.Value);
-        await insertCmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-
-        if (ownerUserId is not null)
+        try
         {
-            using var claimCmd = conn.CreateCommand();
-            claimCmd.CommandText = """
-                UPDATE conversations SET owner_user_id = @owner
-                WHERE id = @id AND owner_user_id IS NULL
+            using var insertCmd = conn.CreateCommand();
+            insertCmd.CommandText = """
+                INSERT OR IGNORE INTO conversations (id, title, created_at, updated_at, owner_user_id)
+                VALUES (@id, @title, @now, @now, @owner)
                 """;
-            claimCmd.Parameters.AddWithValue("@owner", ownerUserId);
-            claimCmd.Parameters.AddWithValue("@id", convId);
-            await claimCmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-        }
+            insertCmd.Parameters.AddWithValue("@id", convId);
+            insertCmd.Parameters.AddWithValue("@title", title);
+            insertCmd.Parameters.AddWithValue("@now", now);
+            insertCmd.Parameters.AddWithValue("@owner", (object?)ownerUserId ?? DBNull.Value);
+            await insertCmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
 
-        return await GetInternalAsync(conn, convId, cancellationToken).ConfigureAwait(false)
-            ?? throw new KejiPersistenceException($"Conversation '{convId}' not found after create.");
+            if (ownerUserId is not null)
+            {
+                using var claimCmd = conn.CreateCommand();
+                claimCmd.CommandText = """
+                    UPDATE conversations SET owner_user_id = @owner
+                    WHERE id = @id AND owner_user_id IS NULL
+                    """;
+                claimCmd.Parameters.AddWithValue("@owner", ownerUserId);
+                claimCmd.Parameters.AddWithValue("@id", convId);
+                await claimCmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            }
+
+            return await GetInternalAsync(conn, convId, cancellationToken).ConfigureAwait(false)
+                ?? throw new KejiPersistenceException($"Conversation '{convId}' not found after create.");
+        }
+        catch (SqliteException ex)
+        {
+            SqliteExceptionTranslator.ThrowTranslated(ex, "CreateConversation", convId);
+            throw;
+        }
     }
 
     public async Task<(ConversationRecord? Record, ConversationOwnershipResult Result)> EnsureOwnedAsync(
@@ -99,6 +107,17 @@ public class SqliteConversationRepository : IConversationRepository
 
             return (final, ConversationOwnershipResult.OwnedByAnotherUser);
         }
+        catch (OperationCanceledException)
+        {
+            await tx.RollbackAsync(cancellationToken).ConfigureAwait(false);
+            throw;
+        }
+        catch (SqliteException ex)
+        {
+            await tx.RollbackAsync(cancellationToken).ConfigureAwait(false);
+            SqliteExceptionTranslator.ThrowTranslated(ex, "EnsureOwned", convId);
+            throw;
+        }
         catch
         {
             await tx.RollbackAsync(cancellationToken).ConfigureAwait(false);
@@ -145,13 +164,21 @@ public class SqliteConversationRepository : IConversationRepository
     {
         var now = _timeProvider.Now;
         using var conn = await _connectionFactory.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = "UPDATE conversations SET title = @title, updated_at = @t WHERE id = @id";
-        cmd.Parameters.AddWithValue("@title", title);
-        cmd.Parameters.AddWithValue("@t", now);
-        cmd.Parameters.AddWithValue("@id", convId);
-        var rows = await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-        return rows > 0;
+        try
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "UPDATE conversations SET title = @title, updated_at = @t WHERE id = @id";
+            cmd.Parameters.AddWithValue("@title", title);
+            cmd.Parameters.AddWithValue("@t", now);
+            cmd.Parameters.AddWithValue("@id", convId);
+            var rows = await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            return rows > 0;
+        }
+        catch (SqliteException ex)
+        {
+            SqliteExceptionTranslator.ThrowTranslated(ex, "RenameConversation", convId);
+            return false;
+        }
     }
 
     public async Task<bool> DeleteAsync(string convId, CancellationToken cancellationToken = default)

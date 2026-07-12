@@ -1,12 +1,10 @@
-using Keji.Persistence.Models;
+﻿using Keji.Persistence.Models;
 using Microsoft.Data.Sqlite;
 
 namespace Keji.Persistence.Repositories;
 
 public class SqliteUserRepository : IUserRepository
 {
-    private static readonly HashSet<string> ValidRoles = new(StringComparer.OrdinalIgnoreCase) { "admin", "member", "readonly" };
-
     private readonly ISqliteConnectionFactory _connectionFactory;
     private readonly IUnixTimeProvider _timeProvider;
 
@@ -75,8 +73,7 @@ public class SqliteUserRepository : IUserRepository
         if (string.IsNullOrEmpty(passwordHash))
             throw new KejiPersistenceException("Password hash must not be empty.");
 
-        if (!ValidRoles.Contains(role))
-            throw new KejiPersistenceException($"Invalid role: '{role}'. Must be one of: admin, member, readonly.");
+        role = SqliteExceptionTranslator.NormalizeRole(role);
 
         var uid = Guid.NewGuid().ToString("N")[..16];
         var now = _timeProvider.Now;
@@ -98,9 +95,13 @@ public class SqliteUserRepository : IUserRepository
             cmd.Parameters.AddWithValue("@now", now);
             await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }
-        catch (SqliteException ex) when (ex.SqliteErrorCode == 19)
+        catch (SqliteException ex) when (ex.SqliteExtendedErrorCode == 2067)
         {
             throw new DuplicateUsernameException(trimmed);
+        }
+        catch (SqliteException ex)
+        {
+            SqliteExceptionTranslator.ThrowTranslated(ex, "CreateUser", uid);
         }
 
         return uid;
@@ -119,10 +120,9 @@ public class SqliteUserRepository : IUserRepository
 
         if (command.Role is not null)
         {
-            if (!ValidRoles.Contains(command.Role))
-                throw new KejiPersistenceException($"Invalid role: '{command.Role}'.");
+            var normalizedRole = SqliteExceptionTranslator.NormalizeRole(command.Role);
             sets.Add("role = @role");
-            parameters.Add(("@role", command.Role));
+            parameters.Add(("@role", normalizedRole));
         }
 
         if (command.IsActive is not null)
@@ -154,8 +154,16 @@ public class SqliteUserRepository : IUserRepository
             cmd.Parameters.AddWithValue(name, value);
         cmd.Parameters.AddWithValue("@id", userId);
 
-        var rows = await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-        return rows > 0;
+        try
+        {
+            var rows = await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            return rows > 0;
+        }
+        catch (SqliteException ex)
+        {
+            SqliteExceptionTranslator.ThrowTranslated(ex, "UpdateUser", userId);
+            return false;
+        }
     }
 
     public async Task TouchLoginAsync(string userId, CancellationToken cancellationToken = default)
@@ -218,7 +226,8 @@ public class SqliteUserRepository : IUserRepository
         catch (SqliteException ex)
         {
             await tx.RollbackAsync(cancellationToken).ConfigureAwait(false);
-            throw new KejiPersistenceException("Failed to delete user. The transaction has been rolled back.", ex);
+            SqliteExceptionTranslator.ThrowTranslated(ex, "DeleteUser", userId);
+            return false;
         }
     }
 
