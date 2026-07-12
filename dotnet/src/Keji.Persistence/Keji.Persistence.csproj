@@ -1,6 +1,11 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.9" />
+    <PackageReference Include="SQLitePCLRaw.lib.e_sqlite3" Version="3.53.3" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\Keji.Domain\Keji.Domain.csproj" />
     <ProjectReference Include="..\Keji.Configuration\Keji.Configuration.csproj" />
   </ItemGroup>
