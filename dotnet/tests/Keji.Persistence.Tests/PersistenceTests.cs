@@ -66,6 +66,98 @@ public class PersistenceTests
         => await factory.OpenConnectionAsync();
 
     // ──────────────────────────────────────────────
+    // CreateDirectoryIfMissing
+    // ──────────────────────────────────────────────
+
+    [Fact]
+    public async Task CreateDirectory_DefaultDataPath_CreatesDirectoryOnInit()
+    {
+        using var ctx = new TestContext();
+        var dataDir = System.IO.Path.Combine(ctx.Dir, "data");
+        var dbPath = System.IO.Path.Combine(dataDir, "keji.db");
+        var opts = new KejiPersistenceOptions
+        {
+            ProjectRoot = ctx.Dir,
+            DatabasePath = "data/keji.db",
+            CreateDirectoryIfMissing = true,
+        };
+        var factory = CreateFactory(opts);
+        Assert.False(Directory.Exists(dataDir));
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        Assert.True(Directory.Exists(dataDir));
+        Assert.True(File.Exists(dbPath));
+    }
+
+    [Fact]
+    public async Task CreateDirectory_MissingDirWithoutFlag_Throws()
+    {
+        using var ctx = new TestContext();
+        var dataDir = System.IO.Path.Combine(ctx.Dir, "missing_data");
+        var opts = new KejiPersistenceOptions
+        {
+            ProjectRoot = ctx.Dir,
+            DatabasePath = "missing_data/test.db",
+            CreateDirectoryIfMissing = false,
+        };
+        var factory = CreateFactory(opts);
+        var ex = await Assert.ThrowsAsync<KejiPersistenceException>(() => factory.OpenConnectionAsync());
+    }
+
+    [Fact]
+    public void DI_Registration_DoesNotCreateDirectory()
+    {
+        using var ctx = new TestContext();
+        var dataDir = System.IO.Path.Combine(ctx.Dir, "data");
+        var services = new ServiceCollection();
+        services.AddKejiPersistenceFoundation(o =>
+        {
+            o.ProjectRoot = ctx.Dir;
+            o.DatabasePath = "data/test.db";
+        });
+        Assert.False(Directory.Exists(dataDir));
+        services.BuildServiceProvider();
+        Assert.False(Directory.Exists(dataDir));
+    }
+
+    [Fact]
+    public void DI_ResolveServices_DoesNotCreateDirectory()
+    {
+        using var ctx = new TestContext();
+        var dataDir = System.IO.Path.Combine(ctx.Dir, "data");
+        var services = new ServiceCollection();
+        services.AddKejiPersistenceFoundation(o =>
+        {
+            o.ProjectRoot = ctx.Dir;
+            o.DatabasePath = "data/test.db";
+        });
+        var sp = services.BuildServiceProvider();
+        sp.GetRequiredService<IUserRepository>();
+        sp.GetRequiredService<IConversationRepository>();
+        sp.GetRequiredService<IMessageRepository>();
+        sp.GetRequiredService<ISettingsRepository>();
+        Assert.False(Directory.Exists(dataDir));
+    }
+
+    [Fact]
+    public async Task InitializeAsync_CreatesDirectoryAndDbFile()
+    {
+        using var ctx = new TestContext();
+        var dataDir = System.IO.Path.Combine(ctx.Dir, "data");
+        var dbPath = System.IO.Path.Combine(dataDir, "test.db");
+        var opts = new KejiPersistenceOptions
+        {
+            ProjectRoot = ctx.Dir,
+            DatabasePath = "data/test.db",
+            CreateDirectoryIfMissing = true,
+        };
+        var factory = CreateFactory(opts);
+        Assert.False(Directory.Exists(dataDir));
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        Assert.True(Directory.Exists(dataDir));
+        Assert.True(File.Exists(dbPath));
+    }
+
+    // ──────────────────────────────────────────────
     // Connection Factory
     // ──────────────────────────────────────────────
 
@@ -122,6 +214,26 @@ public class PersistenceTests
         cmd.CommandText = "PRAGMA journal_mode";
         var result = (await cmd.ExecuteScalarAsync())!.ToString();
         Assert.Equal("wal", result, ignoreCase: true);
+    }
+
+    [Fact]
+    public async Task ConnectionFactory_ConcurrentWalInit_Succeeds()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        const int count = 10;
+        var tasks = new Task<SqliteConnection>[count];
+        for (int i = 0; i < count; i++)
+            tasks[i] = factory.OpenConnectionAsync();
+        var conns = await Task.WhenAll(tasks);
+        foreach (var c in conns)
+        {
+            using var cmd = c.CreateCommand();
+            cmd.CommandText = "PRAGMA journal_mode";
+            var result = (await cmd.ExecuteScalarAsync())!.ToString();
+            Assert.Equal("wal", result, ignoreCase: true);
+            c.Dispose();
+        }
     }
 
     [Fact]
@@ -238,6 +350,20 @@ public class PersistenceTests
         Assert.True(File.Exists(ctx.DbPath));
     }
 
+    [Fact]
+    public async Task Initialize_RecordsMigrationVersion()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+
+        using var conn = await GetOpenConnectionAsync(factory);
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT version FROM schema_migrations WHERE version = '001_add_owner_user_id'";
+        var result = await cmd.ExecuteScalarAsync();
+        Assert.Equal("001_add_owner_user_id", result);
+    }
+
     // ──────────────────────────────────────────────
     // Legacy Migration
     // ──────────────────────────────────────────────
@@ -277,7 +403,7 @@ public class PersistenceTests
         using var reader = await verifyCmd.ExecuteReaderAsync();
         Assert.True(await reader.ReadAsync());
         Assert.Equal("旧对话", reader.GetString(0));
-        Assert.True(reader.IsDBNull(1)); // owner_user_id stays NULL
+        Assert.True(reader.IsDBNull(1));
     }
 
     [Fact]
@@ -354,7 +480,7 @@ public class PersistenceTests
 
         var init = new KejiDatabaseInitializer(factory, ctx.FixedTime);
         await init.InitializeAsync();
-        await init.InitializeAsync(); // second call must not fail
+        await init.InitializeAsync();
 
         using var conn2 = await GetOpenConnectionAsync(factory);
         var cols = await GetColumnNamesAsync(conn2, "conversations");
@@ -413,6 +539,93 @@ public class PersistenceTests
         using var conn2 = await GetOpenConnectionAsync(factory);
         var indexes = await GetIndexNamesAsync(conn2);
         Assert.Contains("idx_conv_owner", indexes);
+    }
+
+    [Fact]
+    public async Task LegacyMigration_ExistingOwnerColumnWithoutIndex()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+
+        using (var conn = await GetOpenConnectionAsync(factory))
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = """
+                CREATE TABLE conversations (
+                    id TEXT PRIMARY KEY,
+                    title TEXT DEFAULT '新对话',
+                    created_at REAL NOT NULL,
+                    updated_at REAL NOT NULL,
+                    message_count INTEGER DEFAULT 0,
+                    owner_user_id TEXT
+                );
+                INSERT INTO conversations (id, title, created_at, updated_at, owner_user_id)
+                VALUES ('existing_conv', '已有列', 100.0, 200.0, 'user_a');
+                """;
+            await cmd.ExecuteNonQueryAsync();
+        }
+
+        var init = new KejiDatabaseInitializer(factory, ctx.FixedTime);
+        await init.InitializeAsync();
+
+        using var conn2 = await GetOpenConnectionAsync(factory);
+        var cols = await GetColumnNamesAsync(conn2, "conversations");
+        var ownerCount = cols.Count(c => c == "owner_user_id");
+        Assert.Equal(1, ownerCount);
+
+        var indexes = await GetIndexNamesAsync(conn2);
+        Assert.Contains("idx_conv_owner", indexes);
+
+        using var checkMigration = conn2.CreateCommand();
+        checkMigration.CommandText = "SELECT COUNT(*) FROM schema_migrations WHERE version = '001_add_owner_user_id'";
+        var migrationCount = Convert.ToInt32(await checkMigration.ExecuteScalarAsync());
+        Assert.Equal(1, migrationCount);
+
+        using var verifyData = conn2.CreateCommand();
+        verifyData.CommandText = "SELECT owner_user_id FROM conversations WHERE id = 'existing_conv'";
+        var owner = await verifyData.ExecuteScalarAsync();
+        Assert.Equal("user_a", owner);
+    }
+
+    [Fact]
+    public async Task LegacyMigration_UnrelatedMigrationDoesNotReplace()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+
+        using (var conn = await GetOpenConnectionAsync(factory))
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = """
+                CREATE TABLE schema_migrations (
+                    version TEXT PRIMARY KEY,
+                    applied_at REAL NOT NULL
+                );
+                INSERT INTO schema_migrations (version, applied_at) VALUES ('000_initial', 100.0);
+                CREATE TABLE conversations (
+                    id TEXT PRIMARY KEY,
+                    title TEXT DEFAULT '新对话',
+                    created_at REAL NOT NULL,
+                    updated_at REAL NOT NULL,
+                    message_count INTEGER DEFAULT 0
+                );
+                """;
+            await cmd.ExecuteNonQueryAsync();
+        }
+
+        var init = new KejiDatabaseInitializer(factory, ctx.FixedTime);
+        await init.InitializeAsync();
+
+        using var conn2 = await GetOpenConnectionAsync(factory);
+        using var cmd2 = conn2.CreateCommand();
+        cmd2.CommandText = "SELECT version FROM schema_migrations ORDER BY version";
+        var versions = new List<string>();
+        using var reader = await cmd2.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+            versions.Add(reader.GetString(0));
+
+        Assert.Contains("000_initial", versions);
+        Assert.Contains("001_add_owner_user_id", versions);
     }
 
     // ──────────────────────────────────────────────
@@ -669,7 +882,7 @@ public class PersistenceTests
     }
 
     [Fact]
-    public async Task User_TouchLogin_UsesProvidedTimestamp()
+    public async Task User_TouchLogin_UsesFixedTime()
     {
         using var ctx = new TestContext(fixedTimestamp: 1234567.0);
         var factory = CreateFactory(ctx.Options);
@@ -679,9 +892,9 @@ public class PersistenceTests
         var id = await repo.CreateAsync("touchuser", "h", TestRoleMember);
         Assert.Null((await repo.GetByIdAsync(id))!.LastLoginAt);
 
-        await repo.TouchLoginAsync(id, 999888.0);
+        await repo.TouchLoginAsync(id);
         var user = await repo.GetByIdAsync(id);
-        Assert.Equal(999888.0, user!.LastLoginAt);
+        Assert.Equal(1234567.0, user!.LastLoginAt);
     }
 
     [Fact]
@@ -692,12 +905,12 @@ public class PersistenceTests
         await CreateInitializerAsync(factory, ctx.FixedTime);
         var userRepo = new SqliteUserRepository(factory, ctx.FixedTime);
         var convRepo = new SqliteConversationRepository(factory, ctx.FixedTime);
-        var msgRepo = new SqliteMessageRepository(factory);
+        var msgRepo = new SqliteMessageRepository(factory, ctx.FixedTime);
 
         var uid = await userRepo.CreateAsync("deluser", "h", TestRoleMember);
         await convRepo.CreateAsync("conv_a", "对话A", uid);
         await convRepo.CreateAsync("conv_b", "对话B", uid);
-        await msgRepo.AddAsync("conv_a", "user", "hello", 100.0);
+        await msgRepo.AddAsync("conv_a", "user", "hello");
 
         var deleted = await userRepo.DeleteAsync(uid);
         Assert.True(deleted);
@@ -728,12 +941,37 @@ public class PersistenceTests
         var factory = CreateFactory(ctx.Options);
         await CreateInitializerAsync(factory, ctx.FixedTime);
         var repo = new SqliteUserRepository(factory, ctx.FixedTime);
+        var convRepo = new SqliteConversationRepository(factory, ctx.FixedTime);
+        var msgRepo = new SqliteMessageRepository(factory, ctx.FixedTime);
 
         var uid = await repo.CreateAsync("rollbackuser", "h", TestRoleMember);
+        await convRepo.CreateAsync("rollback_conv", "回滚对话", uid);
+        await msgRepo.AddAsync("rollback_conv", "user", "回滚消息");
 
-        var deleted = await repo.DeleteAsync(uid);
-        Assert.True(deleted);
-        Assert.Null(await repo.GetByIdAsync(uid));
+        using (var triggerConn = await GetOpenConnectionAsync(factory))
+        {
+            using var createTrigger = triggerConn.CreateCommand();
+            createTrigger.CommandText = """
+                CREATE TRIGGER fail_user_delete BEFORE DELETE ON users
+                BEGIN
+                    SELECT RAISE(ABORT, 'forced failure');
+                END;
+                """;
+            await createTrigger.ExecuteNonQueryAsync();
+        }
+
+        var ex = await Assert.ThrowsAsync<KejiPersistenceException>(() =>
+            repo.DeleteAsync(uid));
+
+        Assert.NotNull(await repo.GetByIdAsync(uid));
+        Assert.NotNull(await convRepo.GetAsync("rollback_conv"));
+
+        var msgs = await msgRepo.ListByConversationAsync("rollback_conv");
+        Assert.Single(msgs);
+
+        var conv = await convRepo.GetAsync("rollback_conv");
+        Assert.NotNull(conv);
+        Assert.Equal(1, conv.MessageCount);
     }
 
     // ──────────────────────────────────────────────
@@ -854,6 +1092,88 @@ public class PersistenceTests
     }
 
     [Fact]
+    public async Task Conversation_ConcurrentClaimDifferentUsers()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var repo = new SqliteConversationRepository(factory, ctx.FixedTime);
+
+        await repo.CreateAsync("concurrent_claim", "抢对话");
+
+        var userA = "user_a";
+        var userB = "user_b";
+
+        var taskA = repo.EnsureOwnedAsync("concurrent_claim", userA);
+        var taskB = repo.EnsureOwnedAsync("concurrent_claim", userB);
+
+        var (ra, rb) = (await taskA, await taskB);
+
+        var claimedCount = 0;
+        if (ra.Item2 == ConversationOwnershipResult.ClaimedUnowned) claimedCount++;
+        if (rb.Item2 == ConversationOwnershipResult.ClaimedUnowned) claimedCount++;
+        Assert.Equal(1, claimedCount);
+
+        var ownedByOtherCount = 0;
+        if (ra.Item2 == ConversationOwnershipResult.OwnedByAnotherUser) ownedByOtherCount++;
+        if (rb.Item2 == ConversationOwnershipResult.OwnedByAnotherUser) ownedByOtherCount++;
+        Assert.Equal(1, ownedByOtherCount);
+
+        var final = await repo.GetAsync("concurrent_claim");
+        Assert.NotNull(final);
+        if (ra.Item2 == ConversationOwnershipResult.ClaimedUnowned)
+            Assert.Equal(userA, final!.OwnerUserId);
+        else
+            Assert.Equal(userB, final!.OwnerUserId);
+    }
+
+    [Fact]
+    public async Task Conversation_ConcurrentCreateDifferentUsers()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var repo = new SqliteConversationRepository(factory, ctx.FixedTime);
+
+        var taskA = repo.EnsureOwnedAsync("concurrent_create", "user_a");
+        var taskB = repo.EnsureOwnedAsync("concurrent_create", "user_b");
+
+        var (ra, rb) = (await taskA, await taskB);
+
+        var createdCount = 0;
+        if (ra.Item2 == ConversationOwnershipResult.Created) createdCount++;
+        if (rb.Item2 == ConversationOwnershipResult.Created) createdCount++;
+        Assert.Equal(1, createdCount);
+
+        Assert.True(
+            ra.Item2 == ConversationOwnershipResult.OwnedByAnotherUser ||
+            rb.Item2 == ConversationOwnershipResult.OwnedByAnotherUser);
+    }
+
+    [Fact]
+    public async Task Conversation_ConcurrentSameUser()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var repo = new SqliteConversationRepository(factory, ctx.FixedTime);
+
+        var tasks = new Task<(ConversationRecord?, ConversationOwnershipResult)>[10];
+        for (int i = 0; i < 10; i++)
+            tasks[i] = repo.EnsureOwnedAsync("same_user_conv", "user_x");
+
+        var results = await Task.WhenAll(tasks);
+
+        var createdOrClaimed = results.Count(r =>
+            r.Item2 == ConversationOwnershipResult.Created ||
+            r.Item2 == ConversationOwnershipResult.ClaimedUnowned);
+        Assert.Equal(1, createdOrClaimed);
+
+        foreach (var (record, _) in results)
+            Assert.Equal("user_x", record!.OwnerUserId);
+    }
+
+    [Fact]
     public async Task Conversation_List_FiltersByOwner()
     {
         using var ctx = new TestContext();
@@ -928,10 +1248,24 @@ public class PersistenceTests
         var repo = new SqliteConversationRepository(factory, ctx.FixedTime);
 
         var c = await repo.CreateAsync("rename_conv", "原名", "owner1");
-        await repo.RenameAsync("rename_conv", "新名", 999.0);
+        await repo.RenameAsync("rename_conv", "新名");
         var updated = await repo.GetAsync("rename_conv");
         Assert.Equal("新名", updated!.Title);
         Assert.Equal("owner1", updated.OwnerUserId);
+    }
+
+    [Fact]
+    public async Task Conversation_Rename_UsesFixedTime()
+    {
+        using var ctx = new TestContext(fixedTimestamp: 5000.0);
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var repo = new SqliteConversationRepository(factory, ctx.FixedTime);
+
+        await repo.CreateAsync("time_conv", "原名");
+        await repo.RenameAsync("time_conv", "新名");
+        var updated = await repo.GetAsync("time_conv");
+        Assert.Equal(5000.0, updated!.UpdatedAt);
     }
 
     [Fact]
@@ -965,10 +1299,10 @@ public class PersistenceTests
         var factory = CreateFactory(ctx.Options);
         await CreateInitializerAsync(factory, ctx.FixedTime);
         var convRepo = new SqliteConversationRepository(factory, ctx.FixedTime);
-        var msgRepo = new SqliteMessageRepository(factory);
+        var msgRepo = new SqliteMessageRepository(factory, ctx.FixedTime);
 
         await convRepo.CreateAsync("del_conv_msgs", "对话");
-        await msgRepo.AddAsync("del_conv_msgs", "user", "text", 100.0);
+        await msgRepo.AddAsync("del_conv_msgs", "user", "text");
         await convRepo.DeleteAsync("del_conv_msgs");
 
         var msgs = await msgRepo.ListByConversationAsync("del_conv_msgs");
@@ -986,10 +1320,10 @@ public class PersistenceTests
         var factory = CreateFactory(ctx.Options);
         await CreateInitializerAsync(factory, ctx.FixedTime);
         var convRepo = new SqliteConversationRepository(factory, ctx.FixedTime);
-        var msgRepo = new SqliteMessageRepository(factory);
+        var msgRepo = new SqliteMessageRepository(factory, ctx.FixedTime);
 
         await convRepo.CreateAsync("msg_conv", "对话");
-        var msgId = await msgRepo.AddAsync("msg_conv", "user", "hello world", 100.0);
+        var msgId = await msgRepo.AddAsync("msg_conv", "user", "hello world");
         Assert.True(msgId > 0);
     }
 
@@ -1000,28 +1334,101 @@ public class PersistenceTests
         var factory = CreateFactory(ctx.Options);
         await CreateInitializerAsync(factory, ctx.FixedTime);
         var convRepo = new SqliteConversationRepository(factory, ctx.FixedTime);
-        var msgRepo = new SqliteMessageRepository(factory);
+        var msgRepo = new SqliteMessageRepository(factory, ctx.FixedTime);
 
         var c = await convRepo.CreateAsync("count_conv");
         Assert.Equal(0, c.MessageCount);
 
-        await msgRepo.AddAsync("count_conv", "user", "m1", 100.0);
-        await msgRepo.AddAsync("count_conv", "assistant", "m2", 200.0);
+        await msgRepo.AddAsync("count_conv", "user", "m1");
+        await msgRepo.AddAsync("count_conv", "assistant", "m2");
 
         var updated = await convRepo.GetAsync("count_conv");
         Assert.Equal(2, updated!.MessageCount);
     }
 
     [Fact]
-    public async Task Message_Add_MissingConversation_RollsBack()
+    public async Task Message_Add_MissingConversation_ThrowsKejiPersistenceException()
     {
         using var ctx = new TestContext();
         var factory = CreateFactory(ctx.Options);
         await CreateInitializerAsync(factory, ctx.FixedTime);
-        var msgRepo = new SqliteMessageRepository(factory);
+        var msgRepo = new SqliteMessageRepository(factory, ctx.FixedTime);
 
-        await Assert.ThrowsAsync<Microsoft.Data.Sqlite.SqliteException>(() =>
-            msgRepo.AddAsync("does_not_exist", "user", "content", 100.0));
+        var ex = await Assert.ThrowsAsync<KejiPersistenceException>(() =>
+            msgRepo.AddAsync("does_not_exist", "user", "content"));
+        Assert.IsNotType<SqliteException>(ex);
+    }
+
+    [Fact]
+    public async Task Message_Add_MissingConversation_NoResidualRows()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var msgRepo = new SqliteMessageRepository(factory, ctx.FixedTime);
+
+        await Assert.ThrowsAsync<KejiPersistenceException>(() =>
+            msgRepo.AddAsync("missing_conv", "user", "content"));
+
+        using var conn = await GetOpenConnectionAsync(factory);
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT COUNT(*) FROM messages";
+        var count = Convert.ToInt32(await cmd.ExecuteScalarAsync());
+        Assert.Equal(0, count);
+    }
+
+    [Fact]
+    public async Task Message_Add_MissingConversation_OtherCountUnaffected()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var convRepo = new SqliteConversationRepository(factory, ctx.FixedTime);
+        var msgRepo = new SqliteMessageRepository(factory, ctx.FixedTime);
+
+        await convRepo.CreateAsync("good_conv");
+        await msgRepo.AddAsync("good_conv", "user", "first");
+        var before = await convRepo.GetAsync("good_conv");
+        Assert.Equal(1, before!.MessageCount);
+
+        await Assert.ThrowsAsync<KejiPersistenceException>(() =>
+            msgRepo.AddAsync("does_not_exist", "user", "content"));
+
+        var after = await convRepo.GetAsync("good_conv");
+        Assert.Equal(1, after!.MessageCount);
+    }
+
+    [Fact]
+    public async Task Message_Add_MissingConversation_ErrorMessageNoContent()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var msgRepo = new SqliteMessageRepository(factory, ctx.FixedTime);
+
+        try
+        {
+            await msgRepo.AddAsync("bad_conv", "user", "超敏感内容不可泄露");
+        }
+        catch (KejiPersistenceException ex)
+        {
+            Assert.DoesNotContain("超敏感内容", ex.Message);
+        }
+    }
+
+    [Fact]
+    public async Task Message_Add_KeepsCorrectUpdatedAt()
+    {
+        using var ctx = new TestContext(fixedTimestamp: 7777.0);
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var convRepo = new SqliteConversationRepository(factory, ctx.FixedTime);
+        var msgRepo = new SqliteMessageRepository(factory, ctx.FixedTime);
+
+        await convRepo.CreateAsync("time_conv");
+        await msgRepo.AddAsync("time_conv", "user", "test");
+        var conv = await convRepo.GetAsync("time_conv");
+        Assert.Equal(7777.0, conv!.UpdatedAt);
     }
 
     [Fact]
@@ -1031,12 +1438,12 @@ public class PersistenceTests
         var factory = CreateFactory(ctx.Options);
         await CreateInitializerAsync(factory, ctx.FixedTime);
         var convRepo = new SqliteConversationRepository(factory, ctx.FixedTime);
-        var msgRepo = new SqliteMessageRepository(factory);
+        var msgRepo = new SqliteMessageRepository(factory, ctx.FixedTime);
 
         await convRepo.CreateAsync("order_conv");
-        await msgRepo.AddAsync("order_conv", "user", "first", 100.0);
-        await msgRepo.AddAsync("order_conv", "assistant", "second", 100.0); // same time
-        await msgRepo.AddAsync("order_conv", "user", "third", 300.0);
+        await msgRepo.AddAsync("order_conv", "user", "first");
+        await msgRepo.AddAsync("order_conv", "assistant", "second");
+        await msgRepo.AddAsync("order_conv", "user", "third");
 
         var msgs = await msgRepo.ListByConversationAsync("order_conv", limit: 100);
         Assert.Equal(3, msgs.Count);
@@ -1052,10 +1459,10 @@ public class PersistenceTests
         var factory = CreateFactory(ctx.Options);
         await CreateInitializerAsync(factory, ctx.FixedTime);
         var convRepo = new SqliteConversationRepository(factory, ctx.FixedTime);
-        var msgRepo = new SqliteMessageRepository(factory);
+        var msgRepo = new SqliteMessageRepository(factory, ctx.FixedTime);
 
         await convRepo.CreateAsync("param_conv");
-        var id = await msgRepo.AddAsync("param_conv", "user", "safe' OR '1'='1", 100.0);
+        var id = await msgRepo.AddAsync("param_conv", "user", "safe' OR '1'='1");
         var msgs = await msgRepo.ListByConversationAsync("param_conv");
         Assert.Single(msgs);
         Assert.Equal("safe' OR '1'='1", msgs[0].Content);
@@ -1068,11 +1475,11 @@ public class PersistenceTests
         var factory = CreateFactory(ctx.Options);
         await CreateInitializerAsync(factory, ctx.FixedTime);
         var convRepo = new SqliteConversationRepository(factory, ctx.FixedTime);
-        var msgRepo = new SqliteMessageRepository(factory);
+        var msgRepo = new SqliteMessageRepository(factory, ctx.FixedTime);
 
         await convRepo.CreateAsync("limit_conv");
         for (int i = 0; i < 10; i++)
-            await msgRepo.AddAsync("limit_conv", "user", $"msg{i}", i * 100.0);
+            await msgRepo.AddAsync("limit_conv", "user", $"msg{i}");
 
         Assert.Single(await msgRepo.ListByConversationAsync("limit_conv", limit: 1));
         Assert.Equal(5, (await msgRepo.ListByConversationAsync("limit_conv", limit: 5)).Count);
@@ -1086,7 +1493,7 @@ public class PersistenceTests
         var factory = CreateFactory(ctx.Options);
         await CreateInitializerAsync(factory, ctx.FixedTime);
         var convRepo = new SqliteConversationRepository(factory, ctx.FixedTime);
-        var msgRepo = new SqliteMessageRepository(factory);
+        var msgRepo = new SqliteMessageRepository(factory, ctx.FixedTime);
 
         await convRepo.CreateAsync("concurrent_conv");
 
@@ -1094,7 +1501,8 @@ public class PersistenceTests
         var tasks = new Task[count];
         for (int i = 0; i < count; i++)
         {
-            tasks[i] = msgRepo.AddAsync("concurrent_conv", "user", $"msg{i}", 100.0 + i);
+            var local = i;
+            tasks[local] = msgRepo.AddAsync("concurrent_conv", "user", $"msg{local}");
         }
         await Task.WhenAll(tasks);
 
@@ -1112,7 +1520,7 @@ public class PersistenceTests
         using var ctx = new TestContext();
         var factory = CreateFactory(ctx.Options);
         await CreateInitializerAsync(factory, ctx.FixedTime);
-        var repo = new SqliteSettingsRepository(factory);
+        var repo = new SqliteSettingsRepository(factory, ctx.FixedTime);
 
         Assert.Equal("default_val", await repo.GetAsync("missing_key", "default_val"));
     }
@@ -1123,9 +1531,9 @@ public class PersistenceTests
         using var ctx = new TestContext();
         var factory = CreateFactory(ctx.Options);
         await CreateInitializerAsync(factory, ctx.FixedTime);
-        var repo = new SqliteSettingsRepository(factory);
+        var repo = new SqliteSettingsRepository(factory, ctx.FixedTime);
 
-        await repo.SetAsync("theme", "dark", 1000.0);
+        await repo.SetAsync("theme", "dark");
         Assert.Equal("dark", await repo.GetAsync("theme"));
     }
 
@@ -1135,10 +1543,10 @@ public class PersistenceTests
         using var ctx = new TestContext();
         var factory = CreateFactory(ctx.Options);
         await CreateInitializerAsync(factory, ctx.FixedTime);
-        var repo = new SqliteSettingsRepository(factory);
+        var repo = new SqliteSettingsRepository(factory, ctx.FixedTime);
 
-        await repo.SetAsync("lang", "zh", 1000.0);
-        await repo.SetAsync("lang", "en", 2000.0);
+        await repo.SetAsync("lang", "zh");
+        await repo.SetAsync("lang", "en");
         Assert.Equal("en", await repo.GetAsync("lang"));
     }
 
@@ -1148,10 +1556,10 @@ public class PersistenceTests
         using var ctx = new TestContext();
         var factory = CreateFactory(ctx.Options);
         await CreateInitializerAsync(factory, ctx.FixedTime);
-        var repo = new SqliteSettingsRepository(factory);
+        var repo = new SqliteSettingsRepository(factory, ctx.FixedTime);
 
-        await repo.SetAsync("k1", "v1", 100.0);
-        await repo.SetAsync("k2", "v2", 200.0);
+        await repo.SetAsync("k1", "v1");
+        await repo.SetAsync("k2", "v2");
         var all = await repo.GetAllAsync();
         Assert.Equal(2, all.Count);
         Assert.Equal("v1", all["k1"]);
@@ -1164,23 +1572,125 @@ public class PersistenceTests
         using var ctx = new TestContext();
         var factory = CreateFactory(ctx.Options);
         await CreateInitializerAsync(factory, ctx.FixedTime);
-        var repo = new SqliteSettingsRepository(factory);
+        var repo = new SqliteSettingsRepository(factory, ctx.FixedTime);
 
-        await repo.SetAsync("key' OR '1'='1", "injected", 100.0);
+        await repo.SetAsync("key' OR '1'='1", "injected");
         var val = await repo.GetAsync("key' OR '1'='1");
         Assert.Equal("injected", val);
     }
 
     [Fact]
-    public async Task Settings_EmptyKey_Throws()
+    public async Task Settings_Get_NullKey_Throws()
     {
         using var ctx = new TestContext();
         var factory = CreateFactory(ctx.Options);
         await CreateInitializerAsync(factory, ctx.FixedTime);
-        var repo = new SqliteSettingsRepository(factory);
+        var repo = new SqliteSettingsRepository(factory, ctx.FixedTime);
 
         await Assert.ThrowsAsync<KejiPersistenceException>(() =>
-            repo.SetAsync("", "val", 100.0));
+            repo.GetAsync(null!));
+    }
+
+    [Fact]
+    public async Task Settings_Get_EmptyKey_Throws()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var repo = new SqliteSettingsRepository(factory, ctx.FixedTime);
+
+        await Assert.ThrowsAsync<KejiPersistenceException>(() =>
+            repo.GetAsync(""));
+    }
+
+    [Fact]
+    public async Task Settings_Get_WhitespaceKey_Throws()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var repo = new SqliteSettingsRepository(factory, ctx.FixedTime);
+
+        await Assert.ThrowsAsync<KejiPersistenceException>(() =>
+            repo.GetAsync("   "));
+    }
+
+    [Fact]
+    public async Task Settings_Set_NullKey_Throws()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var repo = new SqliteSettingsRepository(factory, ctx.FixedTime);
+
+        await Assert.ThrowsAsync<KejiPersistenceException>(() =>
+            repo.SetAsync(null!, "val"));
+    }
+
+    [Fact]
+    public async Task Settings_Set_EmptyKey_Throws()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var repo = new SqliteSettingsRepository(factory, ctx.FixedTime);
+
+        await Assert.ThrowsAsync<KejiPersistenceException>(() =>
+            repo.SetAsync("", "val"));
+    }
+
+    [Fact]
+    public async Task Settings_Set_WhitespaceKey_Throws()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var repo = new SqliteSettingsRepository(factory, ctx.FixedTime);
+
+        await Assert.ThrowsAsync<KejiPersistenceException>(() =>
+            repo.SetAsync("   ", "val"));
+    }
+
+    [Fact]
+    public async Task Settings_Get_EmptyKey_ErrorMessageNoDefault()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var repo = new SqliteSettingsRepository(factory, ctx.FixedTime);
+
+        var ex = await Assert.ThrowsAsync<KejiPersistenceException>(() =>
+            repo.GetAsync("", "超敏感默认值"));
+        Assert.DoesNotContain("超敏感默认值", ex.Message);
+    }
+
+    [Fact]
+    public async Task Settings_Set_EmptyKey_ErrorMessageNoValue()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var repo = new SqliteSettingsRepository(factory, ctx.FixedTime);
+
+        var ex = await Assert.ThrowsAsync<KejiPersistenceException>(() =>
+            repo.SetAsync("", "超敏感值"));
+        Assert.DoesNotContain("超敏感值", ex.Message);
+    }
+
+    [Fact]
+    public async Task Settings_Set_UsesFixedTime()
+    {
+        using var ctx = new TestContext(fixedTimestamp: 8888.0);
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var repo = new SqliteSettingsRepository(factory, ctx.FixedTime);
+
+        await repo.SetAsync("time_key", "val");
+        using var conn = await GetOpenConnectionAsync(factory);
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT updated_at FROM settings WHERE key = 'time_key'";
+        var result = await cmd.ExecuteScalarAsync();
+        Assert.Equal(8888.0, Convert.ToDouble(result));
     }
 
     // ──────────────────────────────────────────────
@@ -1287,11 +1797,11 @@ public class PersistenceTests
         using var ctx = new TestContext();
         var factory = CreateFactory(ctx.Options);
         await CreateInitializerAsync(factory, ctx.FixedTime);
-        var msgRepo = new SqliteMessageRepository(factory);
+        var msgRepo = new SqliteMessageRepository(factory, ctx.FixedTime);
 
         try
         {
-            await msgRepo.AddAsync("nonexistent", "", "超敏感内容不可泄露", 100.0);
+            await msgRepo.AddAsync("nonexistent", "", "超敏感内容不可泄露");
         }
         catch (KejiPersistenceException ex)
         {
@@ -1305,11 +1815,11 @@ public class PersistenceTests
         using var ctx = new TestContext();
         var factory = CreateFactory(ctx.Options);
         await CreateInitializerAsync(factory, ctx.FixedTime);
-        var repo = new SqliteSettingsRepository(factory);
+        var repo = new SqliteSettingsRepository(factory, ctx.FixedTime);
 
         try
         {
-            await repo.SetAsync("", "my_secret_api_key_12345", 100.0);
+            await repo.SetAsync("", "my_secret_api_key_12345");
         }
         catch (KejiPersistenceException ex)
         {
@@ -1352,8 +1862,8 @@ public class PersistenceTests
         await CreateInitializerAsync(factory, ctx.FixedTime);
         var userRepo = new SqliteUserRepository(factory, ctx.FixedTime);
         var convRepo = new SqliteConversationRepository(factory, ctx.FixedTime);
-        var msgRepo = new SqliteMessageRepository(factory);
-        var settingsRepo = new SqliteSettingsRepository(factory);
+        var msgRepo = new SqliteMessageRepository(factory, ctx.FixedTime);
+        var settingsRepo = new SqliteSettingsRepository(factory, ctx.FixedTime);
 
         using var cts = new CancellationTokenSource();
         var ct = cts.Token;
@@ -1364,10 +1874,10 @@ public class PersistenceTests
         var conv = await convRepo.CreateAsync("ct_conv", cancellationToken: ct);
         Assert.NotNull(conv);
 
-        var msgId = await msgRepo.AddAsync("ct_conv", "user", "test", 100.0, ct);
+        var msgId = await msgRepo.AddAsync("ct_conv", "user", "test", ct);
         Assert.True(msgId > 0);
 
-        await settingsRepo.SetAsync("ct_key", "ct_val", 100.0, ct);
+        await settingsRepo.SetAsync("ct_key", "ct_val", ct);
         Assert.Equal("ct_val", await settingsRepo.GetAsync("ct_key", cancellationToken: ct));
     }
 

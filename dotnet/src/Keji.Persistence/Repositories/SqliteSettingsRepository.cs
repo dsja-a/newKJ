@@ -5,14 +5,19 @@ namespace Keji.Persistence.Repositories;
 public class SqliteSettingsRepository : ISettingsRepository
 {
     private readonly ISqliteConnectionFactory _connectionFactory;
+    private readonly IUnixTimeProvider _timeProvider;
 
-    public SqliteSettingsRepository(ISqliteConnectionFactory connectionFactory)
+    public SqliteSettingsRepository(ISqliteConnectionFactory connectionFactory, IUnixTimeProvider timeProvider)
     {
         _connectionFactory = connectionFactory;
+        _timeProvider = timeProvider;
     }
 
     public async Task<string> GetAsync(string key, string defaultValue = "", CancellationToken cancellationToken = default)
     {
+        if (string.IsNullOrEmpty(key) || key.Trim().Length == 0)
+            throw new KejiPersistenceException("Settings key must not be null, empty, or whitespace.");
+
         using var conn = await _connectionFactory.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
         using var cmd = conn.CreateCommand();
         cmd.CommandText = "SELECT value FROM settings WHERE key = @k";
@@ -21,11 +26,12 @@ public class SqliteSettingsRepository : ISettingsRepository
         return result is not null && result is not DBNull ? result.ToString()! : defaultValue;
     }
 
-    public async Task SetAsync(string key, string value, double timestamp, CancellationToken cancellationToken = default)
+    public async Task SetAsync(string key, string value, CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrEmpty(key))
-            throw new KejiPersistenceException("Settings key must not be empty.");
+        if (string.IsNullOrEmpty(key) || key.Trim().Length == 0)
+            throw new KejiPersistenceException("Settings key must not be null, empty, or whitespace.");
 
+        var now = _timeProvider.Now;
         using var conn = await _connectionFactory.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
@@ -34,7 +40,7 @@ public class SqliteSettingsRepository : ISettingsRepository
             """;
         cmd.Parameters.AddWithValue("@k", key);
         cmd.Parameters.AddWithValue("@v", value);
-        cmd.Parameters.AddWithValue("@t", timestamp);
+        cmd.Parameters.AddWithValue("@t", now);
         await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 

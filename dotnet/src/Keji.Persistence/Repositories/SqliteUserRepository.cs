@@ -158,12 +158,12 @@ public class SqliteUserRepository : IUserRepository
         return rows > 0;
     }
 
-    public async Task TouchLoginAsync(string userId, double timestamp, CancellationToken cancellationToken = default)
+    public async Task TouchLoginAsync(string userId, CancellationToken cancellationToken = default)
     {
         using var conn = await _connectionFactory.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
         using var cmd = conn.CreateCommand();
         cmd.CommandText = "UPDATE users SET last_login_at = @t WHERE id = @id";
-        cmd.Parameters.AddWithValue("@t", timestamp);
+        cmd.Parameters.AddWithValue("@t", _timeProvider.Now);
         cmd.Parameters.AddWithValue("@id", userId);
         await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
@@ -173,45 +173,53 @@ public class SqliteUserRepository : IUserRepository
         using var conn = await _connectionFactory.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
         await using var tx = (Microsoft.Data.Sqlite.SqliteTransaction)await conn.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
 
-        using var listCmd = conn.CreateCommand();
-        listCmd.Transaction = tx;
-        listCmd.CommandText = "SELECT id FROM conversations WHERE owner_user_id = @id";
-        listCmd.Parameters.AddWithValue("@id", userId);
-
-        var convIds = new List<string>();
-        using var reader = await listCmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
-            convIds.Add(reader.GetString(0));
-
-        foreach (var cid in convIds)
+        try
         {
-            using var delMsgCmd = conn.CreateCommand();
-            delMsgCmd.Transaction = tx;
-            delMsgCmd.CommandText = "DELETE FROM messages WHERE conversation_id = @cid";
-            delMsgCmd.Parameters.AddWithValue("@cid", cid);
-            await delMsgCmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            using var listCmd = conn.CreateCommand();
+            listCmd.Transaction = tx;
+            listCmd.CommandText = "SELECT id FROM conversations WHERE owner_user_id = @id";
+            listCmd.Parameters.AddWithValue("@id", userId);
 
-            using var delConvCmd = conn.CreateCommand();
-            delConvCmd.Transaction = tx;
-            delConvCmd.CommandText = "DELETE FROM conversations WHERE id = @cid";
-            delConvCmd.Parameters.AddWithValue("@cid", cid);
-            await delConvCmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            var convIds = new List<string>();
+            using var reader = await listCmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+                convIds.Add(reader.GetString(0));
+
+            foreach (var cid in convIds)
+            {
+                using var delMsgCmd = conn.CreateCommand();
+                delMsgCmd.Transaction = tx;
+                delMsgCmd.CommandText = "DELETE FROM messages WHERE conversation_id = @cid";
+                delMsgCmd.Parameters.AddWithValue("@cid", cid);
+                await delMsgCmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+
+                using var delConvCmd = conn.CreateCommand();
+                delConvCmd.Transaction = tx;
+                delConvCmd.CommandText = "DELETE FROM conversations WHERE id = @cid";
+                delConvCmd.Parameters.AddWithValue("@cid", cid);
+                await delConvCmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            }
+
+            using var delUserCmd = conn.CreateCommand();
+            delUserCmd.Transaction = tx;
+            delUserCmd.CommandText = "DELETE FROM users WHERE id = @id";
+            delUserCmd.Parameters.AddWithValue("@id", userId);
+            var deleted = await delUserCmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+
+            if (deleted == 0)
+            {
+                await tx.RollbackAsync(cancellationToken).ConfigureAwait(false);
+                return false;
+            }
+
+            await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
+            return true;
         }
-
-        using var delUserCmd = conn.CreateCommand();
-        delUserCmd.Transaction = tx;
-        delUserCmd.CommandText = "DELETE FROM users WHERE id = @id";
-        delUserCmd.Parameters.AddWithValue("@id", userId);
-        var deleted = await delUserCmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-
-        if (deleted == 0)
+        catch (SqliteException ex)
         {
             await tx.RollbackAsync(cancellationToken).ConfigureAwait(false);
-            return false;
+            throw new KejiPersistenceException("Failed to delete user. The transaction has been rolled back.", ex);
         }
-
-        await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
-        return true;
     }
 
     private static async Task<UserAccountRecord?> ReadUserAccountAsync(SqliteCommand cmd, CancellationToken cancellationToken)

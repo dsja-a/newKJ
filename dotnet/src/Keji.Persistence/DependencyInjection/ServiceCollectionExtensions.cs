@@ -28,8 +28,18 @@ public static class PersistenceServiceCollectionExtensions
         services.AddSingleton<IKejiDatabaseInitializer, KejiDatabaseInitializer>();
         services.AddSingleton<IUserRepository, SqliteUserRepository>();
         services.AddSingleton<IConversationRepository, SqliteConversationRepository>();
-        services.AddSingleton<IMessageRepository, SqliteMessageRepository>();
-        services.AddSingleton<ISettingsRepository, SqliteSettingsRepository>();
+        services.AddSingleton<IMessageRepository>(sp =>
+        {
+            var factory = sp.GetRequiredService<ISqliteConnectionFactory>();
+            var time = sp.GetRequiredService<IUnixTimeProvider>();
+            return new SqliteMessageRepository(factory, time);
+        });
+        services.AddSingleton<ISettingsRepository>(sp =>
+        {
+            var factory = sp.GetRequiredService<ISqliteConnectionFactory>();
+            var time = sp.GetRequiredService<IUnixTimeProvider>();
+            return new SqliteSettingsRepository(factory, time);
+        });
 
         return services;
     }

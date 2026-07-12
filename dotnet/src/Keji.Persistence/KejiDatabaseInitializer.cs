@@ -185,35 +185,20 @@ public class KejiDatabaseInitializer : IKejiDatabaseInitializer
             """;
         var hasOwnerCol = (long)(await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false))! > 0;
 
-        long migrationVersion = 0;
         if (!hasOwnerCol)
         {
             cmd.CommandText = "ALTER TABLE conversations ADD COLUMN owner_user_id TEXT";
             await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-
-            cmd.CommandText = "CREATE INDEX IF NOT EXISTS idx_conv_owner ON conversations(owner_user_id, updated_at)";
-            await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-
-            migrationVersion = 1;
-        }
-        else
-        {
-            cmd.CommandText = "SELECT COUNT(*) FROM schema_migrations";
-            var result = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
-            migrationVersion = result is not null && Convert.ToInt64(result) > 0 ? 1 : 0;
         }
 
-        if (migrationVersion >= 1)
-        {
-            cmd.CommandText = "CREATE INDEX IF NOT EXISTS idx_conv_owner ON conversations(owner_user_id, updated_at)";
-            await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        cmd.CommandText = "CREATE INDEX IF NOT EXISTS idx_conv_owner ON conversations(owner_user_id, updated_at)";
+        await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
 
-            cmd.CommandText = "INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (@v, @t)";
-            cmd.Parameters.Clear();
-            cmd.Parameters.AddWithValue("@v", "001_add_owner_user_id");
-            cmd.Parameters.AddWithValue("@t", _timeProvider.Now);
-            await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-        }
+        cmd.CommandText = "INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (@v, @t)";
+        cmd.Parameters.Clear();
+        cmd.Parameters.AddWithValue("@v", "001_add_owner_user_id");
+        cmd.Parameters.AddWithValue("@t", _timeProvider.Now);
+        await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
 
         await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
     }
