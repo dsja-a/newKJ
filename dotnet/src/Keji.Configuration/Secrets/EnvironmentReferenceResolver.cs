@@ -9,37 +9,36 @@ public partial class EnvironmentReferenceResolver
 
     private readonly IEnvironmentValueSource _valueSource;
     private readonly bool _failOnMissing;
-    private readonly List<EnvironmentResolutionDiagnostic> _diagnostics;
 
     public EnvironmentReferenceResolver(IEnvironmentValueSource valueSource, bool failOnMissing)
     {
         _valueSource = valueSource;
         _failOnMissing = failOnMissing;
-        _diagnostics = new List<EnvironmentResolutionDiagnostic>();
     }
 
     public EnvironmentResolutionResult Resolve(ConfigNode node)
     {
-        var resolved = Visit(node, string.Empty);
-        return new EnvironmentResolutionResult(resolved, _diagnostics.AsReadOnly());
+        var diagnostics = new List<EnvironmentResolutionDiagnostic>();
+        var resolved = Visit(node, string.Empty, diagnostics);
+        return new EnvironmentResolutionResult(resolved, diagnostics.AsReadOnly());
     }
 
-    private ConfigNode Visit(ConfigNode node, string currentPath)
+    private ConfigNode Visit(ConfigNode node, string currentPath, List<EnvironmentResolutionDiagnostic> diagnostics)
     {
         switch (node)
         {
             case ConfigScalar scalar:
-                return ResolveScalar(scalar, currentPath);
+                return ResolveScalar(scalar, currentPath, diagnostics);
             case ConfigMap map:
-                return ResolveMap(map, currentPath);
+                return ResolveMap(map, currentPath, diagnostics);
             case ConfigSequence seq:
-                return ResolveSequence(seq, currentPath);
+                return ResolveSequence(seq, currentPath, diagnostics);
             default:
                 return node;
         }
     }
 
-    private ConfigNode ResolveScalar(ConfigScalar scalar, string configPath)
+    private ConfigNode ResolveScalar(ConfigScalar scalar, string configPath, List<EnvironmentResolutionDiagnostic> diagnostics)
     {
         if (scalar.Value is null)
             return scalar;
@@ -61,31 +60,31 @@ public partial class EnvironmentReferenceResolver
                 configPath.Length > 0 ? configPath : null);
         }
 
-        _diagnostics.Add(new EnvironmentResolutionDiagnostic(
+        diagnostics.Add(new EnvironmentResolutionDiagnostic(
             configPath,
             varName,
             "ENV_MISSING"));
         return new ConfigScalar(string.Empty);
     }
 
-    private ConfigMap ResolveMap(ConfigMap map, string currentPath)
+    private ConfigMap ResolveMap(ConfigMap map, string currentPath, List<EnvironmentResolutionDiagnostic> diagnostics)
     {
         var entries = new List<KeyValuePair<string, ConfigNode>>(map.Count);
         foreach (var kvp in map)
         {
             var childPath = currentPath.Length == 0 ? kvp.Key : $"{currentPath}.{kvp.Key}";
-            entries.Add(new KeyValuePair<string, ConfigNode>(kvp.Key, Visit(kvp.Value, childPath)));
+            entries.Add(new KeyValuePair<string, ConfigNode>(kvp.Key, Visit(kvp.Value, childPath, diagnostics)));
         }
         return new ConfigMap(entries);
     }
 
-    private ConfigSequence ResolveSequence(ConfigSequence seq, string currentPath)
+    private ConfigSequence ResolveSequence(ConfigSequence seq, string currentPath, List<EnvironmentResolutionDiagnostic> diagnostics)
     {
         var items = new List<ConfigNode>(seq.Count);
         for (int i = 0; i < seq.Count; i++)
         {
             var childPath = $"{currentPath}[{i}]";
-            items.Add(Visit(seq[i], childPath));
+            items.Add(Visit(seq[i], childPath, diagnostics));
         }
         return new ConfigSequence(items);
     }

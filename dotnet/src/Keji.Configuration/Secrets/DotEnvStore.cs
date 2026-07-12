@@ -1,4 +1,5 @@
-using System.Collections.Concurrent;
+using System.Collections.ObjectModel;
+using System.Text;
 using System.Text.RegularExpressions;
 using Keji.Configuration.Models;
 
@@ -37,11 +38,11 @@ public partial class DotEnvStore : IDotEnvStore
         var fileInfo = new FileInfo(_filePath);
         if (fileInfo.Length > _maxFileBytes)
             throw new KejiConfigurationException(
-                $".env file exceeds maximum size of {_maxFileBytes} bytes: {_filePath}");
+                $".env file exceeds maximum size of {_maxFileBytes} bytes.");
 
         var allText = File.ReadAllText(_filePath);
         if (allText.Contains('\0'))
-            throw new KejiConfigurationException(".env file contains null characters and is rejected.");
+            throw new KejiConfigurationException(".env file contains null characters.");
 
         var rawLines = File.ReadAllLines(_filePath);
 
@@ -51,7 +52,7 @@ public partial class DotEnvStore : IDotEnvStore
 
             if (line.Length > _maxLineLength)
                 throw new KejiConfigurationException(
-                    $".env file line {i + 1} exceeds maximum length of {_maxLineLength} characters.");
+                    $".env file line {i + 1} exceeds maximum line length.");
 
             var trimmed = line.Trim();
 
@@ -63,18 +64,17 @@ public partial class DotEnvStore : IDotEnvStore
 
             if (trimmed.StartsWith("export ", StringComparison.Ordinal))
                 throw new KejiConfigurationException(
-                    $".env file line {i + 1}: 'export' is not supported. Remove 'export' prefix.");
+                    $".env file line {i + 1}: 'export' is not supported.");
 
             var eqIndex = trimmed.IndexOf('=');
             if (eqIndex < 0)
                 throw new KejiConfigurationException(
-                    $".env file line {i + 1}: line is not empty, not a comment, and does not contain '='.");
+                    $".env file line {i + 1}: invalid line format (expected KEY=value).");
 
             var keyPart = trimmed[..eqIndex].TrimEnd();
             if (!KeyRegex.IsMatch(keyPart))
                 throw new KejiConfigurationException(
-                    $".env file line {i + 1}: variable name '{keyPart}' is not a valid identifier. " +
-                    "Must match pattern: ^[A-Za-z_][A-Za-z0-9_]*$");
+                    $".env file line {i + 1}: invalid variable name '{keyPart}'.");
 
             if (_keyIndex.ContainsKey(keyPart))
                 throw new KejiConfigurationException(
@@ -85,7 +85,7 @@ public partial class DotEnvStore : IDotEnvStore
 
             if (valuePart.Contains('\0'))
                 throw new KejiConfigurationException(
-                    $".env file line {i + 1}: value for '{keyPart}' contains null character.");
+                    $".env file line {i + 1}: value contains null character.");
 
             _lines.Add(new EnvLine { Raw = line, Type = LineType.KeyValue, Key = keyPart });
             _keyIndex[keyPart] = _lines.Count - 1;
@@ -116,52 +116,60 @@ public partial class DotEnvStore : IDotEnvStore
             var valuePart = eqIndex + 1 < line.Raw.Length ? line.Raw[(eqIndex + 1)..] : string.Empty;
             snapshot[kvp.Key] = StripQuotes(valuePart);
         }
-        return new System.Collections.ObjectModel.ReadOnlyDictionary<string, string>(snapshot);
+        return new ReadOnlyDictionary<string, string>(snapshot);
     }
 
     public async Task<DotEnvUpsertResult> UpsertAsync(string key, string value, CancellationToken cancellationToken = default)
     {
-        if (!KeyRegex.IsMatch(key))
-            throw new ArgumentException($"Invalid environment variable name: '{key}'. Must match ^[A-Za-z_][A-Za-z0-9_]*$", nameof(key));
-
-        if (value.Contains('\r') || value.Contains('\n') || value.Contains('\0'))
-            throw new ArgumentException("Value must not contain carriage return, line feed, or null characters.", nameof(value));
+        ValidateKey(key);
+        ValidateValue(value);
 
         await _semaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
 
         try
         {
+            var candidateLines = new List<EnvLine>(_lines);
+            var candidateIndex = new Dictionary<string, int>(_keyIndex, StringComparer.OrdinalIgnoreCase);
+
             bool created;
             bool updated;
+            int lineLength;
 
-            if (_keyIndex.TryGetValue(key, out var existingIndex))
+            if (candidateIndex.TryGetValue(key, out var existingIdx))
             {
-                var existingLine = _lines[existingIndex];
-                var eqIndex = existingLine.Raw.IndexOf('=');
-                var prefix = eqIndex >= 0 ? existingLine.Raw[..(eqIndex + 1)] : key + "=";
-                _lines[existingIndex] = new EnvLine
-                {
-                    Raw = prefix + value,
-                    Type = LineType.KeyValue,
-                    Key = key,
-                };
+                var existingLine = candidateLines[existingIdx];
+                var eqPos = existingLine.Raw.IndexOf('=');
+                var prefix = eqPos >= 0 ? existingLine.Raw[..(eqPos + 1)] : key + "=";
+                var newRaw = prefix + value;
+                lineLength = newRaw.Length;
+
+                if (lineLength > _maxLineLength)
+                    throw new KejiConfigurationException(
+                        $"Updated line exceeds maximum length of {_maxLineLength}.");
+
+                candidateLines[existingIdx] = new EnvLine { Raw = newRaw, Type = LineType.KeyValue, Key = key };
                 created = false;
                 updated = true;
             }
             else
             {
-                _lines.Add(new EnvLine
-                {
-                    Raw = $"{key}={value}",
-                    Type = LineType.KeyValue,
-                    Key = key,
-                });
-                _keyIndex[key] = _lines.Count - 1;
+                var newRaw = $"{key}={value}";
+                lineLength = newRaw.Length;
+
+                if (lineLength > _maxLineLength)
+                    throw new KejiConfigurationException(
+                        $"New line exceeds maximum length of {_maxLineLength}.");
+
+                candidateLines.Add(new EnvLine { Raw = newRaw, Type = LineType.KeyValue, Key = key });
+                candidateIndex[key] = candidateLines.Count - 1;
                 created = true;
                 updated = false;
             }
 
-            await PersistAsync(cancellationToken).ConfigureAwait(false);
+            await PersistCandidateAsync(candidateLines, cancellationToken).ConfigureAwait(false);
+
+            _lines = candidateLines;
+            _keyIndex = candidateIndex;
 
             return new DotEnvUpsertResult(key, created, updated);
         }
@@ -173,27 +181,38 @@ public partial class DotEnvStore : IDotEnvStore
 
     public bool RemoveValue(string key)
     {
-        if (!_keyIndex.TryGetValue(key, out var index))
-            return false;
-
         _semaphore.Wait();
 
         try
         {
-            if (!_keyIndex.TryGetValue(key, out index))
+            if (!_keyIndex.TryGetValue(key, out var index))
                 return false;
 
-            _lines.RemoveAt(index);
-            _keyIndex.Remove(key);
+            var candidateLines = new List<EnvLine>(_lines);
+            var candidateIndex = new Dictionary<string, int>(_keyIndex, StringComparer.OrdinalIgnoreCase);
 
-            foreach (var k in _keyIndex.Keys.ToList())
+            candidateLines.RemoveAt(index);
+            candidateIndex.Remove(key);
+
+            var reindexed = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            for (int i = 0; i < candidateLines.Count; i++)
             {
-                if (_keyIndex[k] > index)
-                    _keyIndex[k]--;
+                if (candidateLines[i].Type == LineType.KeyValue)
+                {
+                    reindexed[candidateLines[i].Key!] = i;
+                }
             }
 
-            PersistAsync(CancellationToken.None).GetAwaiter().GetResult();
+            PersistCandidateAsync(candidateLines, CancellationToken.None).GetAwaiter().GetResult();
+
+            _lines = candidateLines;
+            _keyIndex = reindexed;
+
             return true;
+        }
+        catch
+        {
+            return false;
         }
         finally
         {
@@ -201,17 +220,29 @@ public partial class DotEnvStore : IDotEnvStore
         }
     }
 
-    private async Task PersistAsync(CancellationToken cancellationToken)
+    private async Task PersistCandidateAsync(List<EnvLine> candidateLines, CancellationToken cancellationToken)
     {
-        var tempDir = Path.GetDirectoryName(_filePath)!;
-        var tempFile = Path.Combine(tempDir, $".env.tmp.{Guid.NewGuid():N}");
+        long totalByteCount = 0;
+        foreach (var line in candidateLines)
+        {
+            var lineBytes = Encoding.UTF8.GetByteCount(line.Raw + Environment.NewLine);
+            totalByteCount += lineBytes;
+            if (totalByteCount > _maxFileBytes)
+                throw new KejiConfigurationException(
+                    $"Resulting .env file would exceed maximum size of {_maxFileBytes} bytes.");
+        }
+
+        var dir = Path.GetDirectoryName(_filePath)!;
+        var tempFile = Path.Combine(dir, $".env.tmp.{Guid.NewGuid():N}");
 
         try
         {
+            var utf8NoBom = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
+
             await using (var fs = new FileStream(tempFile, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, useAsync: true))
-            await using (var writer = new StreamWriter(fs, System.Text.Encoding.UTF8))
+            await using (var writer = new StreamWriter(fs, utf8NoBom))
             {
-                foreach (var line in _lines)
+                foreach (var line in candidateLines)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     await writer.WriteLineAsync(line.Raw.AsMemory(), cancellationToken).ConfigureAwait(false);
@@ -221,7 +252,14 @@ public partial class DotEnvStore : IDotEnvStore
                 fs.Flush(flushToDisk: true);
             }
 
-            File.Move(tempFile, _filePath, overwrite: true);
+            if (File.Exists(_filePath))
+            {
+                File.Replace(tempFile, _filePath, destinationBackupFileName: null);
+            }
+            else
+            {
+                File.Move(tempFile, _filePath);
+            }
         }
         catch
         {
@@ -229,6 +267,23 @@ public partial class DotEnvStore : IDotEnvStore
                 File.Delete(tempFile);
             throw;
         }
+    }
+
+    private static void ValidateKey(string key)
+    {
+        if (!KeyRegex.IsMatch(key))
+            throw new ArgumentException(
+                $"Invalid environment variable name: '{key}'. Must match ^[A-Za-z_][A-Za-z0-9_]*$", nameof(key));
+    }
+
+    private static void ValidateValue(string value)
+    {
+        if (value.Contains('\r'))
+            throw new ArgumentException("Value must not contain carriage return.", nameof(value));
+        if (value.Contains('\n'))
+            throw new ArgumentException("Value must not contain line feed.", nameof(value));
+        if (value.Contains('\0'))
+            throw new ArgumentException("Value must not contain null characters.", nameof(value));
     }
 
     private static string StripQuotes(string value)

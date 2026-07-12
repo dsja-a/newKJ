@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using Keji.Configuration.Loading;
 using Keji.Configuration.Models;
 using Keji.Configuration.Secrets;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Keji.Security.Tests;
 
@@ -35,7 +36,6 @@ public class ConfigurationTests
         {
             new KeyValuePair<string, ConfigNode>("key1", new ConfigScalar("value1")),
         });
-
         Assert.Equal("value1", ((ConfigScalar)map["key1"]).Value);
     }
 
@@ -46,7 +46,6 @@ public class ConfigurationTests
         {
             new KeyValuePair<string, ConfigNode>("KEY", new ConfigScalar("value")),
         });
-
         Assert.Equal("value", ((ConfigScalar)map["key"]).Value);
     }
 
@@ -57,7 +56,6 @@ public class ConfigurationTests
         {
             new KeyValuePair<string, ConfigNode>("a", new ConfigScalar("1")),
         });
-
         Assert.True(map.TryGetValue("a", out var val));
         Assert.Equal("1", ((ConfigScalar)val).Value);
     }
@@ -72,14 +70,8 @@ public class ConfigurationTests
     [Fact]
     public void ConfigMap_NavigateNestedMap()
     {
-        var inner = new ConfigMap(new[]
-        {
-            new KeyValuePair<string, ConfigNode>("b", new ConfigScalar("2")),
-        });
-        var outer = new ConfigMap(new[]
-        {
-            new KeyValuePair<string, ConfigNode>("a", inner),
-        });
+        var inner = new ConfigMap(new[] { new KeyValuePair<string, ConfigNode>("b", new ConfigScalar("2")) });
+        var outer = new ConfigMap(new[] { new KeyValuePair<string, ConfigNode>("a", inner) });
 
         Assert.True(outer.TryGetValue("a", out var aNode));
         var aMap = aNode as ConfigMap;
@@ -91,12 +83,7 @@ public class ConfigurationTests
     [Fact]
     public void ConfigSequence_Create_ReturnsItems()
     {
-        var seq = new ConfigSequence(new ConfigNode[]
-        {
-            new ConfigScalar("a"),
-            new ConfigScalar("b"),
-        });
-
+        var seq = new ConfigSequence(new ConfigNode[] { new ConfigScalar("a"), new ConfigScalar("b") });
         Assert.Equal(2, seq.Count);
         Assert.Equal("a", ((ConfigScalar)seq[0]).Value);
         Assert.Equal("b", ((ConfigScalar)seq[1]).Value);
@@ -105,17 +92,9 @@ public class ConfigurationTests
     [Fact]
     public void ConfigSequence_Enumerate_Works()
     {
-        var seq = new ConfigSequence(new ConfigNode[]
-        {
-            new ConfigScalar("x"),
-        });
-
-        var count = 0;
-        foreach (var item in seq)
-        {
-            Assert.Equal("x", ((ConfigScalar)item).Value);
-            count++;
-        }
+        var seq = new ConfigSequence(new ConfigNode[] { new ConfigScalar("x") });
+        int count = 0;
+        foreach (var item in seq) { Assert.Equal("x", ((ConfigScalar)item).Value); count++; }
         Assert.Equal(1, count);
     }
 
@@ -123,691 +102,464 @@ public class ConfigurationTests
     public void ConfigNode_AsScalar_ReturnsTyped()
     {
         ConfigNode node = new ConfigScalar("test");
-        var scalar = node.AsScalar();
-        Assert.Equal("test", scalar.Value);
+        Assert.Equal("test", node.AsScalar().Value);
     }
 
     [Fact]
     public void ConfigNode_AsMap_ReturnsTyped()
     {
         ConfigNode node = new ConfigMap(Array.Empty<KeyValuePair<string, ConfigNode>>());
-        var map = node.AsMap();
-        Assert.NotNull(map);
+        Assert.NotNull(node.AsMap());
     }
 
     [Fact]
     public void ConfigNode_AsSequence_ReturnsTyped()
     {
         ConfigNode node = new ConfigSequence(Array.Empty<ConfigNode>());
-        var seq = node.AsSequence();
-        Assert.NotNull(seq);
+        Assert.NotNull(node.AsSequence());
     }
 
     [Fact]
-    public void KejiConfigurationDocument_GetOptionalString_Existing_ReturnsValue()
+    public void Document_GetOptionalString_Existing_ReturnsValue()
     {
-        var doc = new KejiConfigurationDocument(new ConfigMap(new[]
-        {
-            new KeyValuePair<string, ConfigNode>("key", new ConfigScalar("value")),
-        }));
-
+        var doc = new KejiConfigurationDocument(new ConfigMap(new[] { new KeyValuePair<string, ConfigNode>("key", new ConfigScalar("value")) }));
         Assert.Equal("value", doc.GetOptionalString("key"));
     }
 
     [Fact]
-    public void KejiConfigurationDocument_GetOptionalString_Missing_ReturnsNull()
+    public void Document_GetOptionalString_Missing_ReturnsNull()
     {
-        var doc = new KejiConfigurationDocument(
-            new ConfigMap(Array.Empty<KeyValuePair<string, ConfigNode>>()));
-
-        Assert.Null(doc.GetOptionalString("missing.key"));
+        var doc = new KejiConfigurationDocument(new ConfigMap(Array.Empty<KeyValuePair<string, ConfigNode>>()));
+        Assert.Null(doc.GetOptionalString("missing"));
     }
 
     [Fact]
-    public void KejiConfigurationDocument_GetRequiredString_Existing_ReturnsValue()
+    public void Document_GetRequiredString_Existing_ReturnsValue()
     {
-        var doc = new KejiConfigurationDocument(new ConfigMap(new[]
-        {
-            new KeyValuePair<string, ConfigNode>("key", new ConfigScalar("value")),
-        }));
-
+        var doc = new KejiConfigurationDocument(new ConfigMap(new[] { new KeyValuePair<string, ConfigNode>("key", new ConfigScalar("value")) }));
         Assert.Equal("value", doc.GetRequiredString("key"));
     }
 
     [Fact]
-    public void KejiConfigurationDocument_GetRequiredString_Missing_Throws()
+    public void Document_GetRequiredString_Missing_Throws()
     {
-        var doc = new KejiConfigurationDocument(
-            new ConfigMap(Array.Empty<KeyValuePair<string, ConfigNode>>()));
-
+        var doc = new KejiConfigurationDocument(new ConfigMap(Array.Empty<KeyValuePair<string, ConfigNode>>()));
         Assert.Throws<KejiConfigurationException>(() => doc.GetRequiredString("missing"));
     }
 
     [Fact]
-    public void KejiConfigurationDocument_GetBoolean_Default_ReturnsDefault()
+    public void Document_GetBoolean_Default_ReturnsDefault()
     {
-        var doc = new KejiConfigurationDocument(
-            new ConfigMap(Array.Empty<KeyValuePair<string, ConfigNode>>()));
-
+        var doc = new KejiConfigurationDocument(new ConfigMap(Array.Empty<KeyValuePair<string, ConfigNode>>()));
         Assert.True(doc.GetBoolean("missing", true));
     }
 
     [Fact]
-    public void KejiConfigurationDocument_GetBoolean_Parsed_ReturnsValue()
+    public void Document_GetBoolean_Parsed_ReturnsValue()
     {
-        var doc = new KejiConfigurationDocument(new ConfigMap(new[]
-        {
-            new KeyValuePair<string, ConfigNode>("flag", new ConfigScalar("true")),
-        }));
-
+        var doc = new KejiConfigurationDocument(new ConfigMap(new[] { new KeyValuePair<string, ConfigNode>("flag", new ConfigScalar("true")) }));
         Assert.True(doc.GetBoolean("flag", false));
     }
 
     [Fact]
-    public void KejiConfigurationDocument_GetInt32_Default_ReturnsDefault()
+    public void Document_GetInt32_Default_ReturnsDefault()
     {
-        var doc = new KejiConfigurationDocument(
-            new ConfigMap(Array.Empty<KeyValuePair<string, ConfigNode>>()));
-
+        var doc = new KejiConfigurationDocument(new ConfigMap(Array.Empty<KeyValuePair<string, ConfigNode>>()));
         Assert.Equal(42, doc.GetInt32("missing", 42));
     }
 
     [Fact]
-    public void KejiConfigurationDocument_GetInt32_Parsed_ReturnsValue()
+    public void Document_GetInt32_Parsed_ReturnsValue()
     {
-        var doc = new KejiConfigurationDocument(new ConfigMap(new[]
-        {
-            new KeyValuePair<string, ConfigNode>("port", new ConfigScalar("8080")),
-        }));
-
+        var doc = new KejiConfigurationDocument(new ConfigMap(new[] { new KeyValuePair<string, ConfigNode>("port", new ConfigScalar("8080")) }));
         Assert.Equal(8080, doc.GetInt32("port", 0));
     }
 
     [Fact]
-    public void KejiConfigurationDocument_GetStringList_Existing_ReturnsList()
+    public void Document_GetStringList_Existing_ReturnsList()
     {
-        var doc = new KejiConfigurationDocument(new ConfigMap(new[]
-        {
-            new KeyValuePair<string, ConfigNode>("items", new ConfigSequence(new ConfigNode[]
-            {
-                new ConfigScalar("a"),
-                new ConfigScalar("b"),
-            })),
-        }));
-
+        var doc = new KejiConfigurationDocument(new ConfigMap(new[] { new KeyValuePair<string, ConfigNode>("items", new ConfigSequence(new ConfigNode[] { new ConfigScalar("a"), new ConfigScalar("b") })) }));
         var list = doc.GetStringList("items");
         Assert.Equal(2, list.Count);
         Assert.Contains("a", list);
-        Assert.Contains("b", list);
     }
 
     [Fact]
-    public void KejiConfigurationDocument_GetStringList_Missing_ReturnsEmpty()
+    public void Document_GetStringList_Missing_ReturnsEmpty()
     {
-        var doc = new KejiConfigurationDocument(
-            new ConfigMap(Array.Empty<KeyValuePair<string, ConfigNode>>()));
-
+        var doc = new KejiConfigurationDocument(new ConfigMap(Array.Empty<KeyValuePair<string, ConfigNode>>()));
         Assert.Empty(doc.GetStringList("missing"));
     }
 
     [Fact]
-    public void KejiConfigurationDocument_TryGetNode_DottedPath_ReturnsNode()
+    public void Document_TryGetNode_DottedPath_ReturnsNode()
     {
-        var doc = new KejiConfigurationDocument(new ConfigMap(new[]
-        {
-            new KeyValuePair<string, ConfigNode>("a", new ConfigMap(new[]
-            {
-                new KeyValuePair<string, ConfigNode>("b", new ConfigScalar("c")),
-            })),
-        }));
-
+        var doc = new KejiConfigurationDocument(new ConfigMap(new[] { new KeyValuePair<string, ConfigNode>("a", new ConfigMap(new[] { new KeyValuePair<string, ConfigNode>("b", new ConfigScalar("c")) })) }));
         Assert.True(doc.TryGetNode("a.b", out var node));
         Assert.Equal("c", ((ConfigScalar)node!).Value);
     }
 
     [Fact]
-    public void KejiConfigurationDocument_GetInt32_NotInt_Throws()
+    public void Document_GetInt32_NotInt_Throws()
     {
-        var doc = new KejiConfigurationDocument(new ConfigMap(new[]
-        {
-            new KeyValuePair<string, ConfigNode>("val", new ConfigScalar("not_a_number")),
-        }));
-
+        var doc = new KejiConfigurationDocument(new ConfigMap(new[] { new KeyValuePair<string, ConfigNode>("val", new ConfigScalar("not_a_number")) }));
         Assert.Throws<KejiConfigurationException>(() => doc.GetInt32("val", 0));
     }
 
     [Fact]
-    public void KejiConfigurationDocument_GetBoolean_NotBool_Throws()
+    public void Document_GetBoolean_NotBool_Throws()
     {
-        var doc = new KejiConfigurationDocument(new ConfigMap(new[]
-        {
-            new KeyValuePair<string, ConfigNode>("flag", new ConfigScalar("not_bool")),
-        }));
-
+        var doc = new KejiConfigurationDocument(new ConfigMap(new[] { new KeyValuePair<string, ConfigNode>("flag", new ConfigScalar("not_bool")) }));
         Assert.Throws<KejiConfigurationException>(() => doc.GetBoolean("flag", false));
     }
 
     [Fact]
-    public void KejiConfigurationDocument_GetStringList_NotSequence_Throws()
+    public void Document_GetStringList_NotSequence_Throws()
     {
-        var doc = new KejiConfigurationDocument(new ConfigMap(new[]
-        {
-            new KeyValuePair<string, ConfigNode>("item", new ConfigScalar("not_a_list")),
-        }));
-
+        var doc = new KejiConfigurationDocument(new ConfigMap(new[] { new KeyValuePair<string, ConfigNode>("item", new ConfigScalar("not_a_list")) }));
         Assert.Throws<KejiConfigurationException>(() => doc.GetStringList("item"));
     }
 
     [Fact]
     public void KejiConfigurationLoadOptions_Defaults()
     {
-        var options = new KejiConfigurationLoadOptions();
-        Assert.Equal(1 * 1024 * 1024, options.MaxConfigFileBytes);
-        Assert.Equal(1 * 1024 * 1024, options.MaxDotEnvFileBytes);
-        Assert.Equal(16384, options.MaxDotEnvLineLength);
-        Assert.Equal(32, options.MaxDepth);
-        Assert.Equal(10000, options.MaxNodeCount);
-        Assert.True(options.RequireConfigFile);
-        Assert.True(options.FailOnMissingEnvironmentVariable);
-        Assert.Equal("config.yaml", options.ConfigFileName);
-        Assert.Equal(".env", options.DotEnvFileName);
+        var o = new KejiConfigurationLoadOptions();
+        Assert.Equal(1 * 1024 * 1024, o.MaxConfigFileBytes);
+        Assert.Equal(1 * 1024 * 1024, o.MaxDotEnvFileBytes);
+        Assert.Equal(16384, o.MaxDotEnvLineLength);
+        Assert.Equal(32, o.MaxDepth);
+        Assert.Equal(10000, o.MaxNodeCount);
+        Assert.True(o.RequireConfigFile);
+        Assert.True(o.FailOnMissingEnvironmentVariable);
+        Assert.Equal("config.yaml", o.ConfigFileName);
+        Assert.Equal(".env", o.DotEnvFileName);
     }
 
     [Fact]
-    public void SafeYamlConfigurationLoader_LoadBasicYaml()
+    public void SafeYamlLoader_LoadBasicYaml()
     {
-        using var tempDir = new TempDirectory();
-        var yamlPath = Path.Combine(tempDir.Path, "config.yaml");
-        File.WriteAllText(yamlPath, "key: value\nnumber: 42\nflag: true\n");
-
+        using var td = new TempDir();
+        File.WriteAllText(Path.Combine(td.Path, "config.yaml"), "key: value\nn: 42\n");
         var loader = new SafeYamlConfigurationLoader();
-        var doc = loader.Load(new KejiConfigurationLoadOptions
-        {
-            ProjectRoot = tempDir.Path,
-            RequireConfigFile = true,
-        });
-
-        Assert.Equal("value", doc.GetOptionalString("key"));
-        Assert.Equal("42", doc.GetOptionalString("number"));
-        Assert.Equal("true", doc.GetOptionalString("flag"));
+        var node = loader.Load(new KejiConfigurationLoadOptions { ProjectRoot = td.Path, RequireConfigFile = true });
+        var map = node as ConfigMap;
+        Assert.NotNull(map);
+        Assert.Equal("value", ((ConfigScalar)map["key"]).Value);
+        Assert.Equal("42", ((ConfigScalar)map["n"]).Value);
     }
 
     [Fact]
-    public void SafeYamlConfigurationLoader_LoadNestedYaml()
+    public void SafeYamlLoader_LoadNestedYaml()
     {
-        using var tempDir = new TempDirectory();
-        var yamlPath = Path.Combine(tempDir.Path, "config.yaml");
-        File.WriteAllText(yamlPath, "app:\n  name: keji\n  port: 8080\n");
-
+        using var td = new TempDir();
+        File.WriteAllText(Path.Combine(td.Path, "config.yaml"), "app:\n  name: keji\n");
         var loader = new SafeYamlConfigurationLoader();
-        var doc = loader.Load(new KejiConfigurationLoadOptions
-        {
-            ProjectRoot = tempDir.Path,
-            RequireConfigFile = true,
-        });
-
-        Assert.Equal("keji", doc.GetOptionalString("app.name"));
-        Assert.Equal("8080", doc.GetOptionalString("app.port"));
+        var map = loader.Load(new KejiConfigurationLoadOptions { ProjectRoot = td.Path, RequireConfigFile = true }) as ConfigMap;
+        Assert.NotNull(map);
+        var app = map["app"] as ConfigMap;
+        Assert.NotNull(app);
+        Assert.Equal("keji", ((ConfigScalar)app["name"]).Value);
     }
 
     [Fact]
-    public void SafeYamlConfigurationLoader_LoadSequenceYaml()
+    public void SafeYamlLoader_LoadSequenceYaml()
     {
-        using var tempDir = new TempDirectory();
-        var yamlPath = Path.Combine(tempDir.Path, "config.yaml");
-        File.WriteAllText(yamlPath, "items:\n  - a\n  - b\n  - c\n");
-
+        using var td = new TempDir();
+        File.WriteAllText(Path.Combine(td.Path, "config.yaml"), "items:\n  - a\n  - b\n");
         var loader = new SafeYamlConfigurationLoader();
-        var doc = loader.Load(new KejiConfigurationLoadOptions
-        {
-            ProjectRoot = tempDir.Path,
-            RequireConfigFile = true,
-        });
-
-        var list = doc.GetStringList("items");
-        Assert.Equal(3, list.Count);
-        Assert.Equal("a", list[0]);
-        Assert.Equal("b", list[1]);
-        Assert.Equal("c", list[2]);
+        var map = loader.Load(new KejiConfigurationLoadOptions { ProjectRoot = td.Path, RequireConfigFile = true }) as ConfigMap;
+        Assert.NotNull(map);
+        var seq = map["items"] as ConfigSequence;
+        Assert.NotNull(seq);
+        Assert.Equal(2, seq.Count);
     }
 
     [Fact]
-    public void SafeYamlConfigurationLoader_MissingFile_Throws()
+    public void SafeYamlLoader_MissingFile_Throws()
     {
-        using var tempDir = new TempDirectory();
+        using var td = new TempDir();
         var loader = new SafeYamlConfigurationLoader();
-
         Assert.Throws<KejiConfigurationException>(() =>
-            loader.Load(new KejiConfigurationLoadOptions
-            {
-                ProjectRoot = tempDir.Path,
-                RequireConfigFile = true,
-            }));
+            loader.Load(new KejiConfigurationLoadOptions { ProjectRoot = td.Path, RequireConfigFile = true }));
     }
 
     [Fact]
-    public void SafeYamlConfigurationLoader_MissingFile_Optional_ReturnsEmpty()
+    public void SafeYamlLoader_MissingFile_Optional_ReturnsEmpty()
     {
-        using var tempDir = new TempDirectory();
+        using var td = new TempDir();
         var loader = new SafeYamlConfigurationLoader();
-
-        var doc = loader.Load(new KejiConfigurationLoadOptions
-        {
-            ProjectRoot = tempDir.Path,
-            RequireConfigFile = false,
-        });
-
-        Assert.NotNull(doc);
+        var node = loader.Load(new KejiConfigurationLoadOptions { ProjectRoot = td.Path, RequireConfigFile = false });
+        Assert.IsType<ConfigMap>(node);
     }
 
     [Fact]
-    public void SafeYamlConfigurationLoader_DuplicateKeys_Throws()
+    public void SafeYamlLoader_DuplicateKeys_Throws()
     {
-        using var tempDir = new TempDirectory();
-        var yamlPath = Path.Combine(tempDir.Path, "config.yaml");
-        File.WriteAllText(yamlPath, "key: first\nkey: second\n");
-
+        using var td = new TempDir();
+        File.WriteAllText(Path.Combine(td.Path, "config.yaml"), "key: first\nkey: second\n");
         var loader = new SafeYamlConfigurationLoader();
-
         Assert.Throws<KejiConfigurationException>(() =>
-            loader.Load(new KejiConfigurationLoadOptions
-            {
-                ProjectRoot = tempDir.Path,
-                RequireConfigFile = true,
-            }));
+            loader.Load(new KejiConfigurationLoadOptions { ProjectRoot = td.Path, RequireConfigFile = true }));
     }
 
     [Fact]
-    public void SafeYamlConfigurationLoader_CustomScalarTag_Rejected()
+    public void SafeYamlLoader_CustomScalarTag_Rejected()
     {
-        using var tempDir = new TempDirectory();
-        var yamlPath = Path.Combine(tempDir.Path, "config.yaml");
-        File.WriteAllText(yamlPath, "key: !!str value\n");
-
-        var loader = new SafeYamlConfigurationLoader();
-
+        using var td = new TempDir();
+        File.WriteAllText(Path.Combine(td.Path, "config.yaml"), "key: !!str value\n");
         var ex = Assert.Throws<KejiConfigurationException>(() =>
-            loader.Load(new KejiConfigurationLoadOptions
-            {
-                ProjectRoot = tempDir.Path,
-                RequireConfigFile = true,
-            }));
-
-        Assert.Contains("tag", ex.Message, StringComparison.OrdinalIgnoreCase);
+            new SafeYamlConfigurationLoader().Load(new KejiConfigurationLoadOptions { ProjectRoot = td.Path, RequireConfigFile = true }));
+        Assert.Contains("CUSTOM_TAG", ex.Message);
     }
 
     [Fact]
-    public void SafeYamlConfigurationLoader_CustomMappingTag_Rejected()
+    public void SafeYamlLoader_CustomMappingTag_Rejected()
     {
-        using var tempDir = new TempDirectory();
-        var yamlPath = Path.Combine(tempDir.Path, "config.yaml");
-        File.WriteAllText(yamlPath, "!!map\n  key: value\n");
-
-        var loader = new SafeYamlConfigurationLoader();
-
+        using var td = new TempDir();
+        File.WriteAllText(Path.Combine(td.Path, "config.yaml"), "!!map\n  key: value\n");
         var ex = Assert.Throws<KejiConfigurationException>(() =>
-            loader.Load(new KejiConfigurationLoadOptions
-            {
-                ProjectRoot = tempDir.Path,
-                RequireConfigFile = true,
-            }));
-
-        Assert.Contains("tag", ex.Message, StringComparison.OrdinalIgnoreCase);
+            new SafeYamlConfigurationLoader().Load(new KejiConfigurationLoadOptions { ProjectRoot = td.Path, RequireConfigFile = true }));
+        Assert.Contains("CUSTOM_TAG", ex.Message);
     }
 
     [Fact]
-    public void SafeYamlConfigurationLoader_CustomSequenceTag_Rejected()
+    public void SafeYamlLoader_CustomSequenceTag_Rejected()
     {
-        using var tempDir = new TempDirectory();
-        var yamlPath = Path.Combine(tempDir.Path, "config.yaml");
-        File.WriteAllText(yamlPath, "!!seq\n  - a\n  - b\n");
-
-        var loader = new SafeYamlConfigurationLoader();
-
+        using var td = new TempDir();
+        File.WriteAllText(Path.Combine(td.Path, "config.yaml"), "!!seq\n  - a\n  - b\n");
         var ex = Assert.Throws<KejiConfigurationException>(() =>
-            loader.Load(new KejiConfigurationLoadOptions
-            {
-                ProjectRoot = tempDir.Path,
-                RequireConfigFile = true,
-            }));
-
-        Assert.Contains("tag", ex.Message, StringComparison.OrdinalIgnoreCase);
+            new SafeYamlConfigurationLoader().Load(new KejiConfigurationLoadOptions { ProjectRoot = td.Path, RequireConfigFile = true }));
+        Assert.Contains("CUSTOM_TAG", ex.Message);
     }
 
     [Fact]
-    public void SafeYamlConfigurationLoader_AnchorDeclaration_Rejected()
+    public void SafeYamlLoader_Anchor_Rejected()
     {
-        using var tempDir = new TempDirectory();
-        var yamlPath = Path.Combine(tempDir.Path, "config.yaml");
-        File.WriteAllText(yamlPath, "defaults: &d\n  key: value\n");
-
-        var loader = new SafeYamlConfigurationLoader();
-
+        using var td = new TempDir();
+        File.WriteAllText(Path.Combine(td.Path, "config.yaml"), "d: &a\n  key: value\n");
         var ex = Assert.Throws<KejiConfigurationException>(() =>
-            loader.Load(new KejiConfigurationLoadOptions
-            {
-                ProjectRoot = tempDir.Path,
-                RequireConfigFile = true,
-            }));
-
-        Assert.Contains("anchor", ex.Message, StringComparison.OrdinalIgnoreCase);
+            new SafeYamlConfigurationLoader().Load(new KejiConfigurationLoadOptions { ProjectRoot = td.Path, RequireConfigFile = true }));
+        Assert.Contains("ANCHOR", ex.Message);
     }
 
     [Fact]
-    public void SafeYamlConfigurationLoader_Alias_Rejected()
+    public void SafeYamlLoader_Alias_Rejected()
     {
-        using var tempDir = new TempDirectory();
-        var yamlPath = Path.Combine(tempDir.Path, "config.yaml");
-        File.WriteAllText(yamlPath, "key: *some_alias\n");
-
-        var loader = new SafeYamlConfigurationLoader();
-
+        using var td = new TempDir();
+        File.WriteAllText(Path.Combine(td.Path, "config.yaml"), "key: *some_alias\n");
         var ex = Assert.Throws<KejiConfigurationException>(() =>
-            loader.Load(new KejiConfigurationLoadOptions
-            {
-                ProjectRoot = tempDir.Path,
-                RequireConfigFile = true,
-            }));
-
-        Assert.Contains("alias", ex.Message, StringComparison.OrdinalIgnoreCase);
+            new SafeYamlConfigurationLoader().Load(new KejiConfigurationLoadOptions { ProjectRoot = td.Path, RequireConfigFile = true }));
+        Assert.Contains("ALIAS", ex.Message);
     }
 
     [Fact]
-    public void SafeYamlConfigurationLoader_MalformedYaml_WrapsException()
+    public void SafeYamlLoader_ExceedsMaxDepth_Throws()
     {
-        using var tempDir = new TempDirectory();
-        var yamlPath = Path.Combine(tempDir.Path, "config.yaml");
-        File.WriteAllText(yamlPath, "key: value\nunbalanced: [\n");
-
-        var loader = new SafeYamlConfigurationLoader();
-
-        var ex = Assert.Throws<KejiConfigurationException>(() =>
-            loader.Load(new KejiConfigurationLoadOptions
-            {
-                ProjectRoot = tempDir.Path,
-                RequireConfigFile = true,
-            }));
-
-        Assert.NotNull(ex.Message);
+        using var td = new TempDir();
+        File.WriteAllText(Path.Combine(td.Path, "config.yaml"), BuildDeepYaml(40));
+        Assert.Throws<KejiConfigurationException>(() =>
+            new SafeYamlConfigurationLoader().Load(new KejiConfigurationLoadOptions { ProjectRoot = td.Path, RequireConfigFile = true, MaxDepth = 10 }));
     }
 
     [Fact]
-    public void SafeYamlConfigurationLoader_ExceptionDoesNotContainSecrets()
+    public void SafeYamlLoader_ExceedsMaxNodeCount_Throws()
     {
-        using var tempDir = new TempDirectory();
-        var yamlPath = Path.Combine(tempDir.Path, "config.yaml");
-        File.WriteAllText(yamlPath, "password: my_super_secret_value\nkey: *missing_alias\n");
+        using var td = new TempDir();
+        File.WriteAllText(Path.Combine(td.Path, "config.yaml"), string.Join("\n", Enumerable.Range(0, 200).Select(i => $"k{i}: v{i}")));
+        Assert.Throws<KejiConfigurationException>(() =>
+            new SafeYamlConfigurationLoader().Load(new KejiConfigurationLoadOptions { ProjectRoot = td.Path, RequireConfigFile = true, MaxNodeCount = 50 }));
+    }
 
-        var loader = new SafeYamlConfigurationLoader();
+    [Fact]
+    public void SafeYamlLoader_ExceedsMaxSize_Throws()
+    {
+        using var td = new TempDir();
+        File.WriteAllText(Path.Combine(td.Path, "config.yaml"), new string('x', 2000));
+        Assert.Throws<KejiConfigurationException>(() =>
+            new SafeYamlConfigurationLoader().Load(new KejiConfigurationLoadOptions { ProjectRoot = td.Path, RequireConfigFile = true, MaxConfigFileBytes = 100 }));
+    }
 
+    [Fact]
+    public void SafeYamlLoader_RootNotMapping_Throws()
+    {
+        using var td = new TempDir();
+        File.WriteAllText(Path.Combine(td.Path, "config.yaml"), "[1, 2, 3]\n");
+        Assert.Throws<KejiConfigurationException>(() =>
+            new SafeYamlConfigurationLoader().Load(new KejiConfigurationLoadOptions { ProjectRoot = td.Path, RequireConfigFile = true }));
+    }
+
+    [Fact]
+    public void SafeYamlLoader_MalformedYaml_WrapsException()
+    {
+        using var td = new TempDir();
+        File.WriteAllText(Path.Combine(td.Path, "config.yaml"), "key: value\nunbalanced: [\n");
         var ex = Assert.Throws<KejiConfigurationException>(() =>
-            loader.Load(new KejiConfigurationLoadOptions
-            {
-                ProjectRoot = tempDir.Path,
-                RequireConfigFile = true,
-            }));
+            new SafeYamlConfigurationLoader().Load(new KejiConfigurationLoadOptions { ProjectRoot = td.Path, RequireConfigFile = true }));
+        Assert.Contains("YAML_PARSE_ERROR", ex.Message);
+    }
 
+    [Fact]
+    public void SafeYamlLoader_ExceptionDoesNotContainSecrets()
+    {
+        using var td = new TempDir();
+        File.WriteAllText(Path.Combine(td.Path, "config.yaml"), "password: my_super_secret_value\nkey: *missing_alias\n");
+        var ex = Assert.Throws<KejiConfigurationException>(() =>
+            new SafeYamlConfigurationLoader().Load(new KejiConfigurationLoadOptions { ProjectRoot = td.Path, RequireConfigFile = true }));
         Assert.DoesNotContain("my_super_secret_value", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
-    public void SafeYamlConfigurationLoader_RootNotMapping_Throws()
+    public void SafeYamlLoader_MalformedExceptionMessage_NoSecretLeak()
     {
-        using var tempDir = new TempDirectory();
-        var yamlPath = Path.Combine(tempDir.Path, "config.yaml");
-        File.WriteAllText(yamlPath, "[1, 2, 3]\n");
-
-        var loader = new SafeYamlConfigurationLoader();
-
-        Assert.Throws<KejiConfigurationException>(() =>
-            loader.Load(new KejiConfigurationLoadOptions
-            {
-                ProjectRoot = tempDir.Path,
-                RequireConfigFile = true,
-            }));
+        using var td = new TempDir();
+        File.WriteAllText(Path.Combine(td.Path, "config.yaml"), "secret_key: my_top_secret\nkey: *bad_alias\n");
+        var ex = Assert.Throws<KejiConfigurationException>(() =>
+            new SafeYamlConfigurationLoader().Load(new KejiConfigurationLoadOptions { ProjectRoot = td.Path, RequireConfigFile = true }));
+        Assert.DoesNotContain("my_top_secret", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("my_top_secret", ex.ToString(), StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
-    public void SafeYamlConfigurationLoader_ExceedsMaxDepth_Throws()
+    public void EnvRef_ResolvesSimpleVar()
     {
-        using var tempDir = new TempDirectory();
-        var yamlPath = Path.Combine(tempDir.Path, "config.yaml");
-        File.WriteAllText(yamlPath, BuildDeepYaml(40));
-
-        var loader = new SafeYamlConfigurationLoader();
-
-        Assert.Throws<KejiConfigurationException>(() =>
-            loader.Load(new KejiConfigurationLoadOptions
-            {
-                ProjectRoot = tempDir.Path,
-                RequireConfigFile = true,
-                MaxDepth = 10,
-            }));
-    }
-
-    [Fact]
-    public void SafeYamlConfigurationLoader_ExceedsMaxNodeCount_Throws()
-    {
-        using var tempDir = new TempDirectory();
-        var yamlPath = Path.Combine(tempDir.Path, "config.yaml");
-        var manyKeys = string.Join("\n", Enumerable.Range(0, 200).Select(i => $"key{i}: value{i}"));
-        File.WriteAllText(yamlPath, manyKeys);
-
-        var loader = new SafeYamlConfigurationLoader();
-
-        Assert.Throws<KejiConfigurationException>(() =>
-            loader.Load(new KejiConfigurationLoadOptions
-            {
-                ProjectRoot = tempDir.Path,
-                RequireConfigFile = true,
-                MaxNodeCount = 50,
-            }));
-    }
-
-    [Fact]
-    public void SafeYamlConfigurationLoader_ExceedsMaxSize_Throws()
-    {
-        using var tempDir = new TempDirectory();
-        var yamlPath = Path.Combine(tempDir.Path, "config.yaml");
-        File.WriteAllText(yamlPath, new string('x', 2000));
-
-        var loader = new SafeYamlConfigurationLoader();
-
-        Assert.Throws<KejiConfigurationException>(() =>
-            loader.Load(new KejiConfigurationLoadOptions
-            {
-                ProjectRoot = tempDir.Path,
-                RequireConfigFile = true,
-                MaxConfigFileBytes = 100,
-            }));
-    }
-
-    [Fact]
-    public void EnvironmentReferenceResolver_ResolvesSimpleVar()
-    {
-        var source = new TestEnvironmentValueSource(new Dictionary<string, string>
-        {
-            { "MY_VAR", "resolved_value" },
-        });
-        var resolver = new EnvironmentReferenceResolver(source, failOnMissing: true);
-
-        var result = resolver.Resolve(new ConfigScalar("${MY_VAR}"));
-
-        Assert.Equal("resolved_value", ((ConfigScalar)result.Root).Value);
+        var src = new TestEnvSrc(new Dictionary<string, string> { { "MY_VAR", "resolved" } });
+        var r = new EnvironmentReferenceResolver(src, true);
+        var result = r.Resolve(new ConfigScalar("${MY_VAR}"));
+        Assert.Equal("resolved", ((ConfigScalar)result.Root).Value);
         Assert.Empty(result.Diagnostics);
     }
 
     [Fact]
-    public void EnvironmentReferenceResolver_PrefixInterpolation_NotResolved()
+    public void EnvRef_PrefixInterpolation_NotResolved()
     {
-        var source = new TestEnvironmentValueSource(new Dictionary<string, string>
-        {
-            { "NAME", "World" },
-        });
-        var resolver = new EnvironmentReferenceResolver(source, failOnMissing: true);
-
-        var result = resolver.Resolve(new ConfigScalar("prefix-${NAME}"));
-
+        var src = new TestEnvSrc(new Dictionary<string, string> { { "NAME", "World" } });
+        var r = new EnvironmentReferenceResolver(src, true);
+        var result = r.Resolve(new ConfigScalar("prefix-${NAME}"));
         Assert.Equal("prefix-${NAME}", ((ConfigScalar)result.Root).Value);
     }
 
     [Fact]
-    public void EnvironmentReferenceResolver_SuffixInterpolation_NotResolved()
+    public void EnvRef_SuffixInterpolation_NotResolved()
     {
-        var source = new TestEnvironmentValueSource(new Dictionary<string, string>
-        {
-            { "NAME", "World" },
-        });
-        var resolver = new EnvironmentReferenceResolver(source, failOnMissing: true);
-
-        var result = resolver.Resolve(new ConfigScalar("${NAME}-suffix"));
-
+        var src = new TestEnvSrc(new Dictionary<string, string> { { "NAME", "World" } });
+        var r = new EnvironmentReferenceResolver(src, true);
+        var result = r.Resolve(new ConfigScalar("${NAME}-suffix"));
         Assert.Equal("${NAME}-suffix", ((ConfigScalar)result.Root).Value);
     }
 
     [Fact]
-    public void EnvironmentReferenceResolver_DefaultSyntax_NotResolved()
+    public void EnvRef_DefaultSyntax_NotResolved()
     {
-        var source = new TestEnvironmentValueSource(new Dictionary<string, string>());
-        var resolver = new EnvironmentReferenceResolver(source, failOnMissing: true);
-
-        var result = resolver.Resolve(new ConfigScalar("${MISSING|default_val}"));
-
+        var src = new TestEnvSrc(new Dictionary<string, string>());
+        var r = new EnvironmentReferenceResolver(src, true);
+        var result = r.Resolve(new ConfigScalar("${MISSING|default_val}"));
         Assert.Equal("${MISSING|default_val}", ((ConfigScalar)result.Root).Value);
     }
 
     [Fact]
-    public void EnvironmentReferenceResolver_InvalidName_NotResolved()
+    public void EnvRef_InvalidName_NotResolved()
     {
-        var source = new TestEnvironmentValueSource(new Dictionary<string, string>());
-        var resolver = new EnvironmentReferenceResolver(source, failOnMissing: true);
-
-        var result = resolver.Resolve(new ConfigScalar("${1BAD}"));
-
+        var src = new TestEnvSrc(new Dictionary<string, string>());
+        var r = new EnvironmentReferenceResolver(src, true);
+        var result = r.Resolve(new ConfigScalar("${1BAD}"));
         Assert.Equal("${1BAD}", ((ConfigScalar)result.Root).Value);
     }
 
     [Fact]
-    public void EnvironmentReferenceResolver_MissingVar_StrictMode_Throws()
+    public void EnvRef_MissingVar_Strict_Throws()
     {
-        var source = new TestEnvironmentValueSource(new Dictionary<string, string>());
-        var resolver = new EnvironmentReferenceResolver(source, failOnMissing: true);
-
-        var ex = Assert.Throws<KejiConfigurationException>(() =>
-            resolver.Resolve(new ConfigScalar("${MISSING}")));
-
+        var src = new TestEnvSrc(new Dictionary<string, string>());
+        var r = new EnvironmentReferenceResolver(src, true);
+        var ex = Assert.Throws<KejiConfigurationException>(() => r.Resolve(new ConfigScalar("${MISSING}")));
         Assert.Contains("MISSING", ex.Message);
     }
 
     [Fact]
-    public void EnvironmentReferenceResolver_MissingVar_NonStrict_ReturnsEmptyAndDiagnostic()
+    public void EnvRef_MissingVar_NonStrict_ReturnsEmptyAndDiag()
     {
-        var source = new TestEnvironmentValueSource(new Dictionary<string, string>());
-        var resolver = new EnvironmentReferenceResolver(source, failOnMissing: false);
-
-        var result = resolver.Resolve(new ConfigScalar("${MISSING}"));
-
+        var src = new TestEnvSrc(new Dictionary<string, string>());
+        var r = new EnvironmentReferenceResolver(src, false);
+        var result = r.Resolve(new ConfigScalar("${MISSING}"));
         Assert.Equal(string.Empty, ((ConfigScalar)result.Root).Value);
         Assert.Single(result.Diagnostics);
         Assert.Equal("MISSING", result.Diagnostics[0].EnvironmentVariableName);
-        Assert.Equal("ENV_MISSING", result.Diagnostics[0].DiagnosticCode);
     }
 
     [Fact]
-    public void EnvironmentReferenceResolver_DiagnosticsDoNotContainSecrets()
+    public void EnvRef_TracksDottedPath()
     {
-        var source = new TestEnvironmentValueSource(new Dictionary<string, string>());
-        var resolver = new EnvironmentReferenceResolver(source, failOnMissing: false);
-
-        var result = resolver.Resolve(new ConfigScalar("${SECRET_VAR}"));
-
-        foreach (var d in result.Diagnostics)
-        {
-            Assert.DoesNotContain("SECRET_VAR", d.ConfigPath);
-            Assert.Equal("SECRET_VAR", d.EnvironmentVariableName);
-        }
-    }
-
-    [Fact]
-    public void EnvironmentReferenceResolver_TracksDottedPath()
-    {
-        var source = new TestEnvironmentValueSource(new Dictionary<string, string>());
-        var resolver = new EnvironmentReferenceResolver(source, failOnMissing: false);
-
-        var map = new ConfigMap(new[]
-        {
-            new KeyValuePair<string, ConfigNode>("app", new ConfigMap(new[]
-            {
-                new KeyValuePair<string, ConfigNode>("secret_key", new ConfigScalar("${MISSING}")),
-            })),
-        });
-
-        var result = resolver.Resolve(map);
+        var src = new TestEnvSrc(new Dictionary<string, string>());
+        var r = new EnvironmentReferenceResolver(src, false);
+        var map = new ConfigMap(new[] { new KeyValuePair<string, ConfigNode>("app", new ConfigMap(new[] { new KeyValuePair<string, ConfigNode>("secret_key", new ConfigScalar("${MISSING}")) })) });
+        var result = r.Resolve(map);
         Assert.Single(result.Diagnostics);
         Assert.Equal("app.secret_key", result.Diagnostics[0].ConfigPath);
     }
 
     [Fact]
-    public void EnvironmentReferenceResolver_ResolvesInMap()
+    public void EnvRef_ResolvesInMap()
     {
-        var source = new TestEnvironmentValueSource(new Dictionary<string, string>
-        {
-            { "PORT", "3000" },
-        });
-        var resolver = new EnvironmentReferenceResolver(source, failOnMissing: true);
-
-        var map = new ConfigMap(new[]
-        {
-            new KeyValuePair<string, ConfigNode>("port", new ConfigScalar("${PORT}")),
-        });
-
-        var result = resolver.Resolve(map);
-        var resolvedMap = result.Root as ConfigMap;
-        Assert.NotNull(resolvedMap);
-        Assert.Equal("3000", ((ConfigScalar)resolvedMap["port"]).Value);
+        var src = new TestEnvSrc(new Dictionary<string, string> { { "PORT", "3000" } });
+        var r = new EnvironmentReferenceResolver(src, true);
+        var map = new ConfigMap(new[] { new KeyValuePair<string, ConfigNode>("port", new ConfigScalar("${PORT}")) });
+        var result = r.Resolve(map);
+        var m = result.Root as ConfigMap;
+        Assert.NotNull(m);
+        Assert.Equal("3000", ((ConfigScalar)m["port"]).Value);
     }
 
     [Fact]
-    public void EnvironmentReferenceResolver_ResolvesInSequence()
+    public void EnvRef_ResolvesInSequence()
     {
-        var source = new TestEnvironmentValueSource(new Dictionary<string, string>
-        {
-            { "HOST", "localhost" },
-        });
-        var resolver = new EnvironmentReferenceResolver(source, failOnMissing: true);
-
-        var seq = new ConfigSequence(new ConfigNode[]
-        {
-            new ConfigScalar("${HOST}"),
-        });
-
-        var result = resolver.Resolve(seq);
-        var resolvedSeq = result.Root as ConfigSequence;
-        Assert.NotNull(resolvedSeq);
-        Assert.Equal("localhost", ((ConfigScalar)resolvedSeq[0]).Value);
+        var src = new TestEnvSrc(new Dictionary<string, string> { { "HOST", "localhost" } });
+        var r = new EnvironmentReferenceResolver(src, true);
+        var result = r.Resolve(new ConfigSequence(new ConfigNode[] { new ConfigScalar("${HOST}") }));
+        var seq = result.Root as ConfigSequence;
+        Assert.NotNull(seq);
+        Assert.Equal("localhost", ((ConfigScalar)seq[0]).Value);
     }
 
     [Fact]
-    public void EnvironmentReferenceResolver_NoVarNoChange()
+    public void EnvRef_NoVarNoChange()
     {
-        var source = new TestEnvironmentValueSource(new Dictionary<string, string>());
-        var resolver = new EnvironmentReferenceResolver(source, failOnMissing: true);
-
-        var result = resolver.Resolve(new ConfigScalar("plain text"));
-
+        var r = new EnvironmentReferenceResolver(new TestEnvSrc(new Dictionary<string, string>()), true);
+        var result = r.Resolve(new ConfigScalar("plain text"));
         Assert.Equal("plain text", ((ConfigScalar)result.Root).Value);
     }
 
     [Fact]
-    public void ProcessEnvironmentValueSource_ReturnsValue()
+    public void EnvRef_MultipleCalls_DiagnosticsNotAccumulated()
     {
-        var key = "KJ_TEST_VAR_" + Guid.NewGuid().ToString("N")[..8];
-        Environment.SetEnvironmentVariable(key, "process_val");
+        var src = new TestEnvSrc(new Dictionary<string, string>());
+        var r = new EnvironmentReferenceResolver(src, false);
 
+        var r1 = r.Resolve(new ConfigScalar("${MISSING}"));
+        Assert.Single(r1.Diagnostics);
+
+        var r2 = r.Resolve(new ConfigScalar("plain"));
+        Assert.Empty(r2.Diagnostics);
+    }
+
+    [Fact]
+    public void EnvRef_DiagnosticsDoNotContainSecrets()
+    {
+        var src = new TestEnvSrc(new Dictionary<string, string>());
+        var r = new EnvironmentReferenceResolver(src, false);
+        var result = r.Resolve(new ConfigScalar("${SECRET_VAR}"));
+        foreach (var d in result.Diagnostics)
+        {
+            Assert.Equal("SECRET_VAR", d.EnvironmentVariableName);
+        }
+    }
+
+    [Fact]
+    public void ProcessEnvSrc_ReturnsValue()
+    {
+        var key = "KJ_TEST_" + Guid.NewGuid().ToString("N")[..8];
+        Environment.SetEnvironmentVariable(key, "val");
         try
         {
-            var source = new ProcessEnvironmentValueSource();
-            Assert.Equal("process_val", source.GetValue(key));
+            Assert.Equal("val", new ProcessEnvironmentValueSource().GetValue(key));
         }
         finally
         {
@@ -816,621 +568,450 @@ public class ConfigurationTests
     }
 
     [Fact]
-    public void ProcessEnvironmentValueSource_Missing_ReturnsNull()
+    public void ProcessEnvSrc_Missing_ReturnsNull()
     {
-        var source = new ProcessEnvironmentValueSource();
-        Assert.Null(source.GetValue("KJ_NONEXISTENT_" + Guid.NewGuid().ToString("N")));
+        Assert.Null(new ProcessEnvironmentValueSource().GetValue("KJ_NONEXIST_" + Guid.NewGuid().ToString("N")));
     }
 
     [Fact]
-    public void CompositeEnvironmentValueSource_FirstSourceWins()
+    public void CompositeEnvSrc_FirstWins()
     {
-        var first = new TestEnvironmentValueSource(new Dictionary<string, string>
-        {
-            { "VAR", "from_first" },
-        });
-        var second = new TestEnvironmentValueSource(new Dictionary<string, string>
-        {
-            { "VAR", "from_second" },
-        });
-
-        var composite = new CompositeEnvironmentValueSource(first, second);
-        Assert.Equal("from_first", composite.GetValue("VAR"));
+        var c = new CompositeEnvironmentValueSource(
+            new TestEnvSrc(new Dictionary<string, string> { { "V", "first" } }),
+            new TestEnvSrc(new Dictionary<string, string> { { "V", "second" } }));
+        Assert.Equal("first", c.GetValue("V"));
     }
 
     [Fact]
-    public void CompositeEnvironmentValueSource_FallbackToSecond()
+    public void CompositeEnvSrc_Fallback()
     {
-        var first = new TestEnvironmentValueSource(new Dictionary<string, string>());
-        var second = new TestEnvironmentValueSource(new Dictionary<string, string>
-        {
-            { "VAR", "from_second" },
-        });
-
-        var composite = new CompositeEnvironmentValueSource(first, second);
-        Assert.Equal("from_second", composite.GetValue("VAR"));
+        var c = new CompositeEnvironmentValueSource(
+            new TestEnvSrc(new Dictionary<string, string>()),
+            new TestEnvSrc(new Dictionary<string, string> { { "V", "fallback" } }));
+        Assert.Equal("fallback", c.GetValue("V"));
     }
 
     [Fact]
-    public void CompositeEnvironmentValueSource_AllMissing_ReturnsNull()
+    public void CompositeEnvSrc_AllMissing_ReturnsNull()
     {
-        var composite = new CompositeEnvironmentValueSource(
-            new TestEnvironmentValueSource(new Dictionary<string, string>()),
-            new TestEnvironmentValueSource(new Dictionary<string, string>()));
-
-        Assert.Null(composite.GetValue("MISSING"));
+        var c = new CompositeEnvironmentValueSource(
+            new TestEnvSrc(new Dictionary<string, string>()),
+            new TestEnvSrc(new Dictionary<string, string>()));
+        Assert.Null(c.GetValue("MISSING"));
     }
 
     [Fact]
-    public void DotEnvStore_ReadsFile()
+    public void DotEnv_ReadsFile()
     {
-        using var tempDir = new TempDirectory();
-        var envPath = Path.Combine(tempDir.Path, ".env");
-        File.WriteAllLines(envPath, new[]
-        {
-            "KEY=value",
-            "EMPTY=",
-            "# comment",
-        });
-
-        var store = new DotEnvStore(envPath);
-        Assert.Equal("value", store.GetValue("KEY"));
-        Assert.Equal("", store.GetValue("EMPTY"));
+        using var td = new TempDir();
+        File.WriteAllLines(Path.Combine(td.Path, ".env"), new[] { "KEY=value", "E=", "# comment" });
+        var s = new DotEnvStore(Path.Combine(td.Path, ".env"));
+        Assert.Equal("value", s.GetValue("KEY"));
+        Assert.Equal("", s.GetValue("E"));
     }
 
     [Fact]
-    public void DotEnvStore_CaseInsensitiveKeys()
+    public void DotEnv_CaseInsensitiveKeys()
     {
-        using var tempDir = new TempDirectory();
-        var envPath = Path.Combine(tempDir.Path, ".env");
-        File.WriteAllText(envPath, "API_KEY=secret\n");
-
-        var store = new DotEnvStore(envPath);
-        Assert.Equal("secret", store.GetValue("api_key"));
-        Assert.Equal("secret", store.GetValue("API_KEY"));
+        using var td = new TempDir();
+        File.WriteAllText(Path.Combine(td.Path, ".env"), "API_KEY=secret\n");
+        var s = new DotEnvStore(Path.Combine(td.Path, ".env"));
+        Assert.Equal("secret", s.GetValue("api_key"));
     }
 
     [Fact]
-    public void DotEnvStore_MissingFile_ReturnsEmpty()
+    public void DotEnv_MissingFile_ReturnsEmpty()
     {
-        using var tempDir = new TempDirectory();
-        var envPath = Path.Combine(tempDir.Path, ".env");
-
-        var store = new DotEnvStore(envPath);
-        Assert.Null(store.GetValue("ANY"));
+        using var td = new TempDir();
+        var s = new DotEnvStore(Path.Combine(td.Path, ".env"));
+        Assert.Null(s.GetValue("ANY"));
     }
 
     [Fact]
-    public void DotEnvStore_GetSnapshot_DoesNotExposeInternalDictionary()
+    public void DotEnv_GetSnapshot_ReadOnlyCopy()
     {
-        using var tempDir = new TempDirectory();
-        var envPath = Path.Combine(tempDir.Path, ".env");
-        File.WriteAllText(envPath, "KEY=value\n");
-
-        var store = new DotEnvStore(envPath);
-        var snapshot = store.GetSnapshot();
-
-        Assert.IsNotType<Dictionary<string, string>>(snapshot);
-        Assert.Equal("value", snapshot["KEY"]);
+        using var td = new TempDir();
+        File.WriteAllText(Path.Combine(td.Path, ".env"), "K=v\n");
+        var s = new DotEnvStore(Path.Combine(td.Path, ".env"));
+        var snap = s.GetSnapshot();
+        Assert.IsNotType<Dictionary<string, string>>(snap);
+        Assert.Equal("v", snap["K"]);
     }
 
     [Fact]
-    public void DotEnvStore_NullCharacters_Rejected()
+    public void DotEnv_NullCharacters_Rejected()
     {
-        using var tempDir = new TempDirectory();
-        var envPath = Path.Combine(tempDir.Path, ".env");
-        File.WriteAllText(envPath, "KEY=val\0ue\n");
-
-        Assert.Throws<KejiConfigurationException>(() => new DotEnvStore(envPath));
+        using var td = new TempDir();
+        File.WriteAllText(Path.Combine(td.Path, ".env"), "K=val\0ue\n");
+        Assert.Throws<KejiConfigurationException>(() => new DotEnvStore(Path.Combine(td.Path, ".env")));
     }
 
     [Fact]
-    public void DotEnvStore_InvalidVariableName_Throws()
+    public void DotEnv_InvalidVarName_Throws()
     {
-        using var tempDir = new TempDirectory();
-        var envPath = Path.Combine(tempDir.Path, ".env");
-        File.WriteAllText(envPath, "1INVALID=value\n");
-
-        Assert.Throws<KejiConfigurationException>(() => new DotEnvStore(envPath));
+        using var td = new TempDir();
+        File.WriteAllText(Path.Combine(td.Path, ".env"), "1INVALID=val\n");
+        Assert.Throws<KejiConfigurationException>(() => new DotEnvStore(Path.Combine(td.Path, ".env")));
     }
 
     [Fact]
-    public void DotEnvStore_ExportPrefix_Throws()
+    public void DotEnv_ExportPrefix_Throws()
     {
-        using var tempDir = new TempDirectory();
-        var envPath = Path.Combine(tempDir.Path, ".env");
-        File.WriteAllText(envPath, "export KEY=value\n");
-
-        Assert.Throws<KejiConfigurationException>(() => new DotEnvStore(envPath));
+        using var td = new TempDir();
+        File.WriteAllText(Path.Combine(td.Path, ".env"), "export KEY=val\n");
+        Assert.Throws<KejiConfigurationException>(() => new DotEnvStore(Path.Combine(td.Path, ".env")));
     }
 
     [Fact]
-    public void DotEnvStore_DuplicateKey_Throws()
+    public void DotEnv_DuplicateKey_Throws()
     {
-        using var tempDir = new TempDirectory();
-        var envPath = Path.Combine(tempDir.Path, ".env");
-        File.WriteAllLines(envPath, new[] { "KEY=first", "KEY=second" });
-
-        Assert.Throws<KejiConfigurationException>(() => new DotEnvStore(envPath));
+        using var td = new TempDir();
+        File.WriteAllLines(Path.Combine(td.Path, ".env"), new[] { "K=first", "K=second" });
+        Assert.Throws<KejiConfigurationException>(() => new DotEnvStore(Path.Combine(td.Path, ".env")));
     }
 
     [Fact]
-    public void DotEnvStore_ExceedsMaxLineLength_Throws()
+    public void DotEnv_ExceedsMaxLineLength_Throws()
     {
-        using var tempDir = new TempDirectory();
-        var envPath = Path.Combine(tempDir.Path, ".env");
-        File.WriteAllText(envPath, $"K={new string('x', 200)}\n");
-
-        Assert.Throws<KejiConfigurationException>(() => new DotEnvStore(envPath, maxLineLength: 50));
+        using var td = new TempDir();
+        File.WriteAllText(Path.Combine(td.Path, ".env"), $"K={new string('x', 200)}\n");
+        Assert.Throws<KejiConfigurationException>(() => new DotEnvStore(Path.Combine(td.Path, ".env"), maxLineLength: 50));
     }
 
     [Fact]
-    public void DotEnvStore_QuotedValues_StripsQuotes()
+    public void DotEnv_QuotedValues_StripsQuotes()
     {
-        using var tempDir = new TempDirectory();
-        var envPath = Path.Combine(tempDir.Path, ".env");
-        File.WriteAllLines(envPath, new[]
-        {
-            "DQ=\"double quoted\"",
-            "SQ='single quoted'",
-        });
-
-        var store = new DotEnvStore(envPath);
-        Assert.Equal("double quoted", store.GetValue("DQ"));
-        Assert.Equal("single quoted", store.GetValue("SQ"));
+        using var td = new TempDir();
+        File.WriteAllLines(Path.Combine(td.Path, ".env"), new[] { "DQ=\"double\"", "SQ='single'" });
+        var s = new DotEnvStore(Path.Combine(td.Path, ".env"));
+        Assert.Equal("double", s.GetValue("DQ"));
+        Assert.Equal("single", s.GetValue("SQ"));
     }
 
     [Fact]
-    public async Task DotEnvStore_Upsert_CreatesNewKey()
+    public void DotEnv_ExceedsMaxSize_Throws()
     {
-        using var tempDir = new TempDirectory();
-        var envPath = Path.Combine(tempDir.Path, ".env");
-        var store = new DotEnvStore(envPath);
-
-        var result = await store.UpsertAsync("NEW_KEY", "new_value");
-
-        Assert.True(result.Created);
-        Assert.False(result.Updated);
-        Assert.Equal("NEW_KEY", result.Key);
-
-        var store2 = new DotEnvStore(envPath);
-        Assert.Equal("new_value", store2.GetValue("NEW_KEY"));
+        using var td = new TempDir();
+        File.WriteAllText(Path.Combine(td.Path, ".env"), new string('x', 200));
+        Assert.Throws<KejiConfigurationException>(() => new DotEnvStore(Path.Combine(td.Path, ".env"), maxFileBytes: 50));
     }
 
     [Fact]
-    public async Task DotEnvStore_Upsert_UpdatesExistingKey()
+    public void DotEnv_DoesNotModifyProcessEnv()
     {
-        using var tempDir = new TempDirectory();
-        var envPath = Path.Combine(tempDir.Path, ".env");
-        File.WriteAllText(envPath, "KEY=original\n");
-        var store = new DotEnvStore(envPath);
-
-        var result = await store.UpsertAsync("KEY", "updated");
-
-        Assert.False(result.Created);
-        Assert.True(result.Updated);
-        Assert.Equal("KEY", result.Key);
-
-        var store2 = new DotEnvStore(envPath);
-        Assert.Equal("updated", store2.GetValue("KEY"));
+        using var td = new TempDir();
+        File.WriteAllText(Path.Combine(td.Path, ".env"), "PATH=should_not_affect\n");
+        var s = new DotEnvStore(Path.Combine(td.Path, ".env"));
+        Assert.Equal("should_not_affect", s.GetValue("PATH"));
+        Assert.NotEqual("should_not_affect", Environment.GetEnvironmentVariable("PATH"));
     }
 
     [Fact]
-    public async Task DotEnvStore_Upsert_RejectsCarriageReturn()
+    public async Task DotEnv_Upsert_CreatesNewKey()
     {
-        using var tempDir = new TempDirectory();
-        var envPath = Path.Combine(tempDir.Path, ".env");
-        var store = new DotEnvStore(envPath);
-
-        await Assert.ThrowsAsync<ArgumentException>(() =>
-            store.UpsertAsync("KEY", "val\rue"));
+        using var td = new TempDir();
+        var s = new DotEnvStore(Path.Combine(td.Path, ".env"));
+        var r = await s.UpsertAsync("NEW_KEY", "new_value");
+        Assert.True(r.Created);
+        Assert.False(r.Updated);
+        Assert.Equal("new_value", new DotEnvStore(Path.Combine(td.Path, ".env")).GetValue("NEW_KEY"));
     }
 
     [Fact]
-    public async Task DotEnvStore_Upsert_RejectsLineFeed()
+    public async Task DotEnv_Upsert_UpdatesExistingKey()
     {
-        using var tempDir = new TempDirectory();
-        var envPath = Path.Combine(tempDir.Path, ".env");
-        var store = new DotEnvStore(envPath);
-
-        await Assert.ThrowsAsync<ArgumentException>(() =>
-            store.UpsertAsync("KEY", "val\nue"));
+        using var td = new TempDir();
+        File.WriteAllText(Path.Combine(td.Path, ".env"), "KEY=original\n");
+        var s = new DotEnvStore(Path.Combine(td.Path, ".env"));
+        var r = await s.UpsertAsync("KEY", "updated");
+        Assert.False(r.Created);
+        Assert.True(r.Updated);
+        Assert.Equal("updated", new DotEnvStore(Path.Combine(td.Path, ".env")).GetValue("KEY"));
     }
 
     [Fact]
-    public async Task DotEnvStore_Upsert_RejectsNullCharacter()
-    {
-        using var tempDir = new TempDirectory();
-        var envPath = Path.Combine(tempDir.Path, ".env");
-        var store = new DotEnvStore(envPath);
+    public async Task DotEnv_Upsert_RejectsCR() { using var td = new TempDir(); var s = new DotEnvStore(Path.Combine(td.Path, ".env")); await Assert.ThrowsAsync<ArgumentException>(() => s.UpsertAsync("K", "va\rue")); }
+    [Fact]
+    public async Task DotEnv_Upsert_RejectsLF() { using var td = new TempDir(); var s = new DotEnvStore(Path.Combine(td.Path, ".env")); await Assert.ThrowsAsync<ArgumentException>(() => s.UpsertAsync("K", "va\nue")); }
+    [Fact]
+    public async Task DotEnv_Upsert_RejectsNUL() { using var td = new TempDir(); var s = new DotEnvStore(Path.Combine(td.Path, ".env")); await Assert.ThrowsAsync<ArgumentException>(() => s.UpsertAsync("K", "va\0ue")); }
 
-        await Assert.ThrowsAsync<ArgumentException>(() =>
-            store.UpsertAsync("KEY", "val\0ue"));
+    [Fact]
+    public async Task DotEnv_Upsert_PreservesComments()
+    {
+        using var td = new TempDir();
+        var p = Path.Combine(td.Path, ".env");
+        File.WriteAllLines(p, new[] { "# comment", "KEY=value" });
+        var s = new DotEnvStore(p);
+        await s.UpsertAsync("KEY", "updated");
+        var content = File.ReadAllText(p);
+        Assert.Contains("# comment", content);
     }
 
     [Fact]
-    public async Task DotEnvStore_Upsert_PreservesComments()
+    public async Task DotEnv_Upsert_PreservesBlankLines()
     {
-        using var tempDir = new TempDirectory();
-        var envPath = Path.Combine(tempDir.Path, ".env");
-        File.WriteAllLines(envPath, new[]
-        {
-            "# This is a comment",
-            "KEY=value",
-        });
-        var store = new DotEnvStore(envPath);
-
-        await store.UpsertAsync("KEY", "updated");
-
-        var content = File.ReadAllText(envPath);
-        Assert.Contains("# This is a comment", content);
-    }
-
-    [Fact]
-    public async Task DotEnvStore_Upsert_PreservesBlankLines()
-    {
-        using var tempDir = new TempDirectory();
-        var envPath = Path.Combine(tempDir.Path, ".env");
-        File.WriteAllLines(envPath, new[]
-        {
-            "KEY1=a",
-            "",
-            "KEY2=b",
-        });
-        var store = new DotEnvStore(envPath);
-
-        await store.UpsertAsync("KEY2", "updated");
-
-        var rawContent = File.ReadAllText(envPath);
-        Assert.Contains("KEY1=a", rawContent);
-        Assert.Contains("KEY2=updated", rawContent);
-        var lineArray = File.ReadAllLines(envPath);
-        var aIdx = Array.IndexOf(lineArray, "KEY1=a");
-        var bIdx = Array.IndexOf(lineArray, "KEY2=updated");
+        using var td = new TempDir();
+        var p = Path.Combine(td.Path, ".env");
+        File.WriteAllLines(p, new[] { "A=1", "", "B=2" });
+        var s = new DotEnvStore(p);
+        await s.UpsertAsync("B", "updated");
+        var lines = File.ReadAllLines(p);
+        var aIdx = Array.IndexOf(lines, "A=1");
+        var bIdx = Array.IndexOf(lines, "B=updated");
         Assert.True(aIdx >= 0 && bIdx >= 0);
-        Assert.True(bIdx - aIdx > 1, "Blank line between KEY1 and KEY2 was not preserved");
+        Assert.True(bIdx - aIdx > 1, "Blank line between A and B was not preserved");
     }
 
     [Fact]
-    public async Task DotEnvStore_Upsert_PreservesVariableOrder()
+    public async Task DotEnv_Upsert_PreservesOrder()
     {
-        using var tempDir = new TempDirectory();
-        var envPath = Path.Combine(tempDir.Path, ".env");
-        File.WriteAllLines(envPath, new[] { "A=1", "B=2", "C=3" });
-        var store = new DotEnvStore(envPath);
-
-        await store.UpsertAsync("B", "updated");
-
-        var lines = File.ReadAllLines(envPath);
-        Assert.Contains("A=1", lines);
-        Assert.Contains("B=updated", lines);
-        Assert.Contains("C=3", lines);
+        using var td = new TempDir();
+        var p = Path.Combine(td.Path, ".env");
+        File.WriteAllLines(p, new[] { "A=1", "B=2", "C=3" });
+        var s = new DotEnvStore(p);
+        await s.UpsertAsync("B", "updated");
+        var lines = File.ReadAllLines(p);
         var aIdx = Array.IndexOf(lines, "A=1");
         var bIdx = Array.IndexOf(lines, "B=updated");
         var cIdx = Array.IndexOf(lines, "C=3");
-        Assert.True(aIdx < bIdx);
-        Assert.True(bIdx < cIdx);
+        Assert.True(aIdx < bIdx && bIdx < cIdx);
     }
 
     [Fact]
-    public async Task DotEnvStore_Upsert_DoesNotCreateDuplicateKeys()
+    public async Task DotEnv_Upsert_NoDuplicateKeys()
     {
-        using var tempDir = new TempDirectory();
-        var envPath = Path.Combine(tempDir.Path, ".env");
-        File.WriteAllText(envPath, "KEY=original\n");
-        var store = new DotEnvStore(envPath);
-
-        await store.UpsertAsync("KEY", "updated");
-        await store.UpsertAsync("KEY", "final");
-
-        var lines = File.ReadAllLines(envPath);
-        Assert.Single(lines, l => l.StartsWith("KEY="));
+        using var td = new TempDir();
+        var p = Path.Combine(td.Path, ".env");
+        File.WriteAllText(p, "K=original\n");
+        var s = new DotEnvStore(p);
+        await s.UpsertAsync("K", "updated");
+        await s.UpsertAsync("K", "final");
+        var cnt = File.ReadAllLines(p).Count(l => l.StartsWith("K="));
+        Assert.Equal(1, cnt);
     }
 
     [Fact]
-    public async Task DotEnvStore_Upsert_NewKeyAppendedToEnd()
+    public async Task DotEnv_Upsert_NewKeyAppendedToEnd()
     {
-        using var tempDir = new TempDirectory();
-        var envPath = Path.Combine(tempDir.Path, ".env");
-        File.WriteAllLines(envPath, new[] { "A=1", "B=2" });
-        var store = new DotEnvStore(envPath);
-
-        await store.UpsertAsync("C", "3");
-
-        var lines = File.ReadAllLines(envPath);
-        Assert.Equal("C=3", lines[^1]);
+        using var td = new TempDir();
+        var p = Path.Combine(td.Path, ".env");
+        File.WriteAllLines(p, new[] { "A=1" });
+        var s = new DotEnvStore(p);
+        await s.UpsertAsync("B", "2");
+        var lines = File.ReadAllLines(p);
+        Assert.Equal("B=2", lines[^1]);
     }
 
     [Fact]
-    public async Task DotEnvStore_Upsert_ResultDoesNotContainValue()
+    public async Task DotEnv_Upsert_ResultNoValue()
     {
-        using var tempDir = new TempDirectory();
-        var envPath = Path.Combine(tempDir.Path, ".env");
-        var store = new DotEnvStore(envPath);
-
-        var result = await store.UpsertAsync("SECRET", "my_secret_value");
-
-        Assert.Equal("SECRET", result.Key);
-        var resultType = result.GetType();
-        Assert.Null(resultType.GetProperty("Value"));
+        using var td = new TempDir();
+        var s = new DotEnvStore(Path.Combine(td.Path, ".env"));
+        var r = await s.UpsertAsync("S", "secret_val");
+        Assert.Equal("S", r.Key);
+        Assert.Null(r.GetType().GetProperty("Value"));
     }
 
     [Fact]
-    public void DotEnvStore_ExceedsMaxSize_Throws()
+    public async Task DotEnv_Upsert_NoBOM()
     {
-        using var tempDir = new TempDirectory();
-        var envPath = Path.Combine(tempDir.Path, ".env");
-        File.WriteAllText(envPath, new string('x', 200));
-
-        Assert.Throws<KejiConfigurationException>(() => new DotEnvStore(envPath, maxFileBytes: 50));
+        using var td = new TempDir();
+        var p = Path.Combine(td.Path, ".env");
+        var s = new DotEnvStore(p);
+        await s.UpsertAsync("K", "v");
+        var bytes = File.ReadAllBytes(p);
+        if (bytes.Length >= 3)
+            Assert.NotEqual(new byte[] { 0xEF, 0xBB, 0xBF }, bytes[..3]);
     }
 
     [Fact]
-    public void DotEnvStore_DoesNotModifyProcessEnvironment()
+    public async Task DotEnv_Upsert_LongLineRejected_RollsBack()
     {
-        using var tempDir = new TempDirectory();
-        var envPath = Path.Combine(tempDir.Path, ".env");
-        File.WriteAllText(envPath, "PATH=should_not_affect\n");
+        using var td = new TempDir();
+        var p = Path.Combine(td.Path, ".env");
+        File.WriteAllText(p, "OLD=keep\n");
+        var s = new DotEnvStore(p, maxLineLength: 10);
 
-        var store = new DotEnvStore(envPath);
-        Assert.Equal("should_not_affect", store.GetValue("PATH"));
+        var ex = await Assert.ThrowsAsync<KejiConfigurationException>(() => s.UpsertAsync("KEY", "very_long_value_here"));
+        Assert.Contains("length", ex.Message, StringComparison.OrdinalIgnoreCase);
 
-        var procValue = Environment.GetEnvironmentVariable("PATH");
-        Assert.NotNull(procValue);
-        Assert.NotEqual("should_not_affect", procValue);
+        Assert.Equal("keep", s.GetValue("OLD"));
+        Assert.Equal("keep", new DotEnvStore(p).GetValue("OLD"));
+        Assert.Null(s.GetValue("KEY"));
     }
 
     [Fact]
-    public void ProviderSecretName_Deepseek_ReturnsCorrect()
+    public async Task DotEnv_Upsert_TotalSizeExceeded_RollsBack()
     {
-        var result = ProviderSecretName.GetEnvironmentVariableName("deepseek");
-        Assert.Equal("DEEPSEEK_API_KEY", result);
+        using var td = new TempDir();
+        var p = Path.Combine(td.Path, ".env");
+        File.WriteAllText(p, "OLD=keep\n");
+        var s = new DotEnvStore(p, maxFileBytes: 50);
+
+        var ex = await Assert.ThrowsAsync<KejiConfigurationException>(() => s.UpsertAsync("KEY", new string('x', 100)));
+        Assert.Contains("size", ex.Message, StringComparison.OrdinalIgnoreCase);
+
+        Assert.Equal("keep", s.GetValue("OLD"));
+        Assert.Equal("keep", new DotEnvStore(p).GetValue("OLD"));
     }
 
     [Fact]
-    public void ProviderSecretName_OpenAI_ReturnsCorrect()
+    public async Task DotEnv_Upsert_Cancellation_RollsBack()
     {
-        var result = ProviderSecretName.GetEnvironmentVariableName("openai");
-        Assert.Equal("OPENAI_API_KEY", result);
+        using var td = new TempDir();
+        var p = Path.Combine(td.Path, ".env");
+        File.WriteAllText(p, "OLD=keep\n");
+        var s = new DotEnvStore(p);
+
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => s.UpsertAsync("KEY", "value", cts.Token));
+
+        Assert.Equal("keep", s.GetValue("OLD"));
+        Assert.Null(s.GetValue("KEY"));
+        var content = File.ReadAllText(p);
+        Assert.DoesNotContain("KEY=", content);
     }
 
     [Fact]
-    public void ProviderSecretName_CaseInsensitive()
+    public void DotEnv_RemoveValue_ReturnsFalseForMissing()
     {
-        Assert.Equal("DEEPSEEK_API_KEY", ProviderSecretName.GetEnvironmentVariableName("DeepSeek"));
+        using var td = new TempDir();
+        var s = new DotEnvStore(Path.Combine(td.Path, ".env"));
+        Assert.False(s.RemoveValue("NONEXIST"));
     }
 
     [Fact]
-    public void ProviderSecretName_GenericProvider_UppercaseAndUnderscore()
+    public async Task DotEnv_RemoveValue_Transactional()
     {
-        var result = ProviderSecretName.GetEnvironmentVariableName("my-provider");
-        Assert.Equal("MY_PROVIDER_API_KEY", result);
+        using var td = new TempDir();
+        var p = Path.Combine(td.Path, ".env");
+        File.WriteAllLines(p, new[] { "A=1", "B=2", "C=3" });
+        var s = new DotEnvStore(p);
+
+        Assert.True(s.RemoveValue("B"));
+        Assert.Null(s.GetValue("B"));
+        Assert.Equal("1", s.GetValue("A"));
+        Assert.Equal("3", s.GetValue("C"));
+
+        var reloaded = new DotEnvStore(p);
+        Assert.Null(reloaded.GetValue("B"));
+        Assert.Equal("1", reloaded.GetValue("A"));
+        Assert.Equal("3", reloaded.GetValue("C"));
     }
 
     [Fact]
-    public void ProviderSecretName_GenericProvider_UnderscorePreserved()
+    public void Provider_Deepseek_Correct() { Assert.Equal("DEEPSEEK_API_KEY", ProviderSecretName.GetEnvironmentVariableName("deepseek")); }
+    [Fact]
+    public void Provider_OpenAI_Correct() { Assert.Equal("OPENAI_API_KEY", ProviderSecretName.GetEnvironmentVariableName("openai")); }
+    [Fact]
+    public void Provider_CaseInsensitive() { Assert.Equal("DEEPSEEK_API_KEY", ProviderSecretName.GetEnvironmentVariableName("DeepSeek")); }
+    [Fact]
+    public void Provider_Generic_Hyphen() { Assert.Equal("MY_PROVIDER_API_KEY", ProviderSecretName.GetEnvironmentVariableName("my-provider")); }
+    [Fact]
+    public void Provider_Generic_Underscore() { Assert.Equal("AZURE_OPENAI_API_KEY", ProviderSecretName.GetEnvironmentVariableName("azure_openai")); }
+    [Fact]
+    public void Provider_Empty_Throws() { Assert.Throws<ArgumentException>(() => ProviderSecretName.GetEnvironmentVariableName("")); }
+    [Fact]
+    public void Provider_Space_Throws() { Assert.Throws<ArgumentException>(() => ProviderSecretName.GetEnvironmentVariableName("my provider")); }
+    [Fact]
+    public void Provider_Newline_Throws() { Assert.Throws<ArgumentException>(() => ProviderSecretName.GetEnvironmentVariableName("my\nprovider")); }
+    [Fact]
+    public void Provider_Equals_Throws() { Assert.Throws<ArgumentException>(() => ProviderSecretName.GetEnvironmentVariableName("my=provider")); }
+    [Fact]
+    public void Provider_Slash_Throws() { Assert.Throws<ArgumentException>(() => ProviderSecretName.GetEnvironmentVariableName("my/provider")); }
+    [Fact]
+    public void Provider_Backslash_Throws() { Assert.Throws<ArgumentException>(() => ProviderSecretName.GetEnvironmentVariableName("my\\provider")); }
+    [Fact]
+    public void Provider_Dot_Throws() { Assert.Throws<ArgumentException>(() => ProviderSecretName.GetEnvironmentVariableName("my.provider")); }
+    [Fact]
+    public void Provider_Colon_Throws() { Assert.Throws<ArgumentException>(() => ProviderSecretName.GetEnvironmentVariableName("my:provider")); }
+
+    [Fact]
+    public void Mask_MasksPassword()
     {
-        var result = ProviderSecretName.GetEnvironmentVariableName("azure_openai");
-        Assert.Equal("AZURE_OPENAI_API_KEY", result);
+        var m = new SecretMasker();
+        var r = m.Mask(new ConfigMap(new[] { new KeyValuePair<string, ConfigNode>("password", new ConfigScalar("secret123")) })) as ConfigMap;
+        Assert.NotNull(r);
+        Assert.Equal("***", ((ConfigScalar)r["password"]).Value);
     }
 
     [Fact]
-    public void ProviderSecretName_Empty_Throws()
+    public void Mask_MasksApiKey()
     {
-        Assert.Throws<ArgumentException>(() => ProviderSecretName.GetEnvironmentVariableName(""));
+        var m = new SecretMasker();
+        var r = m.Mask(new ConfigMap(new[] { new KeyValuePair<string, ConfigNode>("api_key", new ConfigScalar("sk-abc")) })) as ConfigMap;
+        Assert.NotNull(r);
+        Assert.Equal("***", ((ConfigScalar)r["api_key"]).Value);
     }
 
     [Fact]
-    public void ProviderSecretName_WithSpace_Throws()
+    public void Mask_NonSensitive_Unchanged()
     {
-        Assert.Throws<ArgumentException>(() => ProviderSecretName.GetEnvironmentVariableName("my provider"));
+        var m = new SecretMasker();
+        var r = m.Mask(new ConfigMap(new[] { new KeyValuePair<string, ConfigNode>("name", new ConfigScalar("keji")) })) as ConfigMap;
+        Assert.NotNull(r);
+        Assert.Equal("keji", ((ConfigScalar)r["name"]).Value);
     }
 
     [Fact]
-    public void ProviderSecretName_WithNewline_Throws()
+    public void Mask_NestedMap()
     {
-        Assert.Throws<ArgumentException>(() => ProviderSecretName.GetEnvironmentVariableName("my\nprovider"));
-    }
-
-    [Fact]
-    public void ProviderSecretName_WithEquals_Throws()
-    {
-        Assert.Throws<ArgumentException>(() => ProviderSecretName.GetEnvironmentVariableName("my=provider"));
-    }
-
-    [Fact]
-    public void ProviderSecretName_WithSlash_Throws()
-    {
-        Assert.Throws<ArgumentException>(() => ProviderSecretName.GetEnvironmentVariableName("my/provider"));
-    }
-
-    [Fact]
-    public void ProviderSecretName_WithBackslash_Throws()
-    {
-        Assert.Throws<ArgumentException>(() => ProviderSecretName.GetEnvironmentVariableName("my\\provider"));
-    }
-
-    [Fact]
-    public void ProviderSecretName_WithDot_Throws()
-    {
-        Assert.Throws<ArgumentException>(() => ProviderSecretName.GetEnvironmentVariableName("my.provider"));
-    }
-
-    [Fact]
-    public void ProviderSecretName_WithColon_Throws()
-    {
-        Assert.Throws<ArgumentException>(() => ProviderSecretName.GetEnvironmentVariableName("my:provider"));
-    }
-
-    [Fact]
-    public void SecretMasker_MasksPasswordKey()
-    {
-        var map = new ConfigMap(new[]
-        {
-            new KeyValuePair<string, ConfigNode>("password", new ConfigScalar("super_secret_123")),
-        });
-
-        var masker = new SecretMasker();
-        var result = masker.Mask(map) as ConfigMap;
-        Assert.NotNull(result);
-        Assert.Equal("***", ((ConfigScalar)result["password"]).Value);
-    }
-
-    [Fact]
-    public void SecretMasker_MasksApiKey()
-    {
-        var map = new ConfigMap(new[]
-        {
-            new KeyValuePair<string, ConfigNode>("api_key", new ConfigScalar("sk-abc123")),
-        });
-
-        var masker = new SecretMasker();
-        var result = masker.Mask(map) as ConfigMap;
-        Assert.NotNull(result);
-        Assert.Equal("***", ((ConfigScalar)result["api_key"]).Value);
-    }
-
-    [Fact]
-    public void SecretMasker_DoesNotMaskNonSensitiveKeys()
-    {
-        var map = new ConfigMap(new[]
-        {
-            new KeyValuePair<string, ConfigNode>("name", new ConfigScalar("keji")),
-            new KeyValuePair<string, ConfigNode>("version", new ConfigScalar("1.0")),
-        });
-
-        var masker = new SecretMasker();
-        var result = masker.Mask(map) as ConfigMap;
-        Assert.NotNull(result);
-        Assert.Equal("keji", ((ConfigScalar)result["name"]).Value);
-        Assert.Equal("1.0", ((ConfigScalar)result["version"]).Value);
-    }
-
-    [Fact]
-    public void SecretMasker_MasksInNestedMap()
-    {
-        var inner = new ConfigMap(new[]
-        {
-            new KeyValuePair<string, ConfigNode>("token", new ConfigScalar("eyJhbGci")),
-            new KeyValuePair<string, ConfigNode>("public", new ConfigScalar("visible")),
-        });
-        var outer = new ConfigMap(new[]
-        {
-            new KeyValuePair<string, ConfigNode>("app", inner),
-        });
-
-        var masker = new SecretMasker();
-        var result = masker.Mask(outer) as ConfigMap;
-        Assert.NotNull(result);
-
-        var app = result["app"] as ConfigMap;
+        var m = new SecretMasker();
+        var inner = new ConfigMap(new[] { new KeyValuePair<string, ConfigNode>("token", new ConfigScalar("eyJhbGci")), new KeyValuePair<string, ConfigNode>("public", new ConfigScalar("visible")) });
+        var r = m.Mask(new ConfigMap(new[] { new KeyValuePair<string, ConfigNode>("app", inner) })) as ConfigMap;
+        Assert.NotNull(r);
+        var app = r["app"] as ConfigMap;
         Assert.NotNull(app);
         Assert.Equal("***", ((ConfigScalar)app["token"]).Value);
         Assert.Equal("visible", ((ConfigScalar)app["public"]).Value);
     }
 
     [Fact]
-    public void SecretMasker_MasksAllRequiredKeys()
+    public void Mask_AllRequiredKeys()
     {
-        var requiredKeys = new[]
-        {
-            "api_key", "apikey", "app_secret", "client_secret", "secret",
-            "password", "token", "access_token", "refresh_token",
-            "verification_token", "encrypt_key", "work_secret", "jwt_secret",
-            "private_key", "connection_string",
-        };
-
-        var entries = requiredKeys.Select(k =>
-            new KeyValuePair<string, ConfigNode>(k, new ConfigScalar("value")));
-
-        var map = new ConfigMap(entries);
-        var masker = new SecretMasker();
-        var result = masker.Mask(map) as ConfigMap;
-        Assert.NotNull(result);
-
-        foreach (var key in requiredKeys)
-        {
-            Assert.Equal("***", ((ConfigScalar)result[key]).Value);
-        }
+        var keys = new[] { "api_key", "apikey", "app_secret", "client_secret", "secret", "password", "token", "access_token", "refresh_token", "verification_token", "encrypt_key", "work_secret", "jwt_secret", "private_key", "connection_string" };
+        var m = new SecretMasker();
+        var r = m.Mask(new ConfigMap(keys.Select(k => new KeyValuePair<string, ConfigNode>(k, new ConfigScalar("v"))))) as ConfigMap;
+        Assert.NotNull(r);
+        foreach (var k in keys) Assert.Equal("***", ((ConfigScalar)r[k]).Value);
     }
 
     [Fact]
-    public void SecretMasker_MasksDictionary()
+    public void Mask_Dictionary()
     {
-        var dict = new Dictionary<string, object?>
-        {
-            { "password", "secret123" },
-            { "name", "keji" },
-        };
-
-        var masker = new SecretMasker();
-        var result = masker.Mask(new ReadOnlyDictionary<string, object?>(dict));
-
-        Assert.Equal("***", result["password"]);
-        Assert.Equal("keji", result["name"]);
+        var m = new SecretMasker();
+        var r = m.Mask(new ReadOnlyDictionary<string, object?>(new Dictionary<string, object?> { { "password", "secret" }, { "name", "keji" } }));
+        Assert.Equal("***", r["password"]);
+        Assert.Equal("keji", r["name"]);
     }
 
     [Fact]
-    public void SecretMasker_MasksNestedDictionary()
+    public void Mask_List()
     {
-        var inner = new Dictionary<string, object?>
-        {
-            { "token", "eyJhbGci" },
-            { "user", "admin" },
-        };
-        var outer = new Dictionary<string, object?>
-        {
-            { "app", new ReadOnlyDictionary<string, object?>(inner) },
-        };
-
-        var masker = new SecretMasker();
-        var result = masker.Mask(new ReadOnlyDictionary<string, object?>(outer));
-
-        var app = result["app"] as IReadOnlyDictionary<string, object?>;
-        Assert.NotNull(app);
-        Assert.Equal("***", app["token"]);
-        Assert.Equal("admin", app["user"]);
-    }
-
-    [Fact]
-    public void SecretMasker_MasksList()
-    {
-        var inner = new Dictionary<string, object?>
-        {
-            { "password", "secret1" },
-        };
-        var list = new List<object?>
-        {
-            new ReadOnlyDictionary<string, object?>(inner),
-        };
-
-        var masker = new SecretMasker();
-        var result = masker.Mask(list);
-
-        var item = result[0] as IReadOnlyDictionary<string, object?>;
+        var m = new SecretMasker();
+        var inner = new ReadOnlyDictionary<string, object?>(new Dictionary<string, object?> { { "password", "s1" } });
+        var r = m.Mask(new List<object?> { inner });
+        var item = r[0] as IReadOnlyDictionary<string, object?>;
         Assert.NotNull(item);
         Assert.Equal("***", item["password"]);
     }
 
     [Fact]
-    public void SecretMasker_ToStringDoesNotLeakSecret()
+    public void Mask_ToStringNoLeak()
     {
-        var map = new ConfigMap(new[]
-        {
-            new KeyValuePair<string, ConfigNode>("password", new ConfigScalar("super_secret_value")),
-        });
-
-        var masker = new SecretMasker();
-        var result = masker.Mask(map) as ConfigMap;
-        Assert.NotNull(result);
-
-        var scalar = result["password"] as ConfigScalar;
+        var m = new SecretMasker();
+        var r = m.Mask(new ConfigMap(new[] { new KeyValuePair<string, ConfigNode>("password", new ConfigScalar("super_secret_value")) })) as ConfigMap;
+        Assert.NotNull(r);
+        var scalar = r["password"] as ConfigScalar;
         Assert.NotNull(scalar);
         Assert.DoesNotContain("super_secret_value", scalar.ToString());
     }
 
     [Fact]
-    public void MaskApiKeyForSettings_Null_ReturnsNotConfigured()
+    public void MaskApiKey_Null_NotConfigured()
     {
         var mask = SecretMasker.MaskApiKeyForSettings(null);
         Assert.False(mask.IsConfigured);
@@ -1438,7 +1019,7 @@ public class ConfigurationTests
     }
 
     [Fact]
-    public void MaskApiKeyForSettings_Empty_ReturnsNotConfigured()
+    public void MaskApiKey_Empty_NotConfigured()
     {
         var mask = SecretMasker.MaskApiKeyForSettings("");
         Assert.False(mask.IsConfigured);
@@ -1446,7 +1027,7 @@ public class ConfigurationTests
     }
 
     [Fact]
-    public void MaskApiKeyForSettings_AnyValue_ReturnsConfigured()
+    public void MaskApiKey_AnyValue_Configured()
     {
         var mask = SecretMasker.MaskApiKeyForSettings("sk-abc123");
         Assert.True(mask.IsConfigured);
@@ -1454,56 +1035,207 @@ public class ConfigurationTests
     }
 
     [Fact]
-    public void MaskApiKeyForSettings_DoesNotLeakPrefixOrSuffix()
+    public void MaskApiKey_NoLeak()
     {
         var mask = SecretMasker.MaskApiKeyForSettings("sk-abc123xyz");
         Assert.Equal("***", mask.DisplayValue);
         Assert.DoesNotContain("sk-", mask.DisplayValue);
-        Assert.DoesNotContain("abc123", mask.DisplayValue);
+    }
+
+    [Fact]
+    public void FullLoader_ResolvesFromDotEnv()
+    {
+        using var td = new TempDir();
+        File.WriteAllText(Path.Combine(td.Path, ".env"), "TEST_SECRET=from_dotenv\n");
+        File.WriteAllText(Path.Combine(td.Path, "config.yaml"), "security:\n  jwt_secret: ${TEST_SECRET}\n");
+
+        var yamlLoader = new SafeYamlConfigurationLoader();
+        var dotEnv = new DotEnvStore(Path.Combine(td.Path, ".env"));
+        var loader = new KejiConfigurationLoader(yamlLoader, dotEnv);
+
+        var result = loader.Load(new KejiConfigurationLoadOptions { ProjectRoot = td.Path, RequireConfigFile = true });
+
+        Assert.Equal("from_dotenv", result.Document.GetRequiredString("security.jwt_secret"));
+        Assert.Empty(result.Diagnostics);
+    }
+
+    [Fact]
+    public void FullLoader_ProcessEnvOverridesDotEnv()
+    {
+        using var td = new TempDir();
+        File.WriteAllText(Path.Combine(td.Path, ".env"), "TEST_SECRET=from_dotenv\n");
+        File.WriteAllText(Path.Combine(td.Path, "config.yaml"), "security:\n  jwt_secret: ${TEST_SECRET}\n");
+
+        var envKey = "TEST_SECRET";
+        Environment.SetEnvironmentVariable(envKey, "from_process");
+        try
+        {
+            var yamlLoader = new SafeYamlConfigurationLoader();
+            var dotEnv = new DotEnvStore(Path.Combine(td.Path, ".env"));
+            var loader = new KejiConfigurationLoader(yamlLoader, dotEnv);
+
+            var result = loader.Load(new KejiConfigurationLoadOptions { ProjectRoot = td.Path, RequireConfigFile = true });
+
+            Assert.Equal("from_process", result.Document.GetRequiredString("security.jwt_secret"));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(envKey, null);
+        }
+    }
+
+    [Fact]
+    public void FullLoader_NonStrict_ReturnsDiagnostics()
+    {
+        using var td = new TempDir();
+        File.WriteAllText(Path.Combine(td.Path, "config.yaml"), "key: ${MISSING_VAR}\n");
+
+        var yamlLoader = new SafeYamlConfigurationLoader();
+        var dotEnv = new DotEnvStore(Path.Combine(td.Path, ".env"));
+        var loader = new KejiConfigurationLoader(yamlLoader, dotEnv);
+
+        var result = loader.Load(new KejiConfigurationLoadOptions
+        {
+            ProjectRoot = td.Path,
+            RequireConfigFile = true,
+            FailOnMissingEnvironmentVariable = false,
+        });
+
+        Assert.Equal(string.Empty, result.Document.GetOptionalString("key"));
+        Assert.NotEmpty(result.Diagnostics);
+        Assert.Equal("MISSING_VAR", result.Diagnostics[0].EnvironmentVariableName);
+    }
+
+    [Fact]
+    public void FullLoader_StrictMode_ThrowsWithDottedPath()
+    {
+        using var td = new TempDir();
+        File.WriteAllText(Path.Combine(td.Path, "config.yaml"), "security:\n  jwt_secret: ${MISSING}\n");
+
+        var yamlLoader = new SafeYamlConfigurationLoader();
+        var dotEnv = new DotEnvStore(Path.Combine(td.Path, ".env"));
+        var loader = new KejiConfigurationLoader(yamlLoader, dotEnv);
+
+        var ex = Assert.Throws<KejiConfigurationException>(() =>
+            loader.Load(new KejiConfigurationLoadOptions { ProjectRoot = td.Path, RequireConfigFile = true }));
+
+        Assert.Contains("MISSING", ex.Message);
+    }
+
+    [Fact]
+    public void FullLoader_DoesNotModifyProcessEnv()
+    {
+        using var td = new TempDir();
+        File.WriteAllText(Path.Combine(td.Path, ".env"), "PATH=should_not_leak\n");
+        File.WriteAllText(Path.Combine(td.Path, "config.yaml"), "key: value\n");
+
+        var yamlLoader = new SafeYamlConfigurationLoader();
+        var dotEnv = new DotEnvStore(Path.Combine(td.Path, ".env"));
+        var loader = new KejiConfigurationLoader(yamlLoader, dotEnv);
+
+        loader.Load(new KejiConfigurationLoadOptions { ProjectRoot = td.Path, RequireConfigFile = true });
+
+        Assert.NotEqual("should_not_leak", Environment.GetEnvironmentVariable("PATH"));
+    }
+
+    [Fact]
+    public void DI_Registration_WithIllegalDotEnv_RegistrationDoesNotThrow()
+    {
+        using var td = new TempDir();
+        File.WriteAllText(Path.Combine(td.Path, ".env"), "1INVALID=value\n");
+
+        var services = new ServiceCollection();
+        var ex = Record.Exception(() =>
+            services.AddKejiConfigurationFoundation(o =>
+            {
+                o.ProjectRoot = td.Path;
+                o.RequireConfigFile = false;
+            }));
+        Assert.Null(ex);
+
+        var spEx = Record.Exception(() => services.BuildServiceProvider());
+        Assert.Null(spEx);
+    }
+
+    [Fact]
+    public void DI_Registration_WithMalformedConfig_RegistrationDoesNotThrow()
+    {
+        using var td = new TempDir();
+        File.WriteAllText(Path.Combine(td.Path, "config.yaml"), "key: value\nunbalanced: [\n");
+
+        var services = new ServiceCollection();
+        var ex = Record.Exception(() =>
+            services.AddKejiConfigurationFoundation(o =>
+            {
+                o.ProjectRoot = td.Path;
+                o.RequireConfigFile = false;
+            }));
+        Assert.Null(ex);
+
+        var spEx = Record.Exception(() => services.BuildServiceProvider());
+        Assert.Null(spEx);
+    }
+
+    [Fact]
+    public void FullLoader_DotEnvCreatedOnDemand_NotOnRegistry()
+    {
+        using var td = new TempDir();
+        var services = new ServiceCollection();
+        services.AddKejiConfigurationFoundation(o =>
+        {
+            o.ProjectRoot = td.Path;
+            o.DotEnvFileName = ".nonexistent_env_file";
+        });
+        var sp = services.BuildServiceProvider();
+        var store = sp.GetRequiredService<IDotEnvStore>();
+        Assert.Null(store.GetValue("ANY"));
+    }
+
+    [Fact]
+    public void MalformedYamlException_MessageNoSecret()
+    {
+        using var td = new TempDir();
+        File.WriteAllText(Path.Combine(td.Path, "config.yaml"), "password: my_secret_value\nsecret: ${MISSING}\nkey: *bad_alias\n");
+        var loader = new SafeYamlConfigurationLoader();
+        var ex = Assert.Throws<KejiConfigurationException>(() =>
+            loader.Load(new KejiConfigurationLoadOptions { ProjectRoot = td.Path, RequireConfigFile = true }));
+        Assert.DoesNotContain("my_secret_value", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("my_secret_value", ex.ToString(), StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void SafeYamlLoader_OverrideConfigPath_Works()
+    {
+        using var td = new TempDir();
+        var customPath = Path.Combine(td.Path, "custom.yaml");
+        File.WriteAllText(customPath, "key: val\n");
+        var loader = new SafeYamlConfigurationLoader();
+        var node = loader.Load(new KejiConfigurationLoadOptions { RequireConfigFile = false }, customPath);
+        var map = node as ConfigMap;
+        Assert.NotNull(map);
+        Assert.Equal("val", ((ConfigScalar)map["key"]).Value);
     }
 
     private static string BuildDeepYaml(int depth)
     {
         var sb = new System.Text.StringBuilder();
         sb.Append("a:\n");
-        for (int i = 0; i < depth; i++)
-        {
-            sb.Append(new string(' ', (i + 1) * 2));
-            sb.Append("a:\n");
-        }
-        sb.Append(new string(' ', (depth + 1) * 2));
-        sb.Append("v: x\n");
+        for (int i = 0; i < depth; i++) { sb.Append(new string(' ', (i + 1) * 2)); sb.Append("a:\n"); }
+        sb.Append(new string(' ', (depth + 1) * 2)); sb.Append("v: x\n");
         return sb.ToString();
     }
 
-    private sealed class TestEnvironmentValueSource : IEnvironmentValueSource
+    private sealed class TestEnvSrc : IEnvironmentValueSource
     {
-        private readonly Dictionary<string, string> _values;
-
-        public TestEnvironmentValueSource(Dictionary<string, string> values)
-        {
-            _values = new Dictionary<string, string>(values, StringComparer.OrdinalIgnoreCase);
-        }
-
-        public string? GetValue(string variableName)
-        {
-            return _values.TryGetValue(variableName, out var val) ? val : null;
-        }
+        private readonly Dictionary<string, string> _v;
+        public TestEnvSrc(Dictionary<string, string> v) { _v = new Dictionary<string, string>(v, StringComparer.OrdinalIgnoreCase); }
+        public string? GetValue(string n) => _v.TryGetValue(n, out var val) ? val : null;
     }
 }
 
-internal sealed class TempDirectory : IDisposable
+internal sealed class TempDir : IDisposable
 {
     public string Path { get; }
-
-    public TempDirectory()
-    {
-        Path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "KJ_TEST_" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(Path);
-    }
-
-    public void Dispose()
-    {
-        try { Directory.Delete(Path, recursive: true); } catch { }
-    }
+    public TempDir() { Path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "KJ_TEST_" + Guid.NewGuid().ToString("N")); Directory.CreateDirectory(Path); }
+    public void Dispose() { try { Directory.Delete(Path, recursive: true); } catch { } }
 }

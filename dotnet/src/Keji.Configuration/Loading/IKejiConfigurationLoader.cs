@@ -4,5 +4,5 @@ namespace Keji.Configuration.Loading;
 
 public interface IKejiConfigurationLoader
 {
-    KejiConfigurationDocument Load(KejiConfigurationLoadOptions options);
+    KejiConfigurationLoadResult Load(KejiConfigurationLoadOptions options);
 }

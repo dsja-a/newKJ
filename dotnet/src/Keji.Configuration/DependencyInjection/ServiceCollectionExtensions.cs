@@ -21,9 +21,12 @@ public static class ServiceCollectionExtensions
 
         services.AddSingleton(options);
 
-        var dotEnvPath = Path.Combine(options.ProjectRoot, options.DotEnvFileName);
-        var dotEnvStore = new DotEnvStore(dotEnvPath, options.MaxDotEnvFileBytes, options.MaxDotEnvLineLength);
-        services.AddSingleton<IDotEnvStore>(dotEnvStore);
+        services.AddSingleton<IDotEnvStore>(sp =>
+        {
+            var opts = sp.GetRequiredService<KejiConfigurationLoadOptions>();
+            var dotEnvPath = Path.Combine(opts.ProjectRoot, opts.DotEnvFileName);
+            return new DotEnvStore(dotEnvPath, opts.MaxDotEnvFileBytes, opts.MaxDotEnvLineLength);
+        });
 
         services.AddSingleton<IEnvironmentValueSource>(sp =>
         {
@@ -34,7 +37,15 @@ public static class ServiceCollectionExtensions
             );
         });
 
-        services.AddSingleton<IKejiConfigurationLoader>(_ => new SafeYamlConfigurationLoader());
+        services.AddSingleton<ISafeYamlConfigurationLoader>(_ => new SafeYamlConfigurationLoader());
+
+        services.AddSingleton<IKejiConfigurationLoader>(sp =>
+        {
+            var yamlLoader = sp.GetRequiredService<ISafeYamlConfigurationLoader>();
+            var dotEnv = sp.GetRequiredService<IDotEnvStore>();
+            return new KejiConfigurationLoader(yamlLoader, dotEnv);
+        });
+
         services.AddSingleton<ISecretMasker>(_ => new SecretMasker());
 
         return services;
