@@ -1849,7 +1849,7 @@ public class PersistenceTests
     }
 
     [Fact]
-    public async Task Security_DoesNotModifyRealKejiDb()
+    public void Security_DoesNotModifyRealKejiDb()
     {
         var realDb = System.IO.Path.Combine(
             AppContext.BaseDirectory, "..", "..", "..", "..", "..", "data", "keji.db");
@@ -1978,7 +1978,7 @@ public class PersistenceTests
     }
 
     [Fact]
-    public async Task User_Create_IdPrimaryKeyConflict_NotDuplicateUsername()
+    public async Task User_Create_IdPrimaryKeyConflict_TranslatorNotDuplicate()
     {
         using var ctx = new TestContext();
         var factory = CreateFactory(ctx.Options);
@@ -2002,6 +2002,13 @@ public class PersistenceTests
         var sqliteEx = await Assert.ThrowsAsync<SqliteException>(() =>
             conflictCmd.ExecuteNonQueryAsync());
         Assert.Equal(19, sqliteEx.SqliteErrorCode);
+
+        var translated = SqliteExceptionTranslator.Create(sqliteEx, "TestOperation", "safe_id");
+        Assert.IsType<KejiPersistenceException>(translated);
+        Assert.IsNotType<DuplicateUsernameException>(translated);
+        Assert.Equal(19, translated.ErrorCode);
+        Assert.Null(translated.InnerException);
+        Assert.DoesNotContain(sqliteEx.Message, translated.ToString(), StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -2031,7 +2038,7 @@ public class PersistenceTests
 
         Assert.Null(ex.InnerException);
         Assert.DoesNotContain("forced failure", ex.ToString(), StringComparison.OrdinalIgnoreCase);
-        Assert.True(ex.ErrorCode > 0 || ex.ErrorCode == 0);
+        Assert.Equal(19, ex.ErrorCode);
     }
 
     [Fact]
@@ -2059,6 +2066,7 @@ public class PersistenceTests
         var ex = await Assert.ThrowsAsync<KejiPersistenceException>(() =>
             repo.UpdateAsync(uid, new UpdateUserCommand { DisplayName = "new_name" }));
         Assert.IsNotType<DuplicateUsernameException>(ex);
+        Assert.Equal(19, ex.ErrorCode);
     }
 
     [Fact]
@@ -2087,6 +2095,7 @@ public class PersistenceTests
         var ex = await Assert.ThrowsAsync<KejiPersistenceException>(() =>
             msgRepo.AddAsync("msg_trig_conv", "user", "test content"));
         Assert.IsNotType<SqliteException>(ex);
+        Assert.Equal(19, ex.ErrorCode);
 
         var conv = await convRepo.GetAsync("msg_trig_conv");
         Assert.NotNull(conv);
@@ -2116,6 +2125,7 @@ public class PersistenceTests
         var ex = await Assert.ThrowsAsync<KejiPersistenceException>(() =>
             repo.SetAsync("blocked_key", "value"));
         Assert.IsNotType<SqliteException>(ex);
+        Assert.Equal(19, ex.ErrorCode);
     }
 
     [Fact]
@@ -2143,6 +2153,7 @@ public class PersistenceTests
         var ex = await Assert.ThrowsAsync<KejiPersistenceException>(() =>
             repo.RenameAsync("rename_trig_conv", "new name"));
         Assert.IsNotType<SqliteException>(ex);
+        Assert.Equal(19, ex.ErrorCode);
     }
 
     [Fact]
@@ -2168,6 +2179,7 @@ public class PersistenceTests
         var ex = await Assert.ThrowsAsync<KejiPersistenceException>(() =>
             repo.CreateAsync("blocked_conv"));
         Assert.IsNotType<SqliteException>(ex);
+        Assert.Equal(19, ex.ErrorCode);
     }
 
     [Fact]
@@ -2205,8 +2217,439 @@ public class PersistenceTests
     }
 
     // ──────────────────────────────────────────────
-    // Helpers
+    // Read Method Failure Tests
     // ──────────────────────────────────────────────
+
+    [Fact]
+    public async Task User_Count_SchemaCorruption_ThrowsKejiPersistenceException()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var repo = new SqliteUserRepository(factory, ctx.FixedTime);
+
+        using (var conn = await GetOpenConnectionAsync(factory))
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "DROP TABLE users";
+            await cmd.ExecuteNonQueryAsync();
+        }
+
+        var ex = await Assert.ThrowsAsync<KejiPersistenceException>(() =>
+            repo.CountAsync());
+        Assert.IsNotType<SqliteException>(ex);
+        Assert.Null(ex.InnerException);
+        Assert.True(ex.ErrorCode > 0);
+    }
+
+    [Fact]
+    public async Task User_GetByUsername_SchemaCorruption_ThrowsKejiPersistenceException()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var repo = new SqliteUserRepository(factory, ctx.FixedTime);
+
+        using (var conn = await GetOpenConnectionAsync(factory))
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "DROP TABLE users";
+            await cmd.ExecuteNonQueryAsync();
+        }
+
+        var ex = await Assert.ThrowsAsync<KejiPersistenceException>(() =>
+            repo.GetByUsernameAsync("test"));
+        Assert.IsNotType<SqliteException>(ex);
+        Assert.Null(ex.InnerException);
+        Assert.True(ex.ErrorCode > 0);
+    }
+
+    [Fact]
+    public async Task User_GetById_SchemaCorruption_ThrowsKejiPersistenceException()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var repo = new SqliteUserRepository(factory, ctx.FixedTime);
+
+        using (var conn = await GetOpenConnectionAsync(factory))
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "DROP TABLE users";
+            await cmd.ExecuteNonQueryAsync();
+        }
+
+        var ex = await Assert.ThrowsAsync<KejiPersistenceException>(() =>
+            repo.GetByIdAsync("nonexistent"));
+        Assert.IsNotType<SqliteException>(ex);
+        Assert.Null(ex.InnerException);
+        Assert.True(ex.ErrorCode > 0);
+    }
+
+    [Fact]
+    public async Task User_List_SchemaCorruption_ThrowsKejiPersistenceException()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var repo = new SqliteUserRepository(factory, ctx.FixedTime);
+
+        using (var conn = await GetOpenConnectionAsync(factory))
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "DROP TABLE users";
+            await cmd.ExecuteNonQueryAsync();
+        }
+
+        var ex = await Assert.ThrowsAsync<KejiPersistenceException>(() =>
+            repo.ListAsync());
+        Assert.IsNotType<SqliteException>(ex);
+        Assert.Null(ex.InnerException);
+        Assert.True(ex.ErrorCode > 0);
+    }
+
+    [Fact]
+    public async Task User_TouchLogin_SchemaCorruption_ThrowsKejiPersistenceException()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var repo = new SqliteUserRepository(factory, ctx.FixedTime);
+
+        using (var conn = await GetOpenConnectionAsync(factory))
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "DROP TABLE users";
+            await cmd.ExecuteNonQueryAsync();
+        }
+
+        var ex = await Assert.ThrowsAsync<KejiPersistenceException>(() =>
+            repo.TouchLoginAsync("nonexistent"));
+        Assert.IsNotType<SqliteException>(ex);
+        Assert.Null(ex.InnerException);
+        Assert.True(ex.ErrorCode > 0);
+    }
+
+    [Fact]
+    public async Task Conversation_Get_SchemaCorruption_ThrowsKejiPersistenceException()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var repo = new SqliteConversationRepository(factory, ctx.FixedTime);
+
+        using (var conn = await GetOpenConnectionAsync(factory))
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "DROP TABLE conversations";
+            await cmd.ExecuteNonQueryAsync();
+        }
+
+        var ex = await Assert.ThrowsAsync<KejiPersistenceException>(() =>
+            repo.GetAsync("test_conv"));
+        Assert.IsNotType<SqliteException>(ex);
+        Assert.Null(ex.InnerException);
+        Assert.True(ex.ErrorCode > 0);
+    }
+
+    [Fact]
+    public async Task Conversation_List_SchemaCorruption_ThrowsKejiPersistenceException()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var repo = new SqliteConversationRepository(factory, ctx.FixedTime);
+
+        using (var conn = await GetOpenConnectionAsync(factory))
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "DROP TABLE conversations";
+            await cmd.ExecuteNonQueryAsync();
+        }
+
+        var ex = await Assert.ThrowsAsync<KejiPersistenceException>(() =>
+            repo.ListAsync());
+        Assert.IsNotType<SqliteException>(ex);
+        Assert.Null(ex.InnerException);
+        Assert.True(ex.ErrorCode > 0);
+    }
+
+    [Fact]
+    public async Task Conversation_Delete_SchemaCorruption_ThrowsKejiPersistenceException()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var repo = new SqliteConversationRepository(factory, ctx.FixedTime);
+
+        using (var conn = await GetOpenConnectionAsync(factory))
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "DROP TABLE conversations";
+            await cmd.ExecuteNonQueryAsync();
+        }
+
+        var ex = await Assert.ThrowsAsync<KejiPersistenceException>(() =>
+            repo.DeleteAsync("test_conv"));
+        Assert.IsNotType<SqliteException>(ex);
+        Assert.Null(ex.InnerException);
+        Assert.True(ex.ErrorCode > 0);
+    }
+
+    [Fact]
+    public async Task Message_List_SchemaCorruption_ThrowsKejiPersistenceException()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var repo = new SqliteMessageRepository(factory, ctx.FixedTime);
+
+        using (var conn = await GetOpenConnectionAsync(factory))
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "DROP TABLE messages";
+            await cmd.ExecuteNonQueryAsync();
+        }
+
+        var ex = await Assert.ThrowsAsync<KejiPersistenceException>(() =>
+            repo.ListByConversationAsync("test_conv"));
+        Assert.IsNotType<SqliteException>(ex);
+        Assert.Null(ex.InnerException);
+        Assert.True(ex.ErrorCode > 0);
+    }
+
+    [Fact]
+    public async Task Settings_Get_SchemaCorruption_ThrowsKejiPersistenceException()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var repo = new SqliteSettingsRepository(factory, ctx.FixedTime);
+
+        using (var conn = await GetOpenConnectionAsync(factory))
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "DROP TABLE settings";
+            await cmd.ExecuteNonQueryAsync();
+        }
+
+        var ex = await Assert.ThrowsAsync<KejiPersistenceException>(() =>
+            repo.GetAsync("test_key"));
+        Assert.IsNotType<SqliteException>(ex);
+        Assert.Null(ex.InnerException);
+        Assert.True(ex.ErrorCode > 0);
+    }
+
+    [Fact]
+    public async Task Settings_GetAll_SchemaCorruption_ThrowsKejiPersistenceException()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var repo = new SqliteSettingsRepository(factory, ctx.FixedTime);
+
+        using (var conn = await GetOpenConnectionAsync(factory))
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "DROP TABLE settings";
+            await cmd.ExecuteNonQueryAsync();
+        }
+
+        var ex = await Assert.ThrowsAsync<KejiPersistenceException>(() =>
+            repo.GetAllAsync());
+        Assert.IsNotType<SqliteException>(ex);
+        Assert.Null(ex.InnerException);
+        Assert.True(ex.ErrorCode > 0);
+    }
+
+    // ──────────────────────────────────────────────
+    // Transaction Boundary Tests
+    // ──────────────────────────────────────────────
+
+    [Fact]
+    public void Translator_Create_PreservesErrorCode()
+    {
+        var sqliteEx = new SqliteException("test constraint", 19, 2067);
+        var translated = SqliteExceptionTranslator.Create(sqliteEx, "TestOp", "safe_id");
+        Assert.Equal(19, translated.ErrorCode);
+        Assert.Null(translated.InnerException);
+        Assert.Contains("TestOp", translated.Message);
+        Assert.Contains("safe_id", translated.Message);
+    }
+
+    [Fact]
+    public void Translator_Create_NoEntityId_OmitsIdSuffix()
+    {
+        var sqliteEx = new SqliteException("test", 1, 1);
+        var translated = SqliteExceptionTranslator.Create(sqliteEx, "TestOp");
+        Assert.DoesNotContain("(id:", translated.Message);
+    }
+
+    [Fact]
+    public async Task EnsureOwned_CancellationAfterBeginTransaction_RollsBack()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+
+        using var cts = new CancellationTokenSource();
+        var ready = new TaskCompletionSource();
+        var proceed = new TaskCompletionSource();
+        var blockingFactory = new BlockingConnectionFactory(factory, ready, proceed);
+        var repo = new SqliteConversationRepository(blockingFactory, ctx.FixedTime);
+
+        var repoTask = repo.EnsureOwnedAsync("cancel_eo", "user", cancellationToken: cts.Token);
+
+        await ready.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        cts.Cancel();
+        proceed.TrySetResult();
+
+        try { await repoTask; Assert.Fail("Expected OCE"); }
+        catch (OperationCanceledException) { }
+
+        Assert.Null(await repo.GetAsync("cancel_eo"));
+    }
+
+    [Fact]
+    public async Task ConversationDelete_CancellationAfterBeginTransaction_RollsBack()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var convRepo = new SqliteConversationRepository(factory, ctx.FixedTime);
+        await convRepo.CreateAsync("cancel_del");
+
+        using var cts = new CancellationTokenSource();
+        var ready = new TaskCompletionSource();
+        var proceed = new TaskCompletionSource();
+        var blockingFactory = new BlockingConnectionFactory(factory, ready, proceed);
+        var repo = new SqliteConversationRepository(blockingFactory, ctx.FixedTime);
+
+        var repoTask = repo.DeleteAsync("cancel_del", cts.Token);
+
+        await ready.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        cts.Cancel();
+        proceed.TrySetResult();
+
+        try { await repoTask; Assert.Fail("Expected OCE"); }
+        catch (OperationCanceledException) { }
+
+        Assert.NotNull(await convRepo.GetAsync("cancel_del"));
+    }
+
+    [Fact]
+    public async Task UserDelete_CancellationAfterBeginTransaction_RollsBack()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var userRepo = new SqliteUserRepository(factory, ctx.FixedTime);
+        var uid = await userRepo.CreateAsync("cancel_del_user", "h", TestRoleMember);
+
+        using var cts = new CancellationTokenSource();
+        var ready = new TaskCompletionSource();
+        var proceed = new TaskCompletionSource();
+        var blockingFactory = new BlockingConnectionFactory(factory, ready, proceed);
+        var repo = new SqliteUserRepository(blockingFactory, ctx.FixedTime);
+
+        var repoTask = repo.DeleteAsync(uid, cts.Token);
+
+        await ready.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        cts.Cancel();
+        proceed.TrySetResult();
+
+        try { await repoTask; Assert.Fail("Expected OCE"); }
+        catch (OperationCanceledException) { }
+
+        Assert.NotNull(await userRepo.GetByIdAsync(uid));
+    }
+
+    [Fact]
+    public async Task Message_Add_CancellationAfterBeginTransaction_RollsBack()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var convRepo = new SqliteConversationRepository(factory, ctx.FixedTime);
+        await convRepo.CreateAsync("cancel_after_tx");
+
+        using var cts = new CancellationTokenSource();
+        var ready = new TaskCompletionSource();
+        var proceed = new TaskCompletionSource();
+
+        var blockingFactory = new BlockingConnectionFactory(factory, ready, proceed);
+        var msgRepo = new SqliteMessageRepository(blockingFactory, ctx.FixedTime);
+
+        var repoTask = msgRepo.AddAsync("cancel_after_tx", "user", "test", cts.Token);
+
+        // Wait for connection to be opened (but not yet returned to AddAsync)
+        await ready.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        // Cancel the token before letting OpenConnectionAsync return
+        cts.Cancel();
+        proceed.TrySetResult();
+
+        try
+        {
+            await repoTask;
+            Assert.Fail("Expected OperationCanceledException but no exception was thrown.");
+        }
+        catch (OperationCanceledException)
+        {
+            // Expected
+        }
+
+        var conv = await convRepo.GetAsync("cancel_after_tx");
+        Assert.NotNull(conv);
+        Assert.Equal(0, conv.MessageCount);
+
+        var msgs = await new SqliteMessageRepository(factory, ctx.FixedTime).ListByConversationAsync("cancel_after_tx");
+        Assert.Empty(msgs);
+    }
+
+    private sealed class BlockingConnectionFactory : ISqliteConnectionFactory
+    {
+        private readonly ISqliteConnectionFactory _inner;
+        private readonly TaskCompletionSource _ready;
+        private readonly TaskCompletionSource _proceed;
+
+        public BlockingConnectionFactory(ISqliteConnectionFactory inner, TaskCompletionSource ready, TaskCompletionSource proceed)
+        {
+            _inner = inner;
+            _ready = ready;
+            _proceed = proceed;
+        }
+
+        public async Task<SqliteConnection> OpenConnectionAsync(CancellationToken cancellationToken)
+        {
+            var conn = await _inner.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+            _ready.TrySetResult();
+            await _proceed.Task.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+            return conn;
+        }
+    }
+
+    [Fact]
+    public async Task Transaction_EnsureOwned_FirstSqlFailure_ThrowsKejiPersistenceException()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var repo = new SqliteConversationRepository(factory, ctx.FixedTime);
+
+        using (var conn = await GetOpenConnectionAsync(factory))
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "DROP TABLE conversations";
+            await cmd.ExecuteNonQueryAsync();
+        }
+
+        var ex = await Assert.ThrowsAsync<KejiPersistenceException>(() =>
+            repo.EnsureOwnedAsync("test_conv", "user"));
+        Assert.IsNotType<SqliteException>(ex);
+        Assert.Null(ex.InnerException);
+        Assert.True(ex.ErrorCode > 0);
+    }
 
     private static async Task<List<string>> GetTableNamesAsync(SqliteConnection conn)
     {

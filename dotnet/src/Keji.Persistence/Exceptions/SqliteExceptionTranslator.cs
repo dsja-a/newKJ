@@ -1,14 +1,31 @@
-using Microsoft.Data.Sqlite;
+﻿using Microsoft.Data.Sqlite;
 
 namespace Keji.Persistence;
 
 public static class SqliteExceptionTranslator
 {
-    public static void ThrowTranslated(SqliteException ex, string operationName, string? safeEntityId = null)
+    public static KejiPersistenceException Create(SqliteException exception, string operationName, string? safeEntityId = null)
     {
         var idPart = safeEntityId is not null ? $" (id: {safeEntityId})" : "";
-        var message = $"Database operation '{operationName}' failed{idPart}. Error code: {ex.SqliteErrorCode}.";
-        throw new KejiPersistenceException(message);
+        var message = $"Database operation '{operationName}' failed{idPart}. Error code: {exception.SqliteErrorCode}.";
+        return new KejiPersistenceException(message, exception.SqliteErrorCode);
+    }
+
+    public static void ThrowTranslated(SqliteException ex, string operationName, string? safeEntityId = null)
+    {
+        throw Create(ex, operationName, safeEntityId);
+    }
+
+    public static async Task SafeRollbackAsync(Microsoft.Data.Sqlite.SqliteTransaction? transaction)
+    {
+        if (transaction is null) return;
+        try
+        {
+            await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+        }
+        catch
+        {
+        }
     }
 
     public static string NormalizeRole(string? role)

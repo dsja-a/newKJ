@@ -26,81 +26,92 @@ public class SqliteConnectionFactory : ISqliteConnectionFactory
 
     public async Task<SqliteConnection> OpenConnectionAsync(CancellationToken cancellationToken = default)
     {
-        var dir = Path.GetDirectoryName(_resolvedPath);
-        if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
-        {
-            if (_options.CreateDirectoryIfMissing)
-            {
-                Directory.CreateDirectory(dir);
-            }
-            else
-            {
-                throw new KejiPersistenceException(
-                    $"Directory '{dir}' does not exist and CreateDirectoryIfMissing is false.");
-            }
-        }
-
-        cancellationToken.ThrowIfCancellationRequested();
-
-        var conn = new SqliteConnection(_connectionString);
         try
         {
-            await conn.OpenAsync(cancellationToken).ConfigureAwait(false);
-
-            using var foreignCmd = conn.CreateCommand();
-            foreignCmd.CommandText = _options.EnableForeignKeys
-                ? "PRAGMA foreign_keys = ON"
-                : "PRAGMA foreign_keys = OFF";
-            await foreignCmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-
-            using var busyCmd = conn.CreateCommand();
-            busyCmd.CommandText = $"PRAGMA busy_timeout = {_options.BusyTimeoutMilliseconds}";
-            await busyCmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-
-            if (_options.EnableWal && !_walEnsured)
+            var dir = Path.GetDirectoryName(_resolvedPath);
+            if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
             {
-                try
+                if (_options.CreateDirectoryIfMissing)
                 {
-                    await _walLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+                    Directory.CreateDirectory(dir);
                 }
-                catch (OperationCanceledException)
+                else
                 {
-                    conn.Dispose();
-                    throw;
-                }
-                try
-                {
-                    if (!_walEnsured)
-                    {
-                        using var walCmd = conn.CreateCommand();
-                        walCmd.CommandText = "PRAGMA journal_mode = WAL";
-                        var result = await walCmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
-                        if (result?.ToString() == "wal")
-                            _walEnsured = true;
-                    }
-                }
-                finally
-                {
-                    _walLock.Release();
+                    throw new KejiPersistenceException(
+                        $"Directory '{dir}' does not exist and CreateDirectoryIfMissing is false.");
                 }
             }
 
-            return conn;
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var conn = new SqliteConnection(_connectionString);
+
+            try
+            {
+                await conn.OpenAsync(cancellationToken).ConfigureAwait(false);
+
+                using var foreignCmd = conn.CreateCommand();
+                foreignCmd.CommandText = _options.EnableForeignKeys
+                    ? "PRAGMA foreign_keys = ON"
+                    : "PRAGMA foreign_keys = OFF";
+                await foreignCmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+
+                using var busyCmd = conn.CreateCommand();
+                busyCmd.CommandText = $"PRAGMA busy_timeout = {_options.BusyTimeoutMilliseconds}";
+                await busyCmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+
+                if (_options.EnableWal && !_walEnsured)
+                {
+                    try
+                    {
+                        await _walLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        conn.Dispose();
+                        throw;
+                    }
+                    try
+                    {
+                        if (!_walEnsured)
+                        {
+                            using var walCmd = conn.CreateCommand();
+                            walCmd.CommandText = "PRAGMA journal_mode = WAL";
+                            var result = await walCmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+                            if (result?.ToString() == "wal")
+                                _walEnsured = true;
+                        }
+                    }
+                    finally
+                    {
+                        _walLock.Release();
+                    }
+                }
+
+                return conn;
+            }
+            catch (OperationCanceledException)
+            {
+                conn.Dispose();
+                throw;
+            }
+            catch (SqliteException ex)
+            {
+                conn.Dispose();
+                throw SqliteExceptionTranslator.Create(ex, "OpenConnection");
+            }
+            catch
+            {
+                conn.Dispose();
+                throw;
+            }
         }
         catch (OperationCanceledException)
         {
-            conn.Dispose();
             throw;
         }
-        catch (SqliteException ex)
+        catch (KejiPersistenceException)
         {
-            conn.Dispose();
-            SqliteExceptionTranslator.ThrowTranslated(ex, "OpenConnection");
-            throw;
-        }
-        catch
-        {
-            conn.Dispose();
             throw;
         }
     }

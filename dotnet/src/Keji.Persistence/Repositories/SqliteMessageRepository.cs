@@ -20,11 +20,16 @@ public class SqliteMessageRepository : IMessageRepository
             throw new KejiPersistenceException("Message role must not be empty.");
 
         var now = _timeProvider.Now;
-        using var conn = await _connectionFactory.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
-        await using var tx = (Microsoft.Data.Sqlite.SqliteTransaction)await conn.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+        var conn = null as SqliteConnection;
+        Microsoft.Data.Sqlite.SqliteTransaction? tx = null;
 
         try
         {
+            cancellationToken.ThrowIfCancellationRequested();
+            conn = await _connectionFactory.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+            tx = (Microsoft.Data.Sqlite.SqliteTransaction)await conn.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+
             using var updateCmd = conn.CreateCommand();
             updateCmd.Transaction = tx;
             updateCmd.CommandText = """
@@ -37,7 +42,7 @@ public class SqliteMessageRepository : IMessageRepository
 
             if (rows == 0)
             {
-                await tx.RollbackAsync(cancellationToken).ConfigureAwait(false);
+                await SqliteExceptionTranslator.SafeRollbackAsync(tx).ConfigureAwait(false);
                 throw new KejiPersistenceException($"Conversation '{conversationId}' not found.");
             }
 
@@ -64,23 +69,29 @@ public class SqliteMessageRepository : IMessageRepository
         }
         catch (OperationCanceledException)
         {
-            await tx.RollbackAsync(cancellationToken).ConfigureAwait(false);
+            await SqliteExceptionTranslator.SafeRollbackAsync(tx).ConfigureAwait(false);
             throw;
         }
         catch (KejiPersistenceException)
         {
+            await SqliteExceptionTranslator.SafeRollbackAsync(tx).ConfigureAwait(false);
             throw;
         }
         catch (SqliteException ex)
         {
-            await tx.RollbackAsync(cancellationToken).ConfigureAwait(false);
-            SqliteExceptionTranslator.ThrowTranslated(ex, "AddMessage", conversationId);
-            return 0;
+            await SqliteExceptionTranslator.SafeRollbackAsync(tx).ConfigureAwait(false);
+            throw SqliteExceptionTranslator.Create(ex, "AddMessage", conversationId);
         }
         catch (Exception)
         {
-            await tx.RollbackAsync(cancellationToken).ConfigureAwait(false);
-            throw new KejiPersistenceException($"Conversation '{conversationId}' not found.");
+            await SqliteExceptionTranslator.SafeRollbackAsync(tx).ConfigureAwait(false);
+            throw new KejiPersistenceException("Database operation 'AddMessage' failed.");
+        }
+        finally
+        {
+            if (tx is not null)
+                await tx.DisposeAsync().ConfigureAwait(false);
+            conn?.Dispose();
         }
     }
 
@@ -89,29 +100,40 @@ public class SqliteMessageRepository : IMessageRepository
         if (limit < 1) limit = 1;
         if (limit > 1000) limit = 1000;
 
-        using var conn = await _connectionFactory.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            SELECT id, conversation_id, role, content, created_at
-            FROM messages WHERE conversation_id = @cid
-            ORDER BY created_at ASC, id ASC LIMIT @lim
-            """;
-        cmd.Parameters.AddWithValue("@cid", conversationId);
-        cmd.Parameters.AddWithValue("@lim", limit);
-
-        var list = new List<MessageRecord>();
-        using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        try
         {
-            list.Add(new MessageRecord
+            using var conn = await _connectionFactory.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = """
+                SELECT id, conversation_id, role, content, created_at
+                FROM messages WHERE conversation_id = @cid
+                ORDER BY created_at ASC, id ASC LIMIT @lim
+                """;
+            cmd.Parameters.AddWithValue("@cid", conversationId);
+            cmd.Parameters.AddWithValue("@lim", limit);
+
+            var list = new List<MessageRecord>();
+            using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
             {
-                Id = reader.GetInt64(0),
-                ConversationId = reader.GetString(1),
-                Role = reader.GetString(2),
-                Content = reader.GetString(3),
-                CreatedAt = reader.GetDouble(4),
-            });
+                list.Add(new MessageRecord
+                {
+                    Id = reader.GetInt64(0),
+                    ConversationId = reader.GetString(1),
+                    Role = reader.GetString(2),
+                    Content = reader.GetString(3),
+                    CreatedAt = reader.GetDouble(4),
+                });
+            }
+            return list;
         }
-        return list;
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (SqliteException ex)
+        {
+            throw SqliteExceptionTranslator.Create(ex, "ListMessages", conversationId);
+        }
     }
 }

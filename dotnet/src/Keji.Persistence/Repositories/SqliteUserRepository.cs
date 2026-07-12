@@ -16,52 +16,96 @@ public class SqliteUserRepository : IUserRepository
 
     public async Task<int> CountAsync(CancellationToken cancellationToken = default)
     {
-        using var conn = await _connectionFactory.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT COUNT(*) FROM users";
-        var result = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
-        return Convert.ToInt32(result);
+        try
+        {
+            using var conn = await _connectionFactory.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "SELECT COUNT(*) FROM users";
+            var result = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+            return Convert.ToInt32(result);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (SqliteException ex)
+        {
+            throw SqliteExceptionTranslator.Create(ex, "CountUsers");
+        }
     }
 
     public async Task<UserAccountRecord?> GetByUsernameAsync(string username, CancellationToken cancellationToken = default)
     {
-        using var conn = await _connectionFactory.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT id, username, password_hash, display_name, role, is_active, created_at, last_login_at FROM users WHERE username = @u";
-        cmd.Parameters.AddWithValue("@u", username.Trim());
-        return await ReadUserAccountAsync(cmd, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            using var conn = await _connectionFactory.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "SELECT id, username, password_hash, display_name, role, is_active, created_at, last_login_at FROM users WHERE username = @u";
+            cmd.Parameters.AddWithValue("@u", username.Trim());
+            return await ReadUserAccountAsync(cmd, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (SqliteException ex)
+        {
+            throw SqliteExceptionTranslator.Create(ex, "GetUserByUsername");
+        }
     }
 
     public async Task<UserAccountRecord?> GetByIdAsync(string userId, CancellationToken cancellationToken = default)
     {
-        using var conn = await _connectionFactory.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT id, username, password_hash, display_name, role, is_active, created_at, last_login_at FROM users WHERE id = @id";
-        cmd.Parameters.AddWithValue("@id", userId);
-        return await ReadUserAccountAsync(cmd, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            using var conn = await _connectionFactory.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "SELECT id, username, password_hash, display_name, role, is_active, created_at, last_login_at FROM users WHERE id = @id";
+            cmd.Parameters.AddWithValue("@id", userId);
+            return await ReadUserAccountAsync(cmd, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (SqliteException ex)
+        {
+            throw SqliteExceptionTranslator.Create(ex, "GetUserById", userId);
+        }
     }
 
     public async Task<List<UserSummaryRecord>> ListAsync(CancellationToken cancellationToken = default)
     {
-        using var conn = await _connectionFactory.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT id, username, display_name, role, is_active, created_at, last_login_at FROM users ORDER BY created_at ASC";
-        var list = new List<UserSummaryRecord>();
-        using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        try
         {
-            list.Add(new UserSummaryRecord
+            using var conn = await _connectionFactory.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "SELECT id, username, display_name, role, is_active, created_at, last_login_at FROM users ORDER BY created_at ASC";
+            var list = new List<UserSummaryRecord>();
+            using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
             {
-                Id = reader.GetString(0),
-                Username = reader.GetString(1),
-                DisplayName = reader.IsDBNull(2) ? string.Empty : reader.GetString(2),
-                Role = reader.GetString(3),
-                IsActive = reader.GetInt32(4) != 0,
-                CreatedAt = reader.GetDouble(5),
-                LastLoginAt = reader.IsDBNull(6) ? null : reader.GetDouble(6),
-            });
+                list.Add(new UserSummaryRecord
+                {
+                    Id = reader.GetString(0),
+                    Username = reader.GetString(1),
+                    DisplayName = reader.IsDBNull(2) ? string.Empty : reader.GetString(2),
+                    Role = reader.GetString(3),
+                    IsActive = reader.GetInt32(4) != 0,
+                    CreatedAt = reader.GetDouble(5),
+                    LastLoginAt = reader.IsDBNull(6) ? null : reader.GetDouble(6),
+                });
+            }
+            return list;
         }
-        return list;
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (SqliteException ex)
+        {
+            throw SqliteExceptionTranslator.Create(ex, "ListUsers");
+        }
     }
 
     public async Task<string> CreateAsync(string username, string passwordHash, string role = "member", string displayName = "", CancellationToken cancellationToken = default)
@@ -79,9 +123,9 @@ public class SqliteUserRepository : IUserRepository
         var now = _timeProvider.Now;
         var display = string.IsNullOrEmpty(displayName) ? trimmed : displayName;
 
-        using var conn = await _connectionFactory.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            using var conn = await _connectionFactory.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
             using var cmd = conn.CreateCommand();
             cmd.CommandText = """
                 INSERT INTO users (id, username, password_hash, display_name, role, is_active, created_at)
@@ -95,13 +139,17 @@ public class SqliteUserRepository : IUserRepository
             cmd.Parameters.AddWithValue("@now", now);
             await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
         catch (SqliteException ex) when (ex.SqliteExtendedErrorCode == 2067)
         {
             throw new DuplicateUsernameException(trimmed);
         }
         catch (SqliteException ex)
         {
-            SqliteExceptionTranslator.ThrowTranslated(ex, "CreateUser", uid);
+            throw SqliteExceptionTranslator.Create(ex, "CreateUser", uid);
         }
 
         return uid;
@@ -137,52 +185,70 @@ public class SqliteUserRepository : IUserRepository
             parameters.Add(("@password_hash", command.PasswordHash));
         }
 
-        using var conn = await _connectionFactory.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
-
-        if (sets.Count == 0)
-        {
-            using var checkCmd = conn.CreateCommand();
-            checkCmd.CommandText = "SELECT 1 FROM users WHERE id = @id";
-            checkCmd.Parameters.AddWithValue("@id", userId);
-            var exists = await checkCmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
-            return exists is not null;
-        }
-
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = $"UPDATE users SET {string.Join(", ", sets)} WHERE id = @id";
-        foreach (var (name, value) in parameters)
-            cmd.Parameters.AddWithValue(name, value);
-        cmd.Parameters.AddWithValue("@id", userId);
-
         try
         {
+            using var conn = await _connectionFactory.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+
+            if (sets.Count == 0)
+            {
+                using var checkCmd = conn.CreateCommand();
+                checkCmd.CommandText = "SELECT 1 FROM users WHERE id = @id";
+                checkCmd.Parameters.AddWithValue("@id", userId);
+                var exists = await checkCmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+                return exists is not null;
+            }
+
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = $"UPDATE users SET {string.Join(", ", sets)} WHERE id = @id";
+            foreach (var (name, value) in parameters)
+                cmd.Parameters.AddWithValue(name, value);
+            cmd.Parameters.AddWithValue("@id", userId);
+
             var rows = await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
             return rows > 0;
         }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
         catch (SqliteException ex)
         {
-            SqliteExceptionTranslator.ThrowTranslated(ex, "UpdateUser", userId);
-            return false;
+            throw SqliteExceptionTranslator.Create(ex, "UpdateUser", userId);
         }
     }
 
     public async Task TouchLoginAsync(string userId, CancellationToken cancellationToken = default)
     {
-        using var conn = await _connectionFactory.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = "UPDATE users SET last_login_at = @t WHERE id = @id";
-        cmd.Parameters.AddWithValue("@t", _timeProvider.Now);
-        cmd.Parameters.AddWithValue("@id", userId);
-        await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            using var conn = await _connectionFactory.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "UPDATE users SET last_login_at = @t WHERE id = @id";
+            cmd.Parameters.AddWithValue("@t", _timeProvider.Now);
+            cmd.Parameters.AddWithValue("@id", userId);
+            await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (SqliteException ex)
+        {
+            throw SqliteExceptionTranslator.Create(ex, "TouchLogin", userId);
+        }
     }
 
     public async Task<bool> DeleteAsync(string userId, CancellationToken cancellationToken = default)
     {
-        using var conn = await _connectionFactory.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
-        await using var tx = (Microsoft.Data.Sqlite.SqliteTransaction)await conn.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+        Microsoft.Data.Sqlite.SqliteTransaction? tx = null;
 
         try
         {
+            cancellationToken.ThrowIfCancellationRequested();
+            using var conn = await _connectionFactory.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+            tx = (Microsoft.Data.Sqlite.SqliteTransaction)await conn.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+
             using var listCmd = conn.CreateCommand();
             listCmd.Transaction = tx;
             listCmd.CommandText = "SELECT id FROM conversations WHERE owner_user_id = @id";
@@ -216,18 +282,32 @@ public class SqliteUserRepository : IUserRepository
 
             if (deleted == 0)
             {
-                await tx.RollbackAsync(cancellationToken).ConfigureAwait(false);
+                await SqliteExceptionTranslator.SafeRollbackAsync(tx).ConfigureAwait(false);
                 return false;
             }
 
             await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
             return true;
         }
+        catch (OperationCanceledException)
+        {
+            await SqliteExceptionTranslator.SafeRollbackAsync(tx).ConfigureAwait(false);
+            throw;
+        }
+        catch (KejiPersistenceException)
+        {
+            await SqliteExceptionTranslator.SafeRollbackAsync(tx).ConfigureAwait(false);
+            throw;
+        }
         catch (SqliteException ex)
         {
-            await tx.RollbackAsync(cancellationToken).ConfigureAwait(false);
-            SqliteExceptionTranslator.ThrowTranslated(ex, "DeleteUser", userId);
-            return false;
+            await SqliteExceptionTranslator.SafeRollbackAsync(tx).ConfigureAwait(false);
+            throw SqliteExceptionTranslator.Create(ex, "DeleteUser", userId);
+        }
+        finally
+        {
+            if (tx is not null)
+                await tx.DisposeAsync().ConfigureAwait(false);
         }
     }
 

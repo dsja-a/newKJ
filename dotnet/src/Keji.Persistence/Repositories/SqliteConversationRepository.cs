@@ -16,11 +16,11 @@ public class SqliteConversationRepository : IConversationRepository
 
     public async Task<ConversationRecord> CreateAsync(string convId, string title = "新对话", string? ownerUserId = null, CancellationToken cancellationToken = default)
     {
-        var now = _timeProvider.Now;
-        using var conn = await _connectionFactory.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
-
         try
         {
+            var now = _timeProvider.Now;
+            using var conn = await _connectionFactory.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+
             using var insertCmd = conn.CreateCommand();
             insertCmd.CommandText = """
                 INSERT OR IGNORE INTO conversations (id, title, created_at, updated_at, owner_user_id)
@@ -47,10 +47,13 @@ public class SqliteConversationRepository : IConversationRepository
             return await GetInternalAsync(conn, convId, cancellationToken).ConfigureAwait(false)
                 ?? throw new KejiPersistenceException($"Conversation '{convId}' not found after create.");
         }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
         catch (SqliteException ex)
         {
-            SqliteExceptionTranslator.ThrowTranslated(ex, "CreateConversation", convId);
-            throw;
+            throw SqliteExceptionTranslator.Create(ex, "CreateConversation", convId);
         }
     }
 
@@ -58,11 +61,16 @@ public class SqliteConversationRepository : IConversationRepository
         string convId, string ownerUserId, string title = "新对话", CancellationToken cancellationToken = default)
     {
         var now = _timeProvider.Now;
-        using var conn = await _connectionFactory.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
-        await using var tx = (Microsoft.Data.Sqlite.SqliteTransaction)await conn.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+        SqliteConnection? conn = null;
+        Microsoft.Data.Sqlite.SqliteTransaction? tx = null;
 
         try
         {
+            cancellationToken.ThrowIfCancellationRequested();
+            conn = await _connectionFactory.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+            tx = (Microsoft.Data.Sqlite.SqliteTransaction)await conn.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+
             using var insertCmd = conn.CreateCommand();
             insertCmd.Transaction = tx;
             insertCmd.CommandText = """
@@ -109,26 +117,47 @@ public class SqliteConversationRepository : IConversationRepository
         }
         catch (OperationCanceledException)
         {
-            await tx.RollbackAsync(cancellationToken).ConfigureAwait(false);
+            await SqliteExceptionTranslator.SafeRollbackAsync(tx).ConfigureAwait(false);
+            throw;
+        }
+        catch (KejiPersistenceException)
+        {
+            await SqliteExceptionTranslator.SafeRollbackAsync(tx).ConfigureAwait(false);
             throw;
         }
         catch (SqliteException ex)
         {
-            await tx.RollbackAsync(cancellationToken).ConfigureAwait(false);
-            SqliteExceptionTranslator.ThrowTranslated(ex, "EnsureOwned", convId);
-            throw;
+            await SqliteExceptionTranslator.SafeRollbackAsync(tx).ConfigureAwait(false);
+            throw SqliteExceptionTranslator.Create(ex, "EnsureOwned", convId);
         }
         catch
         {
-            await tx.RollbackAsync(cancellationToken).ConfigureAwait(false);
+            await SqliteExceptionTranslator.SafeRollbackAsync(tx).ConfigureAwait(false);
             throw;
+        }
+        finally
+        {
+            if (tx is not null)
+                await tx.DisposeAsync().ConfigureAwait(false);
+            conn?.Dispose();
         }
     }
 
     public async Task<ConversationRecord?> GetAsync(string convId, CancellationToken cancellationToken = default)
     {
-        using var conn = await _connectionFactory.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
-        return await GetInternalAsync(conn, convId, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            using var conn = await _connectionFactory.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+            return await GetInternalAsync(conn, convId, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (SqliteException ex)
+        {
+            throw SqliteExceptionTranslator.Create(ex, "GetConversation", convId);
+        }
     }
 
     public async Task<List<ConversationRecord>> ListAsync(int limit = 50, string? ownerUserId = null, CancellationToken cancellationToken = default)
@@ -136,36 +165,47 @@ public class SqliteConversationRepository : IConversationRepository
         if (limit < 1) limit = 1;
         if (limit > 500) limit = 500;
 
-        using var conn = await _connectionFactory.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
-        using var cmd = conn.CreateCommand();
-
-        if (ownerUserId is not null)
+        try
         {
-            cmd.CommandText = """
-                SELECT id, title, created_at, updated_at, message_count, owner_user_id
-                FROM conversations WHERE owner_user_id = @owner
-                ORDER BY updated_at DESC LIMIT @lim
-                """;
-            cmd.Parameters.AddWithValue("@owner", ownerUserId);
-        }
-        else
-        {
-            cmd.CommandText = """
-                SELECT id, title, created_at, updated_at, message_count, owner_user_id
-                FROM conversations ORDER BY updated_at DESC LIMIT @lim
-                """;
-        }
+            using var conn = await _connectionFactory.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+            using var cmd = conn.CreateCommand();
 
-        cmd.Parameters.AddWithValue("@lim", limit);
-        return await ReadConversationListAsync(cmd, cancellationToken).ConfigureAwait(false);
+            if (ownerUserId is not null)
+            {
+                cmd.CommandText = """
+                    SELECT id, title, created_at, updated_at, message_count, owner_user_id
+                    FROM conversations WHERE owner_user_id = @owner
+                    ORDER BY updated_at DESC LIMIT @lim
+                    """;
+                cmd.Parameters.AddWithValue("@owner", ownerUserId);
+            }
+            else
+            {
+                cmd.CommandText = """
+                    SELECT id, title, created_at, updated_at, message_count, owner_user_id
+                    FROM conversations ORDER BY updated_at DESC LIMIT @lim
+                    """;
+            }
+
+            cmd.Parameters.AddWithValue("@lim", limit);
+            return await ReadConversationListAsync(cmd, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (SqliteException ex)
+        {
+            throw SqliteExceptionTranslator.Create(ex, "ListConversations");
+        }
     }
 
     public async Task<bool> RenameAsync(string convId, string title, CancellationToken cancellationToken = default)
     {
-        var now = _timeProvider.Now;
-        using var conn = await _connectionFactory.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            var now = _timeProvider.Now;
+            using var conn = await _connectionFactory.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
             using var cmd = conn.CreateCommand();
             cmd.CommandText = "UPDATE conversations SET title = @title, updated_at = @t WHERE id = @id";
             cmd.Parameters.AddWithValue("@title", title);
@@ -174,38 +214,75 @@ public class SqliteConversationRepository : IConversationRepository
             var rows = await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
             return rows > 0;
         }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
         catch (SqliteException ex)
         {
-            SqliteExceptionTranslator.ThrowTranslated(ex, "RenameConversation", convId);
-            return false;
+            throw SqliteExceptionTranslator.Create(ex, "RenameConversation", convId);
         }
     }
 
     public async Task<bool> DeleteAsync(string convId, CancellationToken cancellationToken = default)
     {
-        using var conn = await _connectionFactory.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
-        await using var tx = (Microsoft.Data.Sqlite.SqliteTransaction)await conn.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+        SqliteConnection? conn = null;
+        Microsoft.Data.Sqlite.SqliteTransaction? tx = null;
 
-        using var delMsgCmd = conn.CreateCommand();
-        delMsgCmd.Transaction = tx;
-        delMsgCmd.CommandText = "DELETE FROM messages WHERE conversation_id = @id";
-        delMsgCmd.Parameters.AddWithValue("@id", convId);
-        await delMsgCmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-
-        using var delConvCmd = conn.CreateCommand();
-        delConvCmd.Transaction = tx;
-        delConvCmd.CommandText = "DELETE FROM conversations WHERE id = @id";
-        delConvCmd.Parameters.AddWithValue("@id", convId);
-        var rows = await delConvCmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-
-        if (rows == 0)
+        try
         {
-            await tx.RollbackAsync(cancellationToken).ConfigureAwait(false);
-            return false;
-        }
+            cancellationToken.ThrowIfCancellationRequested();
+            conn = await _connectionFactory.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+            tx = (Microsoft.Data.Sqlite.SqliteTransaction)await conn.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
 
-        await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
-        return true;
+            using var delMsgCmd = conn.CreateCommand();
+            delMsgCmd.Transaction = tx;
+            delMsgCmd.CommandText = "DELETE FROM messages WHERE conversation_id = @id";
+            delMsgCmd.Parameters.AddWithValue("@id", convId);
+            await delMsgCmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+
+            using var delConvCmd = conn.CreateCommand();
+            delConvCmd.Transaction = tx;
+            delConvCmd.CommandText = "DELETE FROM conversations WHERE id = @id";
+            delConvCmd.Parameters.AddWithValue("@id", convId);
+            var rows = await delConvCmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+
+            if (rows == 0)
+            {
+                await SqliteExceptionTranslator.SafeRollbackAsync(tx).ConfigureAwait(false);
+                return false;
+            }
+
+            await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
+            return true;
+        }
+        catch (OperationCanceledException)
+        {
+            await SqliteExceptionTranslator.SafeRollbackAsync(tx).ConfigureAwait(false);
+            throw;
+        }
+        catch (KejiPersistenceException)
+        {
+            await SqliteExceptionTranslator.SafeRollbackAsync(tx).ConfigureAwait(false);
+            throw;
+        }
+        catch (SqliteException ex)
+        {
+            await SqliteExceptionTranslator.SafeRollbackAsync(tx).ConfigureAwait(false);
+            throw SqliteExceptionTranslator.Create(ex, "DeleteConversation", convId);
+        }
+        catch
+        {
+            await SqliteExceptionTranslator.SafeRollbackAsync(tx).ConfigureAwait(false);
+            throw;
+        }
+        finally
+        {
+            if (tx is not null)
+                await tx.DisposeAsync().ConfigureAwait(false);
+            conn?.Dispose();
+        }
     }
 
     private static async Task<ConversationRecord?> GetInternalAsync(SqliteConnection conn, string convId, CancellationToken cancellationToken)

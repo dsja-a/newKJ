@@ -10,13 +10,13 @@ SQLite persistence infrastructure for Keji C# migration. Schema-compatible with 
 - **Connection**: `sqlite3.connect()` at `Database.__init__()`, stored per-thread via `threading.local()`. Same connection reused for all operations on the same thread — NOT per-operation connections.
 - **Journal**: `PRAGMA journal_mode=WAL` set once in `_get_conn()` on each new thread connection.
 - **FK enforcement**: `PRAGMA foreign_keys=ON` set once in `_get_conn()`.
-- **busy_timeout**: NOT explicitly set; relies on SQLite default (0 ms — no busy wait).
+- **busy_timeout**: No explicit `PRAGMA busy_timeout` anywhere. Python's `sqlite3.connect()` call does not pass a `timeout` argument, so the default `timeout=5.0` applies — Python `sqlite3` waits up to 5.0 seconds for a lock before raising `sqlite3.OperationalError` (SQLITE_BUSY). This is a Python-level default, not a SQLite `busy_timeout` PRAGMA.
 - **Time**: Unix epoch seconds via `time.time()` stored as REAL.
 - **No connection pooling** — each thread keeps its own persistent connection via `threading.local`.
 - **9 business tables**: `conversations`, `messages`, `documents`, `settings`, `database_configs`, `table_metadata`, `tool_usage_log`, `audit_events`, `users`. No `schema_migrations` table in Python.
 - **DB directory**: Created at `__init__` via `os.makedirs(os.path.dirname(db_path), exist_ok=True)`, not deferred.
 - **Init**: `_init_tables()` runs all CREATE TABLE IF NOT EXISTS + CREATE INDEX + migrate_schema inside `Database.__init__()`, committed via `conn.commit()` (no explicit transaction).
-- **No explicit busy_timeout** anywhere in Python.
+- **No explicit busy_timeout PRAGMA** in Python. Python `sqlite3.connect()` default timeout is 5.0 seconds.
 
 ## Python 9 Business Tables (no schema_migrations)
 
@@ -220,22 +220,41 @@ BEGIN TRANSACTION
   INSERT INTO messages (conversation_id, role, content, created_at)
   SELECT last_insert_rowid()
 COMMIT
-EXCEPTION (SqliteException) → ROLLBACK → throw KejiPersistenceException (translated, safe)
-EXCEPTION (OperationCanceledException) → ROLLBACK → rethrow (not converted)
-EXCEPTION (other) → ROLLBACK → throw KejiPersistenceException (safe)
+EXCEPTION (OperationCanceledException) → ROLLBACK (CancellationToken.None) → rethrow
+EXCEPTION (KejiPersistenceException) → ROLLBACK (CancellationToken.None) → rethrow
+EXCEPTION (SqliteException) → ROLLBACK (CancellationToken.None) → throw Create(ex, "AddMessage", convId)
+EXCEPTION (other) → ROLLBACK (CancellationToken.None) → throw KejiPersistenceException("Database operation 'AddMessage' failed.")
 ```
 
 ## Exception Handling
 
 ### `SqliteExceptionTranslator`
 
-Static helper class wrapping all `SqliteException` occurrences into safe `KejiPersistenceException`:
+Static helper class for safe SQLite exception translation:
+
+```csharp
+public static KejiPersistenceException Create(SqliteException exception, string operationName, string? safeEntityId = null)
+```
+
+- Returns a new `KejiPersistenceException` using `new KejiPersistenceException(message, exception.SqliteErrorCode)`.
+- `ErrorCode` equals the original `SqliteErrorCode`.
 - Uses `SqliteExtendedErrorCode == 2067` (SQLITE_CONSTRAINT_UNIQUE) to detect `DuplicateUsernameException` for username UNIQUE constraint violations.
 - Does NOT convert primary key ID conflicts into `DuplicateUsernameException`.
-- Constructs `KejiPersistenceException` with safe message including operation name and optional entity ID.
+- `operationName` is a fixed code constant, not user input.
+- `safeEntityId` only accepts safe entity IDs (not message content, setting values, titles, or password hashes).
 - Does NOT retain the raw `SqliteException` as a public `InnerException`.
 - Does NOT leak SQL text, password hashes, setting values, message content, database password, or raw SQLite error description text in `Message` or `ToString()`.
-- Numeric SQLite error code may be preserved via `KejiPersistenceException.ErrorCode`.
+- `ThrowTranslated` convenience method: `throw Create(ex, operationName, safeEntityId)`.
+
+Static helper for safe rollback:
+
+```csharp
+public static async Task SafeRollbackAsync(SqliteTransaction? transaction)
+```
+
+- No-op if `transaction` is null.
+- Uses `CancellationToken.None` — rollback must complete even if the original CancellationToken is cancelled.
+- Silently swallows rollback exceptions to avoid masking the original exception.
 
 ### `DuplicateUsernameException`
 
@@ -248,6 +267,36 @@ Static helper class wrapping all `SqliteException` occurrences into safe `KejiPe
 - Propagated unmodified through all repository methods.
 - NOT converted into `KejiPersistenceException` or any other exception type.
 - Transaction rollback occurs before rethrow when within a transaction scope.
+
+### Exception Handling Rules
+
+All public persistence methods follow these exception rules:
+
+1. **OperationCanceledException** propagates unmodified — not converted to any other type.
+2. **DuplicateUsernameException** propagates unmodified — thrown only for username UNIQUE constraint violations.
+3. **KejiPersistenceException** propagates unmodified — business exceptions like invalid role or conversation not found.
+4. **SqliteException** is translated via `SqliteExceptionTranslator.Create()` into `KejiPersistenceException` with:
+   - `ErrorCode` set to the original `SqliteErrorCode`.
+   - No public `InnerException`.
+   - Safe message without SQL text, sensitive values, or raw SQLite error text.
+5. All translation occurs inside exception boundaries — every public method wraps its SQL execution in try/catch.
+6. `SafeRollbackAsync` uses `CancellationToken.None` to ensure rollback completes even if the original operation was cancelled.
+7. `finally` blocks dispose transactions (SqliteTransaction) and connections (SqliteConnection) to prevent resource leaks.
+
+### Methods with complete exception boundaries:
+
+| Repository | Methods |
+|------------|---------|
+| SqliteUserRepository | CountAsync, GetByUsernameAsync, GetByIdAsync, ListAsync, CreateAsync, UpdateAsync, TouchLoginAsync, DeleteAsync |
+| SqliteConversationRepository | CreateAsync, EnsureOwnedAsync, GetAsync, ListAsync, RenameAsync, DeleteAsync |
+| SqliteMessageRepository | AddAsync, ListByConversationAsync |
+| SqliteSettingsRepository | GetAsync, SetAsync, GetAllAsync |
+| KejiDatabaseInitializer | InitializeAsync |
+| SqliteConnectionFactory | OpenConnectionAsync |
+
+**No public persistence method exposes a raw SqliteException.** All boundaries avoid:
+- Not-found semantics for non-existent records (only the AddMessage UPDATE-rows==0 case returns "not found").
+- Disguising a DB failure as entity-not-found.
 
 ### Exception Message Security
 
@@ -270,7 +319,7 @@ Password hash is stored as an opaque string. It is not hashed, verified, or gene
 | Connection lifecycle | `threading.local` per-thread persistent connection | Per-operation new connection (pooled) |
 | WAL journal mode | Set on each new thread connection | Set on first connection with double-check locking |
 | FK enforcement | ON | ON |
-| Busy timeout | Not set (default 0ms) | 5000ms by default |
+| Busy timeout | No explicit PRAGMA; Python sqlite3.connect() default timeout=5.0s | 5000ms by default (PRAGMA busy_timeout) |
 | Conversation ownership | Missing conv = belongs to caller | Explicit `ConversationOwnershipResult` enum |
 | Concurrent ownership claim | Race condition (read-then-write) | Atomic transaction |
 | User delete | Per-operation delete (no explicit tx) | Transactional (messages + conversations + user) |

@@ -17,14 +17,16 @@ public class KejiDatabaseInitializer : IKejiDatabaseInitializer
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
-        cancellationToken.ThrowIfCancellationRequested();
-
-        using var conn = await _connectionFactory.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
-
-        await using var tx = (Microsoft.Data.Sqlite.SqliteTransaction)await conn.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+        SqliteConnection? conn = null;
+        Microsoft.Data.Sqlite.SqliteTransaction? tx = null;
 
         try
         {
+            cancellationToken.ThrowIfCancellationRequested();
+            conn = await _connectionFactory.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+            tx = (Microsoft.Data.Sqlite.SqliteTransaction)await conn.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+
             await using var cmd = conn.CreateCommand();
             cmd.Transaction = tx;
 
@@ -208,14 +210,29 @@ public class KejiDatabaseInitializer : IKejiDatabaseInitializer
         }
         catch (OperationCanceledException)
         {
-            await tx.RollbackAsync(cancellationToken).ConfigureAwait(false);
+            await SqliteExceptionTranslator.SafeRollbackAsync(tx).ConfigureAwait(false);
+            throw;
+        }
+        catch (KejiPersistenceException)
+        {
+            await SqliteExceptionTranslator.SafeRollbackAsync(tx).ConfigureAwait(false);
             throw;
         }
         catch (SqliteException ex)
         {
-            await tx.RollbackAsync(cancellationToken).ConfigureAwait(false);
-            SqliteExceptionTranslator.ThrowTranslated(ex, "Initialize");
+            await SqliteExceptionTranslator.SafeRollbackAsync(tx).ConfigureAwait(false);
+            throw SqliteExceptionTranslator.Create(ex, "Initialize");
+        }
+        catch
+        {
+            await SqliteExceptionTranslator.SafeRollbackAsync(tx).ConfigureAwait(false);
             throw;
+        }
+        finally
+        {
+            if (tx is not null)
+                await tx.DisposeAsync().ConfigureAwait(false);
+            conn?.Dispose();
         }
     }
 }
