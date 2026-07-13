@@ -1,4 +1,8 @@
 using System.Net;
+using System.Text.Json;
+using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.DependencyInjection;
+using Keji.Security.Authorization;
 
 namespace Keji.Integration.Tests.Authorization;
 
@@ -76,10 +80,20 @@ public sealed class AuthorizationMiddlewareIntegrationTests
             "/api/auth/me", TokenFor(role));
 
         var response = await _fixture.DefaultClient.SendAsync(request);
-        var body = await response.Content.ReadAsStringAsync();
-
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        Assert.Contains($"\"role\":\"{role}\"", body, StringComparison.Ordinal);
+        Assert.Equal("application/json", response.Content.Headers.ContentType?.MediaType);
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStreamAsync());
+        Assert.Equal(new[] { "user" }, document.RootElement.EnumerateObject().Select(p => p.Name));
+        var user = document.RootElement.GetProperty("user");
+        Assert.Equal(new[] { "created_at", "display_name", "id", "is_active", "last_login_at", "role", "username" }, user.EnumerateObject().Select(p => p.Name).OrderBy(x => x));
+        Assert.False(string.IsNullOrEmpty(user.GetProperty("id").GetString()));
+        Assert.Equal(role == "admin" ? "admin" : $"task006-{role}", user.GetProperty("username").GetString());
+        Assert.Equal(role == "admin" ? "TASK-006 Admin" : role == "member" ? "TASK-006 Member" : "TASK-006 Readonly", user.GetProperty("display_name").GetString());
+        Assert.Equal(role, user.GetProperty("role").GetString());
+        Assert.True(user.GetProperty("is_active").GetBoolean());
+        Assert.Equal(JsonValueKind.Number, user.GetProperty("created_at").ValueKind);
+        Assert.True(user.GetProperty("last_login_at").ValueKind is JsonValueKind.Number or JsonValueKind.Null);
+        foreach (var forbidden in new[] { "password", "password_hash", "token", "secret", "api_key" }) Assert.False(user.TryGetProperty(forbidden, out _));
     }
 
     [Theory]
@@ -146,8 +160,7 @@ public sealed class AuthorizationMiddlewareIntegrationTests
 
         var response = await client.SendAsync(request);
 
-        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
-        Assert.DoesNotContain("Localhost", await response.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+        await AssertJsonAsync(response, HttpStatusCode.Unauthorized, "{\"detail\":\"未授权：请登录（/api/auth/login）或使用有效 API Key\"}");
     }
 
     [Theory]
@@ -164,6 +177,26 @@ public sealed class AuthorizationMiddlewareIntegrationTests
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Contains("openapi", body, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task OpenApi_WithoutCredentials_IsUnauthorized()
+    {
+        var response = await _fixture.DefaultClient.GetAsync("/openapi/v1.json");
+        await AssertJsonAsync(response, HttpStatusCode.Unauthorized, "{\"detail\":\"未授权：请登录（/api/auth/login）或使用有效 API Key\"}");
+    }
+
+    [Fact]
+    public void OpenApi_Endpoint_Has_Only_SystemRead_Metadata()
+    {
+        var endpoints = _fixture.DefaultFactory.Services.GetServices<EndpointDataSource>()
+            .SelectMany(source => source.Endpoints).OfType<RouteEndpoint>().ToArray();
+        var endpoint = Assert.Single(endpoints, e => e.Metadata.GetOrderedMetadata<KejiRequirePermissionAttribute>()
+            .Any(a => a.Permission == KejiPermission.SystemRead));
+        var permissions = endpoint.Metadata.GetOrderedMetadata<KejiRequirePermissionAttribute>();
+        Assert.Single(permissions);
+        Assert.Equal(KejiPermission.SystemRead, permissions[0].Permission);
+        Assert.Null(endpoint.Metadata.GetMetadata<Microsoft.AspNetCore.Authorization.IAllowAnonymous>());
     }
 
     [Fact]
@@ -203,11 +236,13 @@ public sealed class AuthorizationMiddlewareIntegrationTests
         await AssertJsonAsync(response, HttpStatusCode.Unauthorized, "{\"detail\":\"未登录，请先登录\"}");
     }
 
-    [Fact]
-    public async Task Multiple_Permissions_Containing_AdminOnly_Allows_Admin()
+    [Theory]
+    [InlineData("admin")]
+    [InlineData("member")]
+    public async Task MultiplePermissions_AdminAndMemberAllowed(string role)
     {
         using var request = AuthorizationIntegrationFixture.BearerRequest(
-            "/probe/multiple-permissions", _fixture.AdminToken);
+            "/probe/multiple-permissions", TokenFor(role));
 
         var response = await _fixture.DefaultClient.SendAsync(request);
 
@@ -223,6 +258,16 @@ public sealed class AuthorizationMiddlewareIntegrationTests
         var response = await _fixture.DefaultClient.SendAsync(request);
 
         await AssertJsonAsync(response, HttpStatusCode.Forbidden, "{\"detail\":\"需要管理员权限\"}");
+    }
+
+    [Theory]
+    [InlineData("admin", HttpStatusCode.OK, "{\"result\":\"multiple-admin-permissions\"}")]
+    [InlineData("member", HttpStatusCode.Forbidden, "{\"detail\":\"需要管理员权限\"}")]
+    [InlineData("readonly", HttpStatusCode.Forbidden, "{\"detail\":\"需要管理员权限\"}")]
+    public async Task MultipleAdminPermissions_AllRoles(string role, HttpStatusCode status, string body)
+    {
+        using var request = AuthorizationIntegrationFixture.BearerRequest("/probe/multiple-admin-permissions", TokenFor(role));
+        await AssertJsonAsync(await _fixture.DefaultClient.SendAsync(request), status, body, requireExactContentType: false);
     }
 
     [Fact]
@@ -289,6 +334,8 @@ public sealed class AuthorizationMiddlewareIntegrationTests
         var body = await response.Content.ReadAsStringAsync();
         Assert.DoesNotContain("conflicting-metadata", body, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("AccountSelfRead", body, StringComparison.OrdinalIgnoreCase);
+        foreach (var secret in new[] { "admin", "member", "readonly", "Authorization", "Bearer", "JWT", "API Key", _fixture.AdminToken, _fixture.MemberToken, _fixture.ReadonlyToken, "should-not-reach" })
+            Assert.DoesNotContain(secret, body, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

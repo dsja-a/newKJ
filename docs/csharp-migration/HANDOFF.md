@@ -31,13 +31,13 @@
 - Clean: success, 0 warnings, 0 errors
 - Restore: success
 - Build: success, 0 warnings, 0 errors
-- `Keji.Security.Tests`: 514/514
+- `Keji.Security.Tests`: 541/541
 - `Keji.Persistence.Tests`: 138/138
-- `Keji.Integration.Tests`: 84/84
+- `Keji.Integration.Tests`: 91/91
 - `Keji.Agent.Tests`: 1/1
 - `Keji.FileSystem.Tests`: 1/1
 - `Keji.Tools.Tests`: 1/1
-- Solution: 739/739, 0 skipped
+- Solution: 773/773, 0 skipped
 - NuGet vulnerabilities: 0 across all 19 projects
 - `git diff --check`: passed with empty stdout and stderr
 - Temporary TASK-006 test directories: none remaining
