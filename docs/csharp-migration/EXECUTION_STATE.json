@@ -67,13 +67,13 @@
     "task005_integration_restored": "48/48",
     "task006_security_added": "252/252",
     "task006_integration_added": "36/36",
-    "Keji.Security.Tests": "514/514",
+    "Keji.Security.Tests": "542/542",
     "Keji.Persistence.Tests": "138/138",
     "Keji.Integration.Tests": "84/84",
     "Keji.Agent.Tests": "1/1",
     "Keji.FileSystem.Tests": "1/1",
     "Keji.Tools.Tests": "1/1",
-    "solution_total": "739/739",
+    "solution_total": "767/767",
     "skipped": 0,
     "build_warnings": 0,
     "build_errors": 0,
@@ -85,5 +85,5 @@
     "TASK-010冻结ToolRegistry完成前不得执行未注册工具。"
   ],
   "forbidden_changes_confirmed": true,
-  "updated_at_utc": "2026-07-13T05:55:12.3364728Z"
+  "updated_at_utc": "2026-07-13T07:30:00Z"
 }
