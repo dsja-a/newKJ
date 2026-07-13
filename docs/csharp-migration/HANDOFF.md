@@ -7,7 +7,11 @@
 - Last accepted commit: `fix: close jwt lifetime and auth contract test gaps`
 - Current task: TASK-006 authorization edge-case closure
 - Current C# completion: 24%; the edge-case repair is implemented and verified
-- Commit/push authorization: granted for the fix commit
+- TASK-006主提交：
+  2bbdce42494d1e0a7eaaa8bd2905785bc4b6941f
+- TASK-006边界修复提交：
+  f6a2dc201d5fb4dafdf04988375751b051743f46
+- 当前状态：`ready_for_final_review`
 
 ## Completed in the TASK-006 repair set
 
@@ -42,7 +46,7 @@
 
 - Core permissions and attributes are enum-only; no string permission path exists.
 - Invalid roles, missing metadata, unknown ordinary tools, and missing descriptors fail closed.
-- Readonly Write denial takes priority over AdminOnly denial; non-write AdminOnly operations still return AdminRequired.
+- AdminOnly拒绝优先于readonly-write拒绝。
 - Both custom and standard `IAllowAnonymous` metadata are honored.
 - Legacy classification does not establish registration or executability; TASK-010 owns the authoritative frozen Registry.
 
@@ -57,4 +61,4 @@
 
 ## Next action
 
-Create and verify the ordinary authorization edge-case fix commit, push it normally, and keep TASK-007 blocked until remote acceptance.
+等待队长最终远程验收；通过后才允许进入TASK-007。

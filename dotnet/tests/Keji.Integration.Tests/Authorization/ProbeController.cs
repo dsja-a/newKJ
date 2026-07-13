@@ -42,8 +42,12 @@ public sealed class ProbeController : ControllerBase
     [HttpGet("multiple-permissions")]
     [KejiRequirePermission(KejiPermission.FileRead)]
     [KejiRequirePermission(KejiPermission.FileWrite)]
-    [KejiRequirePermission(KejiPermission.AdminUsers)]
     public IActionResult MultiplePermissions() => Ok(new { result = "multiple-permissions" });
+
+    [HttpGet("multiple-admin-permissions")]
+    [KejiRequirePermission(KejiPermission.FileRead)]
+    [KejiRequirePermission(KejiPermission.AdminUsers)]
+    public IActionResult MultipleAdminPermissions() => Ok(new { result = "multiple-admin-permissions" });
 
     [HttpGet("conflicting-metadata")]
     [KejiAllowAnonymous]

@@ -3,9 +3,10 @@
   "branch": "rewrite/csharp-core",
   "python_baseline": "aad0afab7181e529a53691a4f2801f295025a2c7",
   "last_accepted_sha": "cdd7a5422e074eeac613638695d6b22e5528938b",
-  "current_head_sha": "see git HEAD after authorization edge-case fix commit",
+  "task006_main_commit_sha": "2bbdce42494d1e0a7eaaa8bd2905785bc4b6941f",
+  "task006_edge_fix_commit_sha": "f6a2dc201d5fb4dafdf04988375751b051743f46",
   "current_task": "TASK-006",
-  "status": "done",
+  "status": "ready_for_final_review",
   "csharp_completion_percent": 24,
   "completed_tasks": [
     "TASK-000",
@@ -80,8 +81,8 @@
     "git_diff_check": "passed with empty stdout and stderr"
   },
   "known_risks": [
-    "Authorization edge-case closure is complete; the fix commit and remote verification are the current handoff gate",
-    "Legacy tool classification is not proof of registration; TASK-010 must enforce the frozen registry before execution"
+    "Legacy工具分类不代表工具已经注册。",
+    "TASK-010冻结ToolRegistry完成前不得执行未注册工具。"
   ],
   "forbidden_changes_confirmed": true,
   "updated_at_utc": "2026-07-13T05:55:12.3364728Z"

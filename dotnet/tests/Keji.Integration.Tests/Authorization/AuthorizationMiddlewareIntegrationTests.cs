@@ -218,11 +218,20 @@ public sealed class AuthorizationMiddlewareIntegrationTests
     public async Task Multiple_Permissions_Containing_AdminOnly_Denies_ReadonlyAsAdminRequired()
     {
         using var request = AuthorizationIntegrationFixture.BearerRequest(
-            "/probe/multiple-permissions", _fixture.ReadonlyToken);
+            "/probe/multiple-admin-permissions", _fixture.ReadonlyToken);
 
         var response = await _fixture.DefaultClient.SendAsync(request);
 
         await AssertJsonAsync(response, HttpStatusCode.Forbidden, "{\"detail\":\"需要管理员权限\"}");
+    }
+
+    [Fact]
+    public async Task Multiple_Permissions_Readonly_IsWriteDenied()
+    {
+        using var request = AuthorizationIntegrationFixture.BearerRequest(
+            "/probe/multiple-permissions", _fixture.ReadonlyToken);
+        var response = await _fixture.DefaultClient.SendAsync(request);
+        await AssertJsonAsync(response, HttpStatusCode.Forbidden, "{\"detail\":\"当前账号无写入权限\"}");
     }
 
     [Fact]
