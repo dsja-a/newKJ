@@ -6,7 +6,14 @@
 - Fix parent: `2bbdce42494d1e0a7eaaa8bd2905785bc4b6941f`
 - Last accepted commit: `fix: close jwt lifetime and auth contract test gaps`
 - Current task: TASK-006 authorization edge-case closure
-- Current C# completion: 24%; the edge-case repair is implemented and verified
+- Current C# completion: 24%; TASK-006 accepted
+- 当前任务：TASK-006
+- 当前状态：accepted
+- 正式完成度：24%
+- TASK-006最终验收基线：
+  96eed064ef2bbee3f0b04e6727b0b49dbfdd4144
+- 下一任务：TASK-007
+- TASK-007状态：未开始
 - TASK-006主提交：
   2bbdce42494d1e0a7eaaa8bd2905785bc4b6941f
 - TASK-006边界修复提交：
