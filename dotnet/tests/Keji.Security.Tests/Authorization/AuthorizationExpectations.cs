@@ -84,6 +84,13 @@ internal static class AuthorizationExpectations
         KejiPermission.AdminUsers,
     ];
 
+    internal static readonly KejiPermission[] ReadonlyWritePermissions =
+    [
+        KejiPermission.FileWrite,
+        KejiPermission.KnowledgeWrite,
+        KejiPermission.ToolExecuteWrite,
+    ];
+
     internal static readonly KejiPermission[] AdminOnlyPermissions =
     [
         KejiPermission.SettingsWrite,

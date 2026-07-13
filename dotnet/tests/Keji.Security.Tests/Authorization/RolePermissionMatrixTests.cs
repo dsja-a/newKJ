@@ -50,6 +50,33 @@ public sealed class RolePermissionMatrixTests
         Assert.False(KejiRoles.IsValid(role!));
     }
 
+    [Theory]
+    [InlineData("admin", true, false, false)]
+    [InlineData("member", false, true, false)]
+    [InlineData("readonly", false, false, true)]
+    [InlineData("Admin", false, false, false)]
+    [InlineData("unknown", false, false, false)]
+    public void RoleHelpers_UseStrictCanonicalRoleMatching(
+        string role,
+        bool isAdmin,
+        bool isMember,
+        bool isReadonly)
+    {
+        Assert.Equal(isAdmin, KejiRoles.IsAdmin(role));
+        Assert.Equal(isMember, KejiRoles.IsMember(role));
+        Assert.Equal(isReadonly, KejiRoles.IsReadonly(role));
+        Assert.Equal(isAdmin || isMember || isReadonly, KejiRoles.IsKnown(role));
+    }
+
+    [Fact]
+    public void CurrentUser_IsAdmin_UsesCentralRoleHelper()
+    {
+        var user = new Keji.Security.Auth.CurrentUser(
+            "id", "name", KejiRoles.Admin, "Name", Keji.Security.Auth.KejiAuthenticationKind.Jwt);
+
+        Assert.True(user.IsAdmin);
+    }
+
     [Fact]
     public void PublishedRolePermissionSet_CannotMutateGlobalMatrix()
     {

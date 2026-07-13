@@ -55,6 +55,59 @@ public sealed class AuthorizationMiddlewareIntegrationTests
     }
 
     [Fact]
+    public async Task Api_Key_AuthMe_Uses_Admin_Authorization()
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, "/api/auth/me");
+        request.Headers.Add("X-API-Key", AuthorizationIntegrationFixture.ApiKey);
+
+        var response = await _fixture.DefaultClient.SendAsync(request);
+        var body = await response.Content.ReadAsStringAsync();
+
+        await AssertJsonAsync(response, HttpStatusCode.Unauthorized, "{\"detail\":\"账号已禁用或不存在\"}", requireExactContentType: false);
+    }
+
+    [Theory]
+    [InlineData("admin")]
+    [InlineData("member")]
+    [InlineData("readonly")]
+    public async Task AuthMe_Is_Authorized_For_Every_Role(string role)
+    {
+        using var request = AuthorizationIntegrationFixture.BearerRequest(
+            "/api/auth/me", TokenFor(role));
+
+        var response = await _fixture.DefaultClient.SendAsync(request);
+        var body = await response.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Contains($"\"role\":\"{role}\"", body, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("admin")]
+    [InlineData("member")]
+    [InlineData("readonly")]
+    public async Task FileRead_Is_Authorized_For_Every_Role(string role)
+    {
+        using var request = AuthorizationIntegrationFixture.BearerRequest(
+            "/probe/file-read", TokenFor(role));
+
+        var response = await _fixture.DefaultClient.SendAsync(request);
+
+        await AssertJsonAsync(response, HttpStatusCode.OK, "{\"result\":\"file-read\"}", requireExactContentType: false);
+    }
+
+    [Fact]
+    public async Task AdminUsers_Is_Authorized_For_Admin()
+    {
+        using var request = AuthorizationIntegrationFixture.BearerRequest(
+            "/probe/admin-users", _fixture.AdminToken);
+
+        var response = await _fixture.DefaultClient.SendAsync(request);
+
+        await AssertJsonAsync(response, HttpStatusCode.OK, "{\"result\":\"admin-users\"}", requireExactContentType: false);
+    }
+
+    [Fact]
     public async Task Localhost_Bypass_Uses_Admin_Authorization()
     {
         var (_, client) = _fixture.CreateLocalhostHost();
@@ -72,6 +125,45 @@ public sealed class AuthorizationMiddlewareIntegrationTests
         var response = await client.GetAsync("/probe/no-metadata");
 
         await AssertJsonAsync(response, HttpStatusCode.OK, "{\"result\":\"no-metadata\"}", requireExactContentType: false);
+    }
+
+    [Fact]
+    public async Task Disabled_Security_AuthMe_Returns_Controller_401()
+    {
+        var (_, client) = _fixture.CreateEnabledFalseHost();
+
+        var response = await client.GetAsync("/api/auth/me");
+
+        await AssertJsonAsync(response, HttpStatusCode.Unauthorized, "{\"detail\":\"未登录，请先登录\"}", requireExactContentType: false);
+    }
+
+    [Fact]
+    public async Task XForwardedFor_Cannot_Forge_Localhost_Bypass()
+    {
+        var (_, client) = _fixture.CreateForwardedForHost();
+        using var request = new HttpRequestMessage(HttpMethod.Get, "/api/auth/me");
+        request.Headers.TryAddWithoutValidation("X-Forwarded-For", "127.0.0.1");
+
+        var response = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.DoesNotContain("Localhost", await response.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("admin")]
+    [InlineData("member")]
+    [InlineData("readonly")]
+    public async Task OpenApi_Requires_SystemRead_And_All_Roles_Have_It(string role)
+    {
+        using var request = AuthorizationIntegrationFixture.BearerRequest(
+            "/openapi/v1.json", TokenFor(role));
+
+        var response = await _fixture.DefaultClient.SendAsync(request);
+        var body = await response.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Contains("openapi", body, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -112,10 +204,10 @@ public sealed class AuthorizationMiddlewareIntegrationTests
     }
 
     [Fact]
-    public async Task Multiple_Permissions_Use_And_Semantics_When_All_Are_Granted()
+    public async Task Multiple_Permissions_Containing_AdminOnly_Allows_Admin()
     {
         using var request = AuthorizationIntegrationFixture.BearerRequest(
-            "/probe/multiple-permissions", _fixture.MemberToken);
+            "/probe/multiple-permissions", _fixture.AdminToken);
 
         var response = await _fixture.DefaultClient.SendAsync(request);
 
@@ -123,14 +215,14 @@ public sealed class AuthorizationMiddlewareIntegrationTests
     }
 
     [Fact]
-    public async Task Multiple_Permissions_Use_And_Semantics_When_One_Is_Denied()
+    public async Task Multiple_Permissions_Containing_AdminOnly_Denies_ReadonlyAsAdminRequired()
     {
         using var request = AuthorizationIntegrationFixture.BearerRequest(
             "/probe/multiple-permissions", _fixture.ReadonlyToken);
 
         var response = await _fixture.DefaultClient.SendAsync(request);
 
-        await AssertJsonAsync(response, HttpStatusCode.Forbidden, "{\"detail\":\"当前账号无写入权限\"}");
+        await AssertJsonAsync(response, HttpStatusCode.Forbidden, "{\"detail\":\"需要管理员权限\"}");
     }
 
     [Fact]
@@ -156,14 +248,14 @@ public sealed class AuthorizationMiddlewareIntegrationTests
     }
 
     [Fact]
-    public async Task AdminUsers_WritePermission_ReadonlyUsesWriteDenialPriority()
+    public async Task AdminUsers_WritePermission_ReadonlyUsesAdminPriority()
     {
         using var request = AuthorizationIntegrationFixture.BearerRequest(
             "/probe/admin-users", _fixture.ReadonlyToken);
 
         var response = await _fixture.DefaultClient.SendAsync(request);
 
-        await AssertJsonAsync(response, HttpStatusCode.Forbidden, "{\"detail\":\"当前账号无写入权限\"}");
+        await AssertJsonAsync(response, HttpStatusCode.Forbidden, "{\"detail\":\"需要管理员权限\"}");
     }
 
     [Theory]
@@ -185,6 +277,9 @@ public sealed class AuthorizationMiddlewareIntegrationTests
         var response = await _fixture.DefaultClient.GetAsync("/probe/conflicting-metadata");
 
         await AssertJsonAsync(response, HttpStatusCode.InternalServerError, "{\"detail\":\"服务器内部错误\"}");
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.DoesNotContain("conflicting-metadata", body, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("AccountSelfRead", body, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

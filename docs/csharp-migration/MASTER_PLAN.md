@@ -33,4 +33,4 @@ Python and the web frontend remain unchanged until their explicitly assigned tas
 
 ## Current gate
 
-TASK-006 implementation and verification are complete in the working tree. The accepted TASK-005 test files are unchanged from the accepted C# baseline; the full gate passes 715 tests with zero build warnings, errors, skipped tests, or known NuGet vulnerabilities. All TASK-006 changes remain uncommitted pending captain approval.
+TASK-006 implementation and authorization edge-case closure are complete. The accepted TASK-005 test files are unchanged from the accepted C# baseline; the full gate passes 739 tests with zero build warnings, errors, skipped tests, or known NuGet vulnerabilities. The next task remains TASK-007, blocked until remote acceptance of the TASK-006 fix commit.

@@ -22,12 +22,11 @@ public sealed class KejiAuthorizationService : IKejiAuthorizationService
         if (!KejiPermissionCatalog.IsDefined(permission))
             return KejiAuthorizationDecision.Deny(KejiAuthorizationFailureReason.InvalidPermissionMetadata);
 
-        if (KejiPermissionCatalog.IsWritePermission(permission) &&
-            string.Equals(user.Role, KejiRoles.Readonly, StringComparison.Ordinal))
-            return KejiAuthorizationDecision.Deny(KejiAuthorizationFailureReason.ReadonlyWriteDenied);
-
         if (KejiPermissionCatalog.IsAdminOnlyPermission(permission) && !user.IsAdmin)
             return KejiAuthorizationDecision.Deny(KejiAuthorizationFailureReason.AdminRequired);
+
+        if (KejiPermissionCatalog.IsWritePermission(permission) && KejiRoles.IsReadonly(user.Role))
+            return KejiAuthorizationDecision.Deny(KejiAuthorizationFailureReason.ReadonlyWriteDenied);
 
         var hasPermission = _matrix.HasPermission(user.Role, permission);
         if (!hasPermission)
@@ -55,15 +54,14 @@ public sealed class KejiAuthorizationService : IKejiAuthorizationService
                 return KejiAuthorizationDecision.Deny(KejiAuthorizationFailureReason.InvalidPermissionMetadata);
         }
 
-        if (string.Equals(user.Role, KejiRoles.Readonly, StringComparison.Ordinal) &&
-            permissions.Any(KejiPermissionCatalog.IsWritePermission))
+        if (!user.IsAdmin && permissions.Any(KejiPermissionCatalog.IsAdminOnlyPermission))
+            return KejiAuthorizationDecision.Deny(KejiAuthorizationFailureReason.AdminRequired);
+
+        if (KejiRoles.IsReadonly(user.Role) && permissions.Any(KejiPermissionCatalog.IsWritePermission))
         {
             return KejiAuthorizationDecision.Deny(
                 KejiAuthorizationFailureReason.ReadonlyWriteDenied);
         }
-
-        if (!user.IsAdmin && permissions.Any(KejiPermissionCatalog.IsAdminOnlyPermission))
-            return KejiAuthorizationDecision.Deny(KejiAuthorizationFailureReason.AdminRequired);
 
         foreach (var permission in permissions)
         {

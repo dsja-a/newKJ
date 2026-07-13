@@ -1,3 +1,5 @@
+using Keji.Security.Authorization;
+
 namespace Keji.Security.Auth;
 
 public class CurrentUser
@@ -8,7 +10,7 @@ public class CurrentUser
     public string DisplayName { get; }
     public KejiAuthenticationKind AuthenticationKind { get; }
 
-    public bool IsAdmin => Role == "admin";
+    public bool IsAdmin => KejiRoles.IsAdmin(Role);
 
     public CurrentUser(string id, string username, string role, string displayName, KejiAuthenticationKind authenticationKind)
     {

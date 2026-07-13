@@ -90,6 +90,9 @@ public sealed class AuthorizationIntegrationFixture : IAsyncLifetime
     public (WebApplicationFactory<Program> Factory, HttpClient Client) CreateLocalhostHost()
         => CreateHost("localhost", LocalhostConfig(), forceLoopbackRemoteIp: true);
 
+    public (WebApplicationFactory<Program> Factory, HttpClient Client) CreateForwardedForHost()
+        => CreateHost("forwarded-for", LocalhostConfig(), forceNonLoopbackRemoteIp: true);
+
     public static HttpRequestMessage BearerRequest(string path, string token)
     {
         var request = new HttpRequestMessage(HttpMethod.Get, path);
@@ -101,7 +104,8 @@ public sealed class AuthorizationIntegrationFixture : IAsyncLifetime
         string name,
         string config,
         bool replaceCurrentUserWithNull = false,
-        bool forceLoopbackRemoteIp = false)
+        bool forceLoopbackRemoteIp = false,
+        bool forceNonLoopbackRemoteIp = false)
     {
         var projectRoot = Path.Combine(_tempRoot, $"{name}-{Guid.NewGuid():N}");
         Directory.CreateDirectory(projectRoot);
@@ -143,6 +147,20 @@ public sealed class AuthorizationIntegrationFixture : IAsyncLifetime
                                 provider.GetRequiredService<IUserRepository>(),
                                 provider.GetRequiredService<TimeProvider>());
                             return new LoopbackRequestAuthenticator(inner);
+                        });
+                    }
+
+                    if (forceNonLoopbackRemoteIp)
+                    {
+                        services.RemoveAll<IRequestAuthenticator>();
+                        services.AddSingleton<IRequestAuthenticator>(provider =>
+                        {
+                            var inner = new KejiRequestAuthenticator(
+                                provider.GetRequiredService<KejiSecurityOptions>(),
+                                provider.GetRequiredService<IAccessTokenService>(),
+                                provider.GetRequiredService<IUserRepository>(),
+                                provider.GetRequiredService<TimeProvider>());
+                            return new FixedRemoteIpRequestAuthenticator(inner, "203.0.113.10");
                         });
                     }
                 });
@@ -223,6 +241,33 @@ public sealed class AuthorizationIntegrationFixture : IAsyncLifetime
                 xApiKeyHeader,
                 queryApiKey,
                 "127.0.0.1",
+                cancellationToken);
+        }
+    }
+
+    private sealed class FixedRemoteIpRequestAuthenticator : IRequestAuthenticator
+    {
+        private readonly IRequestAuthenticator _inner;
+        private readonly string _remoteIp;
+
+        public FixedRemoteIpRequestAuthenticator(IRequestAuthenticator inner, string remoteIp)
+        {
+            _inner = inner;
+            _remoteIp = remoteIp;
+        }
+
+        public Task<RequestAuthenticationResult> AuthenticateAsync(
+            string? authorizationHeader,
+            string? xApiKeyHeader,
+            string? queryApiKey,
+            string? remoteIp,
+            CancellationToken cancellationToken = default)
+        {
+            return _inner.AuthenticateAsync(
+                authorizationHeader,
+                xApiKeyHeader,
+                queryApiKey,
+                _remoteIp,
                 cancellationToken);
         }
     }

@@ -98,6 +98,9 @@ public sealed class KejiAuthorizationMiddleware
 
     private static async Task WriteErrorAsync(HttpContext context, int statusCode, string detail)
     {
+        if (context.Response.HasStarted)
+            return;
+
         context.Response.StatusCode = statusCode;
         context.Response.ContentType = "application/json";
         var responseBody = JsonSerializer.Serialize(new { detail }, JsonOptions);

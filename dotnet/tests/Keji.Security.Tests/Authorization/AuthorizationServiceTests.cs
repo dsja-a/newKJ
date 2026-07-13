@@ -50,7 +50,9 @@ public sealed class AuthorizationServiceTests
     {
         AssertDenied(
             _service.Authorize(User(KejiRoles.Readonly), permission),
-            KejiAuthorizationFailureReason.ReadonlyWriteDenied);
+            KejiPermissionCatalog.IsAdminOnlyPermission(permission)
+                ? KejiAuthorizationFailureReason.AdminRequired
+                : KejiAuthorizationFailureReason.ReadonlyWriteDenied);
     }
 
     [Theory]
@@ -62,7 +64,9 @@ public sealed class AuthorizationServiceTests
             _service.AuthorizeAll(
                 User(KejiRoles.Readonly),
                 [KejiPermission.AccountSelfRead, permission]),
-            KejiAuthorizationFailureReason.ReadonlyWriteDenied);
+            KejiPermissionCatalog.IsAdminOnlyPermission(permission)
+                ? KejiAuthorizationFailureReason.AdminRequired
+                : KejiAuthorizationFailureReason.ReadonlyWriteDenied);
     }
 
     [Theory]
@@ -161,13 +165,42 @@ public sealed class AuthorizationServiceTests
     }
 
     [Fact]
-    public void MultiplePermissions_ReadonlyWriteDenialHasGlobalPriorityOverEarlierAdminOnlyRequirement()
+    public void MultiplePermissions_AdminOnlyDenialHasPriorityOverReadonlyWrite()
     {
         AssertDenied(
             _service.AuthorizeAll(
                 User(KejiRoles.Readonly),
                 [KejiPermission.AdminConversations, KejiPermission.FileWrite]),
+            KejiAuthorizationFailureReason.AdminRequired);
+    }
+
+    [Theory]
+    [InlineData(KejiPermission.AdminUsers)]
+    [InlineData(KejiPermission.AdminConversations)]
+    public void Readonly_AdminOnlyPermission_IsDeniedAsAdminRequired(
+        KejiPermission permission)
+    {
+        AssertDenied(
+            _service.Authorize(User(KejiRoles.Readonly), permission),
+            KejiAuthorizationFailureReason.AdminRequired);
+    }
+
+    [Fact]
+    public void Readonly_FileWritePermission_IsDeniedAsReadonlyWrite()
+    {
+        AssertDenied(
+            _service.Authorize(User(KejiRoles.Readonly), KejiPermission.FileWrite),
             KejiAuthorizationFailureReason.ReadonlyWriteDenied);
+    }
+
+    [Fact]
+    public void Readonly_FileWriteAndAdminOnlyPermissions_AreDeniedAsAdminRequired()
+    {
+        AssertDenied(
+            _service.AuthorizeAll(
+                User(KejiRoles.Readonly),
+                [KejiPermission.FileWrite, KejiPermission.AdminUsers]),
+            KejiAuthorizationFailureReason.AdminRequired);
     }
 
     [Fact]

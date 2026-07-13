@@ -52,7 +52,8 @@ var app = builder.Build();
 
 if (app.Environment.IsDevelopment())
 {
-    app.MapOpenApi();
+    app.MapOpenApi()
+        .WithMetadata(new KejiRequirePermissionAttribute(KejiPermission.SystemRead));
 }
 
 app.UseMiddleware<KejiApiExceptionMiddleware>();

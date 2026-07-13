@@ -38,6 +38,8 @@
 
 完整集合大小为 admin 25、member 16、readonly 13。角色只接受 Ordinal 严格匹配的小写 `admin`、`member`、`readonly`；null、空、空白、大小写变体和其他角色均无权限。对外暴露的角色和权限集合不可修改。
 
+`KejiRoles.IsKnown`、`IsAdmin`、`IsMember`、`IsReadonly` 是角色判断的唯一集中入口；`CurrentUser.IsAdmin` 委托给 `KejiRoles.IsAdmin`。
+
 权限声明只能使用强类型构造函数：
 
 ```csharp
@@ -73,6 +75,10 @@ app.MapControllers();
 | 其他拒绝 | 403 `{"detail":"权限不足"}` |
 
 `AuthController.Login` 使用 `[KejiAllowAnonymous]`，`AuthController.Me` 使用 `[KejiRequirePermission(KejiPermission.AccountSelfRead)]`。登录与 Me 的 TASK-005 请求响应契约不变。
+
+当一个请求同时包含 AdminOnly 与 Write 权限时，AdminOnly 拒绝优先：readonly + `AdminUsers` 或 `AdminConversations` 返回 `AdminRequired`；readonly + `FileWrite` 返回 `ReadonlyWriteDenied`；readonly + `FileWrite` + `AdminUsers` 返回 `AdminRequired`。授权中间件在 `Response.HasStarted` 后不改写响应，也不继续执行受保护 Endpoint。
+
+Development OpenAPI Endpoint 显式声明 `KejiPermission.SystemRead`，不会成为无元数据的默认拒绝 Endpoint。
 
 ## 授权决策
 
@@ -116,7 +122,7 @@ null 用户、未知角色、无权限、非法 enum 和缺失元数据均返回
 
 ## 测试边界
 
-TASK-005 的 Security 262 项和 Integration 48 项测试原样保留。TASK-006 测试位于独立 `Authorization/` 目录，新增 Security 241 项和 Integration 23 项，覆盖完整集合、失败原因、工具分类、HTTP 精确响应、API Key、Localhost、Enabled=false、未知路由、冲突元数据和生产 Controller 元数据扫描。
+TASK-005 的 Security 262 项和 Integration 48 项测试原样保留。TASK-006 及边界修复测试位于独立 `Authorization/` 目录，当前新增 Security 252 项和 Integration 36 项，覆盖完整集合、失败原因、AdminOnly 优先级、角色助手、已开始响应边界、工具分类、HTTP 精确响应、API Key、Localhost、Enabled=false、X-Forwarded-For、OpenAPI、未知路由、冲突元数据和生产 Controller 元数据扫描。
 
 测试专用 Probe Controller 只存在于 Integration 测试程序集，精确包含以下 Action：
 
@@ -136,4 +142,4 @@ TASK-005 的 Security 262 项和 Integration 48 项测试原样保留。TASK-006
 
 Integration 授权测试使用独立临时配置和 SQLite 数据库，保存并恢复测试环境变量，并在清理前调用 `SqliteConnection.ClearAllPools()`；不会读取或写入真实 `.env`、`config.yaml` 或 `data/keji.db`。
 
-全解决方案验证结果为 715/715，0 skipped；构建 0 warning / 0 error；NuGet 已知漏洞 0。
+全解决方案验证结果为 739/739，0 skipped；构建 0 warning / 0 error；NuGet 已知漏洞 0。

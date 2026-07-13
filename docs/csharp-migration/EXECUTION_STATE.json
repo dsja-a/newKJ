@@ -3,7 +3,7 @@
   "branch": "rewrite/csharp-core",
   "python_baseline": "aad0afab7181e529a53691a4f2801f295025a2c7",
   "last_accepted_sha": "cdd7a5422e074eeac613638695d6b22e5528938b",
-  "current_head_sha": "cdd7a5422e074eeac613638695d6b22e5528938b",
+  "current_head_sha": "see git HEAD after authorization edge-case fix commit",
   "current_task": "TASK-006",
   "status": "done",
   "csharp_completion_percent": 24,
@@ -52,6 +52,7 @@
     "dotnet/tests/Keji.Integration.Tests/Authorization/ProbeController.cs",
     "dotnet/tests/Keji.Integration.Tests/Authorization/ProductionControllerMetadataTests.cs",
     "dotnet/tests/Keji.Security.Tests/Authorization/AuthorizationExpectations.cs",
+    "dotnet/tests/Keji.Security.Tests/Authorization/KejiAuthorizationMiddlewareTests.cs",
     "dotnet/tests/Keji.Security.Tests/Authorization/AuthorizationRegistrationAndHintTests.cs",
     "dotnet/tests/Keji.Security.Tests/Authorization/AuthorizationServiceTests.cs",
     "dotnet/tests/Keji.Security.Tests/Authorization/LegacyToolPermissionCatalogTests.cs",
@@ -63,15 +64,15 @@
   "test_results": {
     "task005_security_restored": "262/262",
     "task005_integration_restored": "48/48",
-    "task006_security_added": "241/241",
-    "task006_integration_added": "23/23",
-    "Keji.Security.Tests": "503/503",
+    "task006_security_added": "252/252",
+    "task006_integration_added": "36/36",
+    "Keji.Security.Tests": "514/514",
     "Keji.Persistence.Tests": "138/138",
-    "Keji.Integration.Tests": "71/71",
+    "Keji.Integration.Tests": "84/84",
     "Keji.Agent.Tests": "1/1",
     "Keji.FileSystem.Tests": "1/1",
     "Keji.Tools.Tests": "1/1",
-    "solution_total": "715/715",
+    "solution_total": "739/739",
     "skipped": 0,
     "build_warnings": 0,
     "build_errors": 0,
@@ -79,9 +80,9 @@
     "git_diff_check": "passed with empty stdout and stderr"
   },
   "known_risks": [
-    "TASK-006 is done and verified but remains uncommitted until the captain authorizes commit",
+    "Authorization edge-case closure is complete; the fix commit and remote verification are the current handoff gate",
     "Legacy tool classification is not proof of registration; TASK-010 must enforce the frozen registry before execution"
   ],
   "forbidden_changes_confirmed": true,
-  "updated_at_utc": "2026-07-13T04:42:22.5076921Z"
+  "updated_at_utc": "2026-07-13T05:55:12.3364728Z"
 }
