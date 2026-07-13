@@ -1,11 +1,13 @@
 using Keji.Api.HostedServices;
 using Keji.Api.Middleware;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.AspNetCore.Routing;
 using Keji.Configuration.Loading;
 using Keji.Configuration.Models;
 using Keji.Configuration.Secrets;
 using Keji.Persistence;
 using Keji.Security.Middleware;
+using Keji.Security.Authorization;
 using Keji.Security.Options;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -54,7 +56,9 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseMiddleware<KejiApiExceptionMiddleware>();
+app.UseRouting();
 app.UseMiddleware<KejiAuthenticationMiddleware>();
+app.UseMiddleware<KejiAuthorizationMiddleware>();
 app.MapControllers();
 
 app.Run();

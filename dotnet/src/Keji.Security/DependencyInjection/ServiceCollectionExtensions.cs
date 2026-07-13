@@ -1,5 +1,6 @@
 using Keji.Security.Authentication;
 using Keji.Security.Auth;
+using Keji.Security.Authorization;
 using Keji.Security.Middleware;
 using Keji.Security.Options;
 using Keji.Security.Services;
@@ -34,6 +35,11 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IKejiLoginService, KejiLoginService>();
 
         services.AddSingleton<IBootstrapAdminService, BootstrapAdminService>();
+
+        services.AddSingleton<IKejiRolePermissionMatrix, KejiRolePermissionMatrix>();
+        services.AddSingleton<IKejiAuthorizationService, KejiAuthorizationService>();
+        services.AddSingleton<IKejiToolAuthorizationService, KejiToolAuthorizationService>();
+        services.AddSingleton<IKejiRolePermissionHintProvider, KejiRolePermissionHintProvider>();
 
         services.AddHttpContextAccessor();
         services.TryAddSingleton(TimeProvider.System);

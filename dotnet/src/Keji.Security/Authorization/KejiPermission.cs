@@ -1,0 +1,30 @@
+namespace Keji.Security.Authorization;
+
+public enum KejiPermission
+{
+    AccountSelfRead,
+    ChatUse,
+    ConversationRead,
+    ConversationWrite,
+    FileRead,
+    FileWrite,
+    KnowledgeRead,
+    KnowledgeWrite,
+    ToolCatalogRead,
+    ToolExecuteRead,
+    ToolExecuteWrite,
+    SmartQueryExecute,
+    SettingsRead,
+    SettingsWrite,
+    ModelManage,
+    McpManage,
+    DatabaseRead,
+    DatabaseManage,
+    SkillsRead,
+    SkillsManage,
+    SystemRead,
+    SystemManage,
+    AdminUsers,
+    AdminConversations,
+    AuditRead,
+}

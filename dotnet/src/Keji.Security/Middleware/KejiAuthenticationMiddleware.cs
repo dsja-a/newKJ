@@ -6,6 +6,7 @@ using Keji.Security.Auth;
 using Keji.Security.Authentication;
 using Keji.Security.Options;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Authorization;
 
 namespace Keji.Security.Middleware;
 
@@ -30,6 +31,15 @@ public class KejiAuthenticationMiddleware
     public async Task InvokeAsync(HttpContext context, KejiSecurityOptions options, IRequestAuthenticator authenticator)
     {
         if (!options.Enabled)
+        {
+            await _next(context);
+            return;
+        }
+
+        var endpoint = context.GetEndpoint();
+        var hasAllowAnonymous = endpoint?.Metadata.GetMetadata<IAllowAnonymous>() != null;
+
+        if (hasAllowAnonymous)
         {
             await _next(context);
             return;

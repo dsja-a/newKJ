@@ -3,6 +3,7 @@ using System.Text.Json;
 using Keji.Contracts.DTOs;
 using Keji.Persistence.Repositories;
 using Keji.Security.Auth;
+using Keji.Security.Authorization;
 using Keji.Security.Models;
 using Keji.Security.Options;
 using Keji.Security.Services;
@@ -36,6 +37,7 @@ public class AuthController : ControllerBase
     }
 
     [HttpPost("login")]
+    [KejiAllowAnonymous]
     public async Task<IActionResult> Login([FromBody] LoginRequest request, CancellationToken cancellationToken)
     {
         if (_securityOptions.AuthMode == KejiAuthMode.ApiKeyOnly)
@@ -63,6 +65,7 @@ public class AuthController : ControllerBase
     }
 
     [HttpGet("me")]
+    [KejiRequirePermission(KejiPermission.AccountSelfRead)]
     public async Task<IActionResult> Me(CancellationToken cancellationToken)
     {
         var currentUser = _currentUserAccessor.CurrentUser;

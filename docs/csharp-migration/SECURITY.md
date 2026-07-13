@@ -131,7 +131,9 @@ If a database error (`KejiPersistenceException`) occurs during authentication, t
 
 ```
 app.UseMiddleware<KejiApiExceptionMiddleware>();
+app.UseRouting();
 app.UseMiddleware<KejiAuthenticationMiddleware>();
+app.UseMiddleware<KejiAuthorizationMiddleware>();
 app.MapControllers();
 ```
 
@@ -200,11 +202,10 @@ Server-side logout is not implemented. Token revocation is not supported.
 
 All `/api/admin/*` endpoints remain unimplemented.
 
-## TASK-006 scope
+## Authorization (TASK-006)
 
-TASK-006 will implement:
-- Role permission matrix
-- Default deny authorization
-- Permission checking infrastructure
-- Readonly user write restriction enforcement
-- Middleware-level permission checks
+Authorization uses a strongly typed **default-deny** model. `KejiPermission` is a 25-value enum; the exact role sets are admin 25, member 16, and readonly 13. Invalid roles have no permissions. Every production Controller action must expose `IAllowAnonymous` metadata or one or more typed `KejiRequirePermissionAttribute` values, and admin cannot bypass missing metadata.
+
+Legacy tool classification is not proof of registration. Unknown ordinary tools remain unresolved, while non-read-whitelisted `mcp_filesystem_*` names classify fail-safe as Write. User access is decided separately by `IKejiToolAuthorizationService`; TASK-010 will provide the authoritative tool Registry.
+
+See [`AUTHORIZATION.md`](AUTHORIZATION.md) for the complete matrix, exact HTTP responses, tool boundary, DI registrations, and tests.
