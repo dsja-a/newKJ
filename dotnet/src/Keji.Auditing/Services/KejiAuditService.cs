@@ -89,17 +89,18 @@ public sealed class KejiAuditService : IKejiAuditService
             targetId: targetId,
             metadata: sanitizedMetadata);
 
-        var results = new List<KejiAuditSinkResult>();
-        var hasError = false;
+        var successCount = 0;
+        var failureCount = 0;
 
         foreach (var sink in _sinks)
         {
             try
             {
                 var r = await sink.WriteAsync(auditEvent, cancellationToken).ConfigureAwait(false);
-                results.Add(r);
-                if (r == KejiAuditSinkResult.Error)
-                    hasError = true;
+                if (r == KejiAuditSinkResult.Written)
+                    successCount++;
+                else
+                    failureCount++;
             }
             catch (OperationCanceledException)
             {
@@ -107,16 +108,21 @@ public sealed class KejiAuditService : IKejiAuditService
             }
             catch (Exception)
             {
-                hasError = true;
+                failureCount++;
                 _logger.LogError("AuditSinkError: sink={SinkType} code=SINK_WRITE_FAILED", sink.GetType().Name);
-                results.Add(KejiAuditSinkResult.Error);
             }
         }
 
-        if (results.Count == 0)
+        if (successCount == 0 && failureCount == 0)
             return KejiAuditResult.SinkError;
 
-        return hasError ? KejiAuditResult.SinkError : KejiAuditResult.Written;
+        if (failureCount == 0)
+            return KejiAuditResult.Written;
+
+        if (successCount > 0)
+            return KejiAuditResult.PartialFailure;
+
+        return KejiAuditResult.SinkError;
     }
 
     private static KejiAuditResult? ValidateInputs(

@@ -37,10 +37,7 @@ public sealed class KejiAuditBridgeImpl : IKejiAuditBridge
                 targetType: "http_request",
                 cancellationToken: cancellationToken).ConfigureAwait(false);
 
-            if (result == KejiAuditResult.SinkError)
-            {
-                _logger.LogWarning("AuditSinkError: code=AUTH_BRIDGE_SINK_FAILED");
-            }
+            LogResult("AUTH", result);
         }
         catch (OperationCanceledException)
         {
@@ -70,14 +67,27 @@ public sealed class KejiAuditBridgeImpl : IKejiAuditBridge
                 metadata: metadata,
                 cancellationToken: cancellationToken).ConfigureAwait(false);
 
-            if (result == KejiAuditResult.SinkError)
-            {
-                _logger.LogWarning("AuditSinkError: code=AUTHZ_BRIDGE_SINK_FAILED");
-            }
+            LogResult("AUTHZ", result);
         }
         catch (OperationCanceledException)
         {
             throw;
+        }
+    }
+
+    private void LogResult(string prefix, KejiAuditResult result)
+    {
+        switch (result)
+        {
+            case KejiAuditResult.PartialFailure:
+                _logger.LogWarning("AuditSinkPartialFailure: code={Code}_PARTIAL_SINK_FAILURE", prefix);
+                break;
+            case KejiAuditResult.SinkError:
+                _logger.LogWarning("AuditSinkError: code={Code}_SINK_FAILED", prefix);
+                break;
+            case KejiAuditResult.ValidationError:
+                _logger.LogWarning("AuditValidationError: code={Code}_VALIDATION_FAILED", prefix);
+                break;
         }
     }
 }

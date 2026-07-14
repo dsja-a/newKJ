@@ -211,10 +211,10 @@ public class KejiDatabaseInitializer : IKejiDatabaseInitializer
 
                 cmd.CommandText = "UPDATE audit_events SET event_id = printf('%04x%04x-%04x-%04x-%04x-%04x%04x%04x', random(), random(), random(), random(), random(), random(), random(), random()) WHERE event_id IS NULL";
                 await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-
-                cmd.CommandText = "CREATE UNIQUE INDEX IF NOT EXISTS idx_audit_event_id ON audit_events(event_id)";
-                await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
             }
+
+            cmd.CommandText = "CREATE UNIQUE INDEX IF NOT EXISTS idx_audit_event_id ON audit_events(event_id)";
+            await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
 
             cmd.CommandText = "INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (@v, @t)";
             cmd.Parameters.Clear();

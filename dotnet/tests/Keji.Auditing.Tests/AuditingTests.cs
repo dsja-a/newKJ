@@ -953,7 +953,7 @@ public class AuditingTests
     }
 
     [Fact]
-    public async Task TwoSinks_OneFailsOneSucceeds_ReturnsSinkError()
+    public async Task TwoSinks_OneFailsOneSucceeds_ReturnsPartialFailure()
     {
         var sink1 = new CollectingSink();
         var sink2 = new FailingSink();
@@ -962,7 +962,7 @@ public class AuditingTests
         var result = await svc.WriteAsync(KejiAuditCategory.Authentication, "test", KejiAuditOutcome.Success,
             KejiAuditSeverity.Information, "test");
 
-        Assert.Equal(KejiAuditResult.SinkError, result);
+        Assert.Equal(KejiAuditResult.PartialFailure, result);
         Assert.Single(sink1.Events);
     }
 
@@ -990,9 +990,22 @@ public class AuditingTests
         var result = await svc.WriteAsync(KejiAuditCategory.Authentication, "test", KejiAuditOutcome.Success,
             KejiAuditSeverity.Information, "test");
 
-        Assert.Equal(KejiAuditResult.SinkError, result);
+        Assert.Equal(KejiAuditResult.PartialFailure, result);
         Assert.Single(sink1.Events);
         Assert.Contains(logger.Messages, m => m.Contains("AuditSinkError") && m.Contains("SINK_WRITE_FAILED"));
+    }
+
+    [Fact]
+    public async Task PartialFailure_DoesNotChangeAuthOutcome()
+    {
+        var sink1 = new CollectingSink();
+        var sink2 = new FailingSink();
+        var svc = CreateService(sinks: [sink1, sink2], userAccessor: new FixedCurrentUser(MakeUser()));
+
+        var result = await svc.WriteAsync(KejiAuditCategory.Authentication, "test", KejiAuditOutcome.Success,
+            KejiAuditSeverity.Information, "test");
+
+        Assert.Equal(KejiAuditResult.PartialFailure, result);
     }
 
     [Fact]
@@ -1203,6 +1216,54 @@ public class AuditingTests
         // Convert the event's OccurredAtUtc to unix timestamp
         var expected = (evt.OccurredAtUtc - new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)).TotalSeconds;
         Assert.Equal(expected, dbTimestamp, 1);
+    }
+
+    [Fact]
+    public async Task DatabaseSink_UniqueIndex_ExistsAfterInit()
+    {
+        using var ctx = new TestDbContext();
+        await ctx.InitializeAsync();
+
+        using var conn = await ctx.Factory.OpenConnectionAsync();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT COUNT(*) FROM pragma_index_list('audit_events') WHERE name = 'idx_audit_event_id'";
+        var count = (long)(await cmd.ExecuteScalarAsync())!;
+        Assert.Equal(1, count);
+    }
+
+    [Fact]
+    public async Task DatabaseSink_Reinitialize_IsIdempotent()
+    {
+        using var ctx = new TestDbContext();
+        await ctx.InitializeAsync();
+        await ctx.InitializeAsync(); // second init
+
+        using var conn = await ctx.Factory.OpenConnectionAsync();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT COUNT(*) FROM pragma_index_list('audit_events') WHERE name = 'idx_audit_event_id'";
+        var count = (long)(await cmd.ExecuteScalarAsync())!;
+        Assert.Equal(1, count);
+    }
+
+    [Fact]
+    public async Task DatabaseSink_DuplicateEventId_StillRejectedAfterReinit()
+    {
+        using var ctx = new TestDbContext();
+        await ctx.InitializeAsync();
+
+        var sink = new KejiDatabaseAuditSink(ctx.Factory);
+        var evt = CreateTestEvent();
+
+        var r1 = await sink.WriteAsync(evt);
+        Assert.Equal(KejiAuditSinkResult.Written, r1);
+
+        // Reinitialize
+        var init = new KejiDatabaseInitializer(ctx.Factory, ctx.TimeProvider);
+        await init.InitializeAsync();
+
+        // Duplicate event should still be rejected
+        var r2 = await sink.WriteAsync(evt);
+        Assert.Equal(KejiAuditSinkResult.Error, r2);
     }
 
     // ── 29. Severity levels present ──────────────
