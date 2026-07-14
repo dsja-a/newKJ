@@ -43,6 +43,8 @@ builder.Services.AddKejiPersistenceFoundation(o =>
 var securityOptions = KejiSecurityOptions.FromConfiguration(config);
 builder.Services.AddKejiSecurityFoundation(securityOptions);
 builder.Services.AddKejiAuditingFoundation();
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddSingleton<Keji.Auditing.Abstractions.IKejiAuditCorrelationAccessor, Keji.Api.Middleware.KejiCorrelationAccessor>();
 builder.Services.AddScoped<Keji.Security.Auth.IKejiAuditBridge, Keji.Api.Middleware.KejiAuditBridgeImpl>();
 
 builder.Services.AddControllers();

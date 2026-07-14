@@ -1,5 +1,4 @@
 using System.Collections.Immutable;
-using System.Globalization;
 
 namespace Keji.Auditing.Services;
 
@@ -72,6 +71,9 @@ public static class KejiAuditMetadataSanitizer
 
     private static string SanitizeValue(string value)
     {
+        if (string.IsNullOrEmpty(value))
+            return value;
+
         var span = value.AsSpan();
         var cleaned = new char[span.Length];
         var written = 0;
@@ -80,7 +82,7 @@ public static class KejiAuditMetadataSanitizer
         {
             var c = span[i];
 
-            if (char.IsControl(c) && c != '\t' && c != '\n' && c != '\r')
+            if (char.IsControl(c))
                 continue;
 
             if (char.IsSurrogate(c))

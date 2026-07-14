@@ -9,6 +9,11 @@
   <ItemGroup>
     <ProjectReference Include="..\Keji.Persistence\Keji.Persistence.csproj" />
     <ProjectReference Include="..\Keji.Security\Keji.Security.csproj" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Keji.Auditing.Tests" />
   </ItemGroup>
 
 </Project>

@@ -9,14 +9,10 @@ namespace Keji.Auditing.Sinks;
 public sealed class KejiDatabaseAuditSink : IKejiAuditSink
 {
     private readonly ISqliteConnectionFactory _connectionFactory;
-    private readonly IUnixTimeProvider _timeProvider;
 
-    public KejiDatabaseAuditSink(
-        ISqliteConnectionFactory connectionFactory,
-        IUnixTimeProvider timeProvider)
+    public KejiDatabaseAuditSink(ISqliteConnectionFactory connectionFactory)
     {
         _connectionFactory = connectionFactory;
-        _timeProvider = timeProvider;
     }
 
     public async Task<KejiAuditSinkResult> WriteAsync(KejiAuditEvent auditEvent, CancellationToken cancellationToken = default)
@@ -31,10 +27,11 @@ public sealed class KejiDatabaseAuditSink : IKejiAuditSink
 
             using var cmd = conn.CreateCommand();
             cmd.CommandText = """
-                INSERT INTO audit_events (event_type, actor, session_id, tool_name, path, action, status, detail, client_ip, created_at)
-                VALUES (@event_type, @actor, @session_id, @tool_name, @path, @action, @status, @detail, @client_ip, @created_at)
+                INSERT INTO audit_events (event_id, event_type, actor, session_id, tool_name, path, action, status, detail, client_ip, created_at)
+                VALUES (@event_id, @event_type, @actor, @session_id, @tool_name, @path, @action, @status, @detail, @client_ip, @created_at)
                 """;
 
+            cmd.Parameters.AddWithValue("@event_id", auditEvent.EventId.ToString());
             cmd.Parameters.AddWithValue("@event_type", auditEvent.Category.ToString());
             cmd.Parameters.AddWithValue("@actor", auditEvent.ActorId);
             cmd.Parameters.AddWithValue("@session_id", auditEvent.CorrelationId ?? string.Empty);
@@ -44,7 +41,7 @@ public sealed class KejiDatabaseAuditSink : IKejiAuditSink
             cmd.Parameters.AddWithValue("@status", auditEvent.Outcome.ToString());
             cmd.Parameters.AddWithValue("@detail", SerializeDetail(auditEvent));
             cmd.Parameters.AddWithValue("@client_ip", string.Empty);
-            cmd.Parameters.AddWithValue("@created_at", _timeProvider.Now);
+            cmd.Parameters.AddWithValue("@created_at", ToUnixTimestamp(auditEvent.OccurredAtUtc));
 
             await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
             return KejiAuditSinkResult.Written;
@@ -53,7 +50,7 @@ public sealed class KejiDatabaseAuditSink : IKejiAuditSink
         {
             throw;
         }
-        catch
+        catch (SqliteException ex) when (ex.SqliteErrorCode == 19)
         {
             return KejiAuditSinkResult.Error;
         }
@@ -67,7 +64,6 @@ public sealed class KejiDatabaseAuditSink : IKejiAuditSink
     {
         var detail = new Dictionary<string, object?>
         {
-            ["event_id"] = auditEvent.EventId.ToString(),
             ["severity"] = auditEvent.Severity.ToString(),
             ["authentication_type"] = auditEvent.AuthenticationType,
             ["actor_role"] = auditEvent.ActorRole,
@@ -79,5 +75,10 @@ public sealed class KejiDatabaseAuditSink : IKejiAuditSink
         }
 
         return JsonSerializer.Serialize(detail);
+    }
+
+    private static double ToUnixTimestamp(DateTime utc)
+    {
+        return (utc - new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)).TotalSeconds;
     }
 }

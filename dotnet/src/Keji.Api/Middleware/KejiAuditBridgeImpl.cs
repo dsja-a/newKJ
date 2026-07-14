@@ -1,19 +1,22 @@
 using Keji.Auditing.Abstractions;
 using Keji.Auditing.Models;
 using Keji.Security.Auth;
+using Microsoft.Extensions.Logging;
 
 namespace Keji.Api.Middleware;
 
 public sealed class KejiAuditBridgeImpl : IKejiAuditBridge
 {
     private readonly IKejiAuditService _auditService;
+    private readonly ILogger<KejiAuditBridgeImpl> _logger;
 
-    public KejiAuditBridgeImpl(IKejiAuditService auditService)
+    public KejiAuditBridgeImpl(IKejiAuditService auditService, ILogger<KejiAuditBridgeImpl> logger)
     {
         _auditService = auditService;
+        _logger = logger;
     }
 
-    public async Task AuditAuthenticationAsync(string outcome, string? actorId, string? actorRole, string path, CancellationToken cancellationToken = default)
+    public async Task AuditAuthenticationAsync(string outcome, string path, CancellationToken cancellationToken = default)
     {
         var (auditOutcome, severity) = outcome switch
         {
@@ -22,22 +25,30 @@ public sealed class KejiAuditBridgeImpl : IKejiAuditBridge
             _ => (KejiAuditOutcome.Failure, KejiAuditSeverity.Warning),
         };
 
-        var metadata = new Dictionary<string, string>
-        {
-            ["path"] = path.Length > 256 ? path[..256] : path,
-        };
+        var action = outcome == "success" ? "authenticate" : "authenticate_failed";
 
-        await _auditService.WriteAsync(
-            KejiAuditCategory.Authentication,
-            action: outcome == "success" ? "authenticate" : "authenticate_failed",
-            outcome: auditOutcome,
-            severity: severity,
-            targetType: "http_request",
-            metadata: metadata,
-            cancellationToken: cancellationToken);
+        try
+        {
+            var result = await _auditService.WriteAsync(
+                KejiAuditCategory.Authentication,
+                action: action,
+                outcome: auditOutcome,
+                severity: severity,
+                targetType: "http_request",
+                cancellationToken: cancellationToken).ConfigureAwait(false);
+
+            if (result == KejiAuditResult.SinkError)
+            {
+                _logger.LogWarning("AuditSinkError: code=AUTH_BRIDGE_SINK_FAILED");
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
     }
 
-    public async Task AuditAuthorizationAsync(string outcome, string? actorId, string? actorRole, string reason, CancellationToken cancellationToken = default)
+    public async Task AuditAuthorizationAsync(string outcome, string reason, CancellationToken cancellationToken = default)
     {
         var (auditOutcome, severity) = outcome == "allowed"
             ? (KejiAuditOutcome.Success, KejiAuditSeverity.Information)
@@ -48,13 +59,25 @@ public sealed class KejiAuditBridgeImpl : IKejiAuditBridge
             ["reason"] = (reason ?? "unknown").Length > 64 ? reason![..64] : reason ?? "unknown",
         };
 
-        await _auditService.WriteAsync(
-            KejiAuditCategory.Authorization,
-            action: "authorize",
-            outcome: auditOutcome,
-            severity: severity,
-            targetType: "endpoint",
-            metadata: metadata,
-            cancellationToken: cancellationToken);
+        try
+        {
+            var result = await _auditService.WriteAsync(
+                KejiAuditCategory.Authorization,
+                action: "authorize",
+                outcome: auditOutcome,
+                severity: severity,
+                targetType: "endpoint",
+                metadata: metadata,
+                cancellationToken: cancellationToken).ConfigureAwait(false);
+
+            if (result == KejiAuditResult.SinkError)
+            {
+                _logger.LogWarning("AuditSinkError: code=AUTHZ_BRIDGE_SINK_FAILED");
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
     }
 }

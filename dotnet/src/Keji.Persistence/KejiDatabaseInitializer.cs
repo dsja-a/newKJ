@@ -200,10 +200,32 @@ public class KejiDatabaseInitializer : IKejiDatabaseInitializer
             cmd.CommandText = "CREATE INDEX IF NOT EXISTS idx_conv_owner ON conversations(owner_user_id, updated_at)";
             await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
 
+            cmd.CommandText = "SELECT COUNT(*) FROM pragma_table_info('audit_events') WHERE name = 'event_id'";
+            cmd.Parameters.Clear();
+            var hasEventIdCol = (long)(await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false))! > 0;
+
+            if (!hasEventIdCol)
+            {
+                cmd.CommandText = "ALTER TABLE audit_events ADD COLUMN event_id TEXT";
+                await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+
+                cmd.CommandText = "UPDATE audit_events SET event_id = printf('%04x%04x-%04x-%04x-%04x-%04x%04x%04x', random(), random(), random(), random(), random(), random(), random(), random()) WHERE event_id IS NULL";
+                await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+
+                cmd.CommandText = "CREATE UNIQUE INDEX IF NOT EXISTS idx_audit_event_id ON audit_events(event_id)";
+                await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            }
+
             cmd.CommandText = "INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (@v, @t)";
             cmd.Parameters.Clear();
             cmd.Parameters.AddWithValue("@v", "001_add_owner_user_id");
             cmd.Parameters.AddWithValue("@t", _timeProvider.Now);
+            await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+
+            cmd.CommandText = "INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (@v2, @t2)";
+            cmd.Parameters.Clear();
+            cmd.Parameters.AddWithValue("@v2", "002_add_audit_event_id");
+            cmd.Parameters.AddWithValue("@t2", _timeProvider.Now);
             await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
 
             await tx.CommitAsync(cancellationToken).ConfigureAwait(false);

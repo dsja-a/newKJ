@@ -18,7 +18,7 @@ public sealed class KejiAuditEvent
     public string? TargetId { get; }
     public IReadOnlyDictionary<string, string> Metadata { get; }
 
-    public KejiAuditEvent(
+    internal KejiAuditEvent(
         Guid eventId,
         DateTime occurredAtUtc,
         KejiAuditCategory category,

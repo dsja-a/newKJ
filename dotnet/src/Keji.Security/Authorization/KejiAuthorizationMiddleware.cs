@@ -62,7 +62,7 @@ public sealed class KejiAuthorizationMiddleware
 
         if (requiredPermissions.Count == 0)
         {
-            await TryAuditAuthzAsync(auditBridge, userAccessor.CurrentUser, "missing_permission_metadata", context.RequestAborted);
+            await AuditAuthorizationAsync(auditBridge, "denied", "missing_permission_metadata", logger, context.RequestAborted);
             await WriteErrorAsync(context, StatusCodes.Status403Forbidden, "权限不足");
             return;
         }
@@ -70,7 +70,7 @@ public sealed class KejiAuthorizationMiddleware
         var user = userAccessor.CurrentUser;
         if (user == null)
         {
-            await TryAuditAuthzAsync(auditBridge, null, "unauthenticated", context.RequestAborted);
+            await AuditAuthorizationAsync(auditBridge, "denied", "unauthenticated", logger, context.RequestAborted);
             await WriteErrorAsync(context, StatusCodes.Status401Unauthorized, "未登录，请先登录");
             return;
         }
@@ -80,12 +80,12 @@ public sealed class KejiAuthorizationMiddleware
 
         if (result.IsAllowed)
         {
-            await TryAuditAuthzAsync(auditBridge, user, "allowed", context.RequestAborted);
+            await AuditAuthorizationAsync(auditBridge, "allowed", "allowed", logger, context.RequestAborted);
             await _next(context);
             return;
         }
 
-        await TryAuditAuthzAsync(auditBridge, user, result.FailureReason.ToString(), context.RequestAborted);
+        await AuditAuthorizationAsync(auditBridge, "denied", result.FailureReason.ToString(), logger, context.RequestAborted);
 
         var detail = result.FailureReason switch
         {
@@ -102,15 +102,16 @@ public sealed class KejiAuthorizationMiddleware
         await WriteErrorAsync(context, statusCode, detail);
     }
 
-    private static async Task TryAuditAuthzAsync(IKejiAuditBridge? bridge, CurrentUser? user, string reason, CancellationToken ct)
+    private static async Task AuditAuthorizationAsync(IKejiAuditBridge? bridge, string outcome, string reason, ILogger<KejiAuthorizationMiddleware> logger, CancellationToken ct)
     {
         if (bridge is null) return;
         try
         {
-            await bridge.AuditAuthorizationAsync(reason, user?.Id, user?.Role, reason, ct);
+            await bridge.AuditAuthorizationAsync(outcome, reason, ct).ConfigureAwait(false);
         }
-        catch
+        catch (OperationCanceledException)
         {
+            throw;
         }
     }
 
