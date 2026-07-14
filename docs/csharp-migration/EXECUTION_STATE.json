@@ -2,11 +2,7 @@
   "repository": "dsja-a/newKJ",
   "branch": "rewrite/csharp-core",
   "python_baseline": "aad0afab7181e529a53691a4f2801f295025a2c7",
-  "last_accepted_sha": "b88827df4b68158b0bd6a0a6c9f892c4bda55d92",
-  "task008_accepted_sha": "aaa126eb4d03ca9e8e9aba0c7b1c0931cdcde31e",
-  "task008_initial_commit_sha": "546b3a62729cb916ff0eca0af08e64ff89019df9",
-  "task008_repair_commit_sha": "aaa126eb4d03ca9e8e9aba0c7b1c0931cdcde31e",
-  "task008_final_commit_sha": "aaa126eb4d03ca9e8e9aba0c7b1c0931cdcde31e",
+  "last_accepted_sha": "c027ab34a7a30655f11ff035af191b31cae57bd1",
   "task006_main_commit_sha": "2bbdce42494d1e0a7eaaa8bd2905785bc4b6941f",
   "task006_edge_fix_commit_sha": "f6a2dc201d5fb4dafdf04988375751b051743f46",
   "task006_test_handoff_commit_sha": "88a6f8ff7b9e87302ad5233c9914914a572a57ec",
@@ -14,6 +10,10 @@
   "task006_final_commit_sha": "96eed064ef2bbee3f0b04e6727b0b49dbfdd4144",
   "task006_functional_acceptance_sha": "96eed064ef2bbee3f0b04e6727b0b49dbfdd4144",
   "task007_final_commit_sha": "b88827df4b68158b0bd6a0a6c9f892c4bda55d92",
+  "task008_initial_commit_sha": "546b3a62729cb916ff0eca0af08e64ff89019df9",
+  "task008_repair_commit_sha": "aaa126e15a2f4ea130a540b13643be13ed879ad4",
+  "task008_final_commit_sha": "c027ab34a7a30655f11ff035af191b31cae57bd1",
+  "task008_accepted_sha": "c027ab34a7a30655f11ff035af191b31cae57bd1",
   "current_task": "TASK-008",
   "status": "accepted",
   "csharp_completion_percent": 32,
@@ -38,7 +38,8 @@
   },
   "task008": {
     "functional_commit_sha": "546b3a62729cb916ff0eca0af08e64ff89019df9",
-    "repair_commit_sha": "aaa126eb4d03ca9e8e9aba0c7b1c0931cdcde31e"
+    "repair_commit_sha": "aaa126e15a2f4ea130a540b13643be13ed879ad4",
+    "final_commit_sha": "c027ab34a7a30655f11ff035af191b31cae57bd1"
   },
   "test_results": {
     "task005_security_restored": "262/262",
@@ -51,8 +52,8 @@
     "Keji.Agent.Tests": "1/1",
     "Keji.FileSystem.Tests": "289/289",
     "Keji.Tools.Tests": "1/1",
-    "Keji.Auditing.Tests": "98/98",
-    "solution_total": "1159/1159",
+    "Keji.Auditing.Tests": "102/102",
+    "solution_total": "1163/1163",
     "failed": 0,
     "skipped": 0,
     "build_warnings": 0,
@@ -68,5 +69,5 @@
   ],
   "forbidden_changes_confirmed": true,
   "git_diff_check": "passed with empty stdout and stderr",
-  "updated_at_utc": "2026-07-14T12:00:00.0000000Z"
+  "updated_at_utc": "2026-07-14T14:00:00.0000000Z"
 }

@@ -4,12 +4,12 @@
 
 - Repository: `dsja-a/newKJ`
 - Branch: `rewrite/csharp-core`
-- Last accepted baseline: `b88827df4b68158b0bd6a0a6c9f892c4bda55d92`
+- Last accepted baseline: `c027ab34a7a30655f11ff035af191b31cae57bd1`
 - Current task: TASK-008
-- Current status: ready_for_acceptance
+- Current status: accepted
 - Formal C# completion: 32%
 - Next task: TASK-009
-- TASK-008 status: ready_for_acceptance
+- TASK-008 status: accepted
 
 ## Completed in TASK-008
 
@@ -22,14 +22,14 @@
 
 ## Verification
 
-- `Keji.Auditing.Tests`: 60/60
+- `Keji.Auditing.Tests`: 102/102
 - `Keji.Security.Tests`: 541/541
 - `Keji.Persistence.Tests`: 138/138
 - `Keji.Integration.Tests`: 91/91
 - `Keji.Agent.Tests`: 1/1
 - `Keji.FileSystem.Tests`: 289/289
 - `Keji.Tools.Tests`: 1/1
-- Full solution: 1121/1121
+- Full solution: 1163/1163
 - Failed: 0
 - Skipped: 0
 - Build warnings: 0
@@ -60,4 +60,4 @@
 
 ## Next action
 
-TASK-008 is ready for acceptance on this branch. After the `feat: implement security audit foundation` commit, the next task is TASK-009 (session and conversation ownership isolation).
+TASK-008 is accepted. The initial commit is `546b3a62729cb916ff0eca0af08e64ff89019df9`, the repair commit is `aaa126e15a2f4ea130a540b13643be13ed879ad4`, and the final fix commit is `c027ab34a7a30655f11ff035af191b31cae57bd1`. The next task is TASK-009 (session and conversation ownership isolation), which has not started.

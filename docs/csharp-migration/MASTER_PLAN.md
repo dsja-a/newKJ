@@ -5,8 +5,8 @@
 - Repository: `dsja-a/newKJ`
 - Branch: `rewrite/csharp-core`
 - Python reference: `main` at `aad0afab7181e529a53691a4f2801f295025a2c7`
-- Last accepted C# baseline: `b88827df4b68158b0bd6a0a6c9f892c4bda55d92`
-- Accepted solution test baseline: 1121
+- Last accepted C# baseline: `c027ab34a7a30655f11ff035af191b31cae57bd1`
+- Accepted solution test baseline: 1163
 - Target: .NET 10 / `net10.0`, ASP.NET Core as the only public API, Python as a controlled internal worker
 
 ## Remaining quality gates
@@ -34,4 +34,4 @@ Python and the web frontend remain unchanged until their explicitly assigned tas
 
 ## Current gate
 
-TASK-008 is ready for acceptance at 32% formal completion. Auditing tests pass 60/60 and the full solution passes 1121/1121 with zero failures, skips, build warnings, build errors, or known NuGet vulnerabilities across 20 projects. The next gate is TASK-009.
+TASK-008 is accepted at 32% formal completion. Auditing tests pass 102/102 and the full solution passes 1163/1163 with zero failures, skips, build warnings, build errors, or known NuGet vulnerabilities across 20 projects. The next gate is TASK-009.

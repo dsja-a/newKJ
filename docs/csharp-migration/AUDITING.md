@@ -29,7 +29,12 @@
 
 ## Multi-sink architecture
 
-`KejiAuditService` takes `IEnumerable<IKejiAuditSink>` and writes to all registered sinks. Each sink receives the same immutable event snapshot. A failing sink does not block other sinks. The aggregate result is `Written` (all succeeded) or `SinkError` (at least one failed).
+`KejiAuditService` takes `IEnumerable<IKejiAuditSink>` and writes to all registered sinks. Each sink receives the same immutable event snapshot. A failing sink does not block other sinks. The aggregate result is one of:
+
+- `Written`: all sinks succeeded
+- `PartialFailure`: at least one sink succeeded, at least one failed
+- `SinkError`: all sinks failed, or no sinks registered
+- `ValidationError`: input validation failed (returned before any sink is called)
 
 ## Correlation accessor
 
@@ -84,14 +89,14 @@ The API overrides the correlation accessor with `KejiCorrelationAccessor` and al
 
 ## Verification
 
-- `Keji.Auditing.Tests`: 98/98
+- `Keji.Auditing.Tests`: 102/102
 - `Keji.Security.Tests`: 541/541
 - `Keji.Persistence.Tests`: 138/138
 - `Keji.Integration.Tests`: 91/91
 - `Keji.FileSystem.Tests`: 289/289
 - `Keji.Agent.Tests`: 1/1
 - `Keji.Tools.Tests`: 1/1
-- Full solution: 1159/1159
+- Full solution: 1163/1163
 - Failed: 0
 - Skipped: 0
 - Build warnings: 0
@@ -99,4 +104,4 @@ The API overrides the correlation accessor with `KejiCorrelationAccessor` and al
 - Known NuGet vulnerabilities: 0 across 20 projects
 - `git diff --check`: no whitespace errors
 
-TASK-008 is accepted. The initial functional commit is `546b3a62729cb916ff0eca0af08e64ff89019df9`. The repair commit is `aaa126eb4d03ca9e8e9aba0c7b1c0931cdcde31e`.
+TASK-008 is accepted. The initial commit is `546b3a62729cb916ff0eca0af08e64ff89019df9`. The repair commit is `aaa126e15a2f4ea130a540b13643be13ed879ad4`. The final fix commit is `c027ab34a7a30655f11ff035af191b31cae57bd1`. The next task is TASK-009, which has not started.
