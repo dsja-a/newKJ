@@ -45,6 +45,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Keji.Tools.Tests", "tests\K
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Keji.Integration.Tests", "tests\Keji.Integration.Tests\Keji.Integration.Tests.csproj", "{F94C253D-0C18-45B1-A2BD-8517046CD82F}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Keji.Auditing.Tests", "tests\Keji.Auditing.Tests\Keji.Auditing.Tests.csproj", "{8E64B84B-DC3B-4725-9EFF-17545755688B}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -283,6 +285,18 @@ Global
 		{F94C253D-0C18-45B1-A2BD-8517046CD82F}.Release|x64.Build.0 = Release|Any CPU
 		{F94C253D-0C18-45B1-A2BD-8517046CD82F}.Release|x86.ActiveCfg = Release|Any CPU
 		{F94C253D-0C18-45B1-A2BD-8517046CD82F}.Release|x86.Build.0 = Release|Any CPU
+		{8E64B84B-DC3B-4725-9EFF-17545755688B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{8E64B84B-DC3B-4725-9EFF-17545755688B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{8E64B84B-DC3B-4725-9EFF-17545755688B}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{8E64B84B-DC3B-4725-9EFF-17545755688B}.Debug|x64.Build.0 = Debug|Any CPU
+		{8E64B84B-DC3B-4725-9EFF-17545755688B}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{8E64B84B-DC3B-4725-9EFF-17545755688B}.Debug|x86.Build.0 = Debug|Any CPU
+		{8E64B84B-DC3B-4725-9EFF-17545755688B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{8E64B84B-DC3B-4725-9EFF-17545755688B}.Release|Any CPU.Build.0 = Release|Any CPU
+		{8E64B84B-DC3B-4725-9EFF-17545755688B}.Release|x64.ActiveCfg = Release|Any CPU
+		{8E64B84B-DC3B-4725-9EFF-17545755688B}.Release|x64.Build.0 = Release|Any CPU
+		{8E64B84B-DC3B-4725-9EFF-17545755688B}.Release|x86.ActiveCfg = Release|Any CPU
+		{8E64B84B-DC3B-4725-9EFF-17545755688B}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -307,5 +321,6 @@ Global
 		{06082373-0A1E-4E8D-B696-49B3A74873E3} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 		{F0674EF2-1EDE-4CC7-8ECB-48953F1D14D8} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 		{F94C253D-0C18-45B1-A2BD-8517046CD82F} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
+		{8E64B84B-DC3B-4725-9EFF-17545755688B} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 	EndGlobalSection
 EndGlobal

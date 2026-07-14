@@ -42,6 +42,8 @@ builder.Services.AddKejiPersistenceFoundation(o =>
 
 var securityOptions = KejiSecurityOptions.FromConfiguration(config);
 builder.Services.AddKejiSecurityFoundation(securityOptions);
+builder.Services.AddKejiAuditingFoundation();
+builder.Services.AddScoped<Keji.Security.Auth.IKejiAuditBridge, Keji.Api.Middleware.KejiAuditBridgeImpl>();
 
 builder.Services.AddControllers();
 builder.Services.AddOpenApi();

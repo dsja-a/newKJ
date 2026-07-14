@@ -27,7 +27,8 @@ public sealed class KejiAuthorizationMiddleware
         KejiSecurityOptions options,
         ICurrentUserAccessor userAccessor,
         IKejiAuthorizationService authService,
-        ILogger<KejiAuthorizationMiddleware> logger)
+        ILogger<KejiAuthorizationMiddleware> logger,
+        IKejiAuditBridge? auditBridge = null)
     {
         if (!options.Enabled)
         {
@@ -61,6 +62,7 @@ public sealed class KejiAuthorizationMiddleware
 
         if (requiredPermissions.Count == 0)
         {
+            await TryAuditAuthzAsync(auditBridge, userAccessor.CurrentUser, "missing_permission_metadata", context.RequestAborted);
             await WriteErrorAsync(context, StatusCodes.Status403Forbidden, "权限不足");
             return;
         }
@@ -68,6 +70,7 @@ public sealed class KejiAuthorizationMiddleware
         var user = userAccessor.CurrentUser;
         if (user == null)
         {
+            await TryAuditAuthzAsync(auditBridge, null, "unauthenticated", context.RequestAborted);
             await WriteErrorAsync(context, StatusCodes.Status401Unauthorized, "未登录，请先登录");
             return;
         }
@@ -77,9 +80,12 @@ public sealed class KejiAuthorizationMiddleware
 
         if (result.IsAllowed)
         {
+            await TryAuditAuthzAsync(auditBridge, user, "allowed", context.RequestAborted);
             await _next(context);
             return;
         }
+
+        await TryAuditAuthzAsync(auditBridge, user, result.FailureReason.ToString(), context.RequestAborted);
 
         var detail = result.FailureReason switch
         {
@@ -94,6 +100,18 @@ public sealed class KejiAuthorizationMiddleware
             : StatusCodes.Status403Forbidden;
 
         await WriteErrorAsync(context, statusCode, detail);
+    }
+
+    private static async Task TryAuditAuthzAsync(IKejiAuditBridge? bridge, CurrentUser? user, string reason, CancellationToken ct)
+    {
+        if (bridge is null) return;
+        try
+        {
+            await bridge.AuditAuthorizationAsync(reason, user?.Id, user?.Role, reason, ct);
+        }
+        catch
+        {
+        }
     }
 
     private static async Task WriteErrorAsync(HttpContext context, int statusCode, string detail)

@@ -28,7 +28,7 @@ public class KejiAuthenticationMiddleware
         _next = next;
     }
 
-    public async Task InvokeAsync(HttpContext context, KejiSecurityOptions options, IRequestAuthenticator authenticator)
+    public async Task InvokeAsync(HttpContext context, KejiSecurityOptions options, IRequestAuthenticator authenticator, IKejiAuditBridge? auditBridge = null)
     {
         if (!options.Enabled)
         {
@@ -76,9 +76,12 @@ public class KejiAuthenticationMiddleware
                 var identity = new ClaimsIdentity(claims, "KejiAuth");
                 context.User = new ClaimsPrincipal(identity);
 
+                await AuditSinkExtensions.TryAuditAsync(auditBridge, "success", result.User.Id, result.User.Role, path, context.RequestAborted);
                 await _next(context);
                 return;
             }
+
+            await AuditSinkExtensions.TryAuditAsync(auditBridge, "failure", null, null, path, context.RequestAborted);
 
             context.Response.StatusCode = 401;
             context.Response.ContentType = "application/json";
@@ -94,6 +97,8 @@ public class KejiAuthenticationMiddleware
         }
         catch (Keji.Persistence.KejiPersistenceException)
         {
+            await AuditSinkExtensions.TryAuditAsync(auditBridge, "error", null, null, path, context.RequestAborted);
+
             context.Response.StatusCode = 500;
             context.Response.ContentType = "application/json";
             var body = JsonSerializer.Serialize(new { detail = "服务器内部错误" }, JsonOptions);
@@ -101,6 +106,8 @@ public class KejiAuthenticationMiddleware
         }
         catch (Keji.Security.Exceptions.KejiSecurityException)
         {
+            await AuditSinkExtensions.TryAuditAsync(auditBridge, "error", null, null, path, context.RequestAborted);
+
             context.Response.StatusCode = 500;
             context.Response.ContentType = "application/json";
             var body = JsonSerializer.Serialize(new { detail = "服务器内部错误" }, JsonOptions);
