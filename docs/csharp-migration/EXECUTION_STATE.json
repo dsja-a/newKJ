@@ -29,7 +29,9 @@
     "TASK-008"
   ],
   "task009": {
-    "status": "pending_commit"
+    "commit_sha": "1a113bab7c325c17ec4f1e425a0006dcbf6ac471",
+    "docs_commit_sha": "87f3c11bf4902b01d20ff62ff7a13a2a4f1c89d0",
+    "status": "pending_accepted"
   },
   "next_task": "TASK-009",
   "task007": {
