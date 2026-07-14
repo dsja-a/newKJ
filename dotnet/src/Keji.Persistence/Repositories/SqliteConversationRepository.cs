@@ -1,4 +1,5 @@
 ﻿using Keji.Persistence.Models;
+using Keji.Persistence.Validation;
 using Microsoft.Data.Sqlite;
 
 namespace Keji.Persistence.Repositories;
@@ -16,12 +17,20 @@ public class SqliteConversationRepository : IConversationRepository
 
     public async Task<ConversationRecord> CreateOwnedAsync(string convId, string ownerUserId, string title = "新对话", CancellationToken cancellationToken = default)
     {
+        UserIdValidator.RequireValid(ownerUserId);
+        SqliteConnection? conn = null;
+        Microsoft.Data.Sqlite.SqliteTransaction? tx = null;
+
         try
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var now = _timeProvider.Now;
-            using var conn = await _connectionFactory.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+            conn = await _connectionFactory.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+            tx = (Microsoft.Data.Sqlite.SqliteTransaction)await conn.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
 
             using var insertCmd = conn.CreateCommand();
+            insertCmd.Transaction = tx;
             insertCmd.CommandText = """
                 INSERT OR IGNORE INTO conversations (id, title, created_at, updated_at, owner_user_id)
                 VALUES (@id, @title, @now, @now, @owner)
@@ -34,6 +43,7 @@ public class SqliteConversationRepository : IConversationRepository
 
             if (inserted > 0)
             {
+                await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
                 return new ConversationRecord
                 {
                     Id = convId,
@@ -46,24 +56,53 @@ public class SqliteConversationRepository : IConversationRepository
             }
 
             using var selectCmd = conn.CreateCommand();
-            selectCmd.CommandText = "SELECT id, title, created_at, updated_at, message_count, owner_user_id FROM conversations WHERE id = @id";
+            selectCmd.Transaction = tx;
+            selectCmd.CommandText = "SELECT id, title, created_at, updated_at, message_count, owner_user_id FROM conversations WHERE id = @id AND owner_user_id = @owner";
             selectCmd.Parameters.AddWithValue("@id", convId);
-            return await ReadSingleConversationAsync(selectCmd, cancellationToken).ConfigureAwait(false)
-                ?? throw new KejiPersistenceException($"Conversation '{convId}' not found after idempotent create.");
+            selectCmd.Parameters.AddWithValue("@owner", ownerUserId);
+            var existing = await ReadSingleConversationAsync(selectCmd, cancellationToken).ConfigureAwait(false);
+
+            if (existing is not null)
+            {
+                await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
+                return existing;
+            }
+
+            await SqliteExceptionTranslator.SafeRollbackAsync(tx).ConfigureAwait(false);
+            throw new KejiPersistenceException($"Conversation '{convId}' not found.");
         }
         catch (OperationCanceledException)
         {
+            await SqliteExceptionTranslator.SafeRollbackAsync(tx).ConfigureAwait(false);
+            throw;
+        }
+        catch (KejiPersistenceException)
+        {
+            await SqliteExceptionTranslator.SafeRollbackAsync(tx).ConfigureAwait(false);
             throw;
         }
         catch (SqliteException ex)
         {
+            await SqliteExceptionTranslator.SafeRollbackAsync(tx).ConfigureAwait(false);
             throw SqliteExceptionTranslator.Create(ex, "CreateConversation", convId);
+        }
+        catch
+        {
+            await SqliteExceptionTranslator.SafeRollbackAsync(tx).ConfigureAwait(false);
+            throw;
+        }
+        finally
+        {
+            if (tx is not null)
+                await tx.DisposeAsync().ConfigureAwait(false);
+            conn?.Dispose();
         }
     }
 
     public async Task<(ConversationRecord Record, ConversationOwnershipResult Result)> EnsureOwnedAsync(
         string convId, string ownerUserId, string title = "新对话", CancellationToken cancellationToken = default)
     {
+        UserIdValidator.RequireValid(ownerUserId);
         var now = _timeProvider.Now;
         SqliteConnection? conn = null;
         Microsoft.Data.Sqlite.SqliteTransaction? tx = null;
@@ -115,12 +154,7 @@ public class SqliteConversationRepository : IConversationRepository
                 return (existing, ConversationOwnershipResult.AlreadyOwned);
             }
 
-            await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
-
-            var anyRecord = await GetInternalNoOwnerAsync(conn, convId, cancellationToken).ConfigureAwait(false);
-            if (anyRecord is not null)
-                throw new KejiPersistenceException($"Conversation '{convId}' not found.");
-
+            await SqliteExceptionTranslator.SafeRollbackAsync(tx).ConfigureAwait(false);
             throw new KejiPersistenceException($"Conversation '{convId}' not found.");
         }
         catch (OperationCanceledException)
@@ -153,6 +187,7 @@ public class SqliteConversationRepository : IConversationRepository
 
     public async Task<ConversationRecord?> GetOwnedAsync(string convId, string ownerUserId, CancellationToken cancellationToken = default)
     {
+        UserIdValidator.RequireValid(ownerUserId);
         try
         {
             using var conn = await _connectionFactory.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
@@ -174,6 +209,7 @@ public class SqliteConversationRepository : IConversationRepository
 
     public async Task<List<ConversationRecord>> ListOwnedAsync(string ownerUserId, int limit = 50, CancellationToken cancellationToken = default)
     {
+        UserIdValidator.RequireValid(ownerUserId);
         if (limit < 1) limit = 1;
         if (limit > 500) limit = 500;
 
@@ -202,6 +238,7 @@ public class SqliteConversationRepository : IConversationRepository
 
     public async Task<bool> RenameOwnedAsync(string convId, string ownerUserId, string title, CancellationToken cancellationToken = default)
     {
+        UserIdValidator.RequireValid(ownerUserId);
         try
         {
             var now = _timeProvider.Now;
@@ -227,6 +264,7 @@ public class SqliteConversationRepository : IConversationRepository
 
     public async Task<bool> DeleteOwnedAsync(string convId, string ownerUserId, CancellationToken cancellationToken = default)
     {
+        UserIdValidator.RequireValid(ownerUserId);
         SqliteConnection? conn = null;
         Microsoft.Data.Sqlite.SqliteTransaction? tx = null;
 
@@ -289,6 +327,7 @@ public class SqliteConversationRepository : IConversationRepository
 
     public async Task<int> CountByOwnerAsync(string ownerUserId, CancellationToken cancellationToken = default)
     {
+        UserIdValidator.RequireValid(ownerUserId);
         try
         {
             using var conn = await _connectionFactory.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
@@ -306,14 +345,6 @@ public class SqliteConversationRepository : IConversationRepository
         {
             throw SqliteExceptionTranslator.Create(ex, "CountConversations");
         }
-    }
-
-    internal async Task<ConversationRecord?> GetInternalNoOwnerAsync(SqliteConnection conn, string convId, CancellationToken cancellationToken)
-    {
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT id, title, created_at, updated_at, message_count, owner_user_id FROM conversations WHERE id = @id";
-        cmd.Parameters.AddWithValue("@id", convId);
-        return await ReadSingleConversationAsync(cmd, cancellationToken).ConfigureAwait(false);
     }
 
     private static async Task<ConversationRecord?> ReadSingleConversationAsync(SqliteCommand cmd, CancellationToken cancellationToken)

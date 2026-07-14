@@ -3,6 +3,7 @@ using Keji.Auditing.Models;
 using Keji.Persistence;
 using Keji.Persistence.Models;
 using Keji.Persistence.Repositories;
+using Keji.Persistence.Validation;
 using Keji.Security.Auth;
 using Microsoft.Extensions.Logging;
 
@@ -32,8 +33,10 @@ public sealed class KejiConversationService : IKejiConversationService
 
     private string RequireUserId()
     {
-        return _currentUserAccessor.CurrentUser?.Id
-            ?? throw new KejiPersistenceException("User is not authenticated.");
+        var userId = _currentUserAccessor.CurrentUser?.Id;
+        if (userId is null)
+            throw new KejiPersistenceException("User is not authenticated.");
+        return UserIdValidator.RequireValid(userId);
     }
 
     public async Task<ConversationRecord> CreateConversationAsync(string convId, string title = "新对话", CancellationToken cancellationToken = default)
@@ -50,7 +53,7 @@ public sealed class KejiConversationService : IKejiConversationService
         var result = await _conversationRepository.EnsureOwnedAsync(convId, ownerUserId, title, cancellationToken).ConfigureAwait(false);
         if (result.Result == ConversationOwnershipResult.AlreadyOwned)
         {
-            await AuditDataAccessAsync("conversation_ensure_denied", KejiAuditOutcome.Denied, "conversation", convId, cancellationToken).ConfigureAwait(false);
+            await AuditDataAccessAsync("conversation_ensure", KejiAuditOutcome.Success, "conversation", null, cancellationToken).ConfigureAwait(false);
         }
         return result;
     }
@@ -58,7 +61,12 @@ public sealed class KejiConversationService : IKejiConversationService
     public async Task<ConversationRecord?> GetConversationAsync(string convId, CancellationToken cancellationToken = default)
     {
         var ownerUserId = RequireUserId();
-        return await _conversationRepository.GetOwnedAsync(convId, ownerUserId, cancellationToken).ConfigureAwait(false);
+        var record = await _conversationRepository.GetOwnedAsync(convId, ownerUserId, cancellationToken).ConfigureAwait(false);
+        if (record is null)
+        {
+            await AuditDataAccessAsync("conversation_access", KejiAuditOutcome.Denied, "conversation", null, cancellationToken).ConfigureAwait(false);
+        }
+        return record;
     }
 
     public async Task<List<ConversationRecord>> ListConversationsAsync(int limit = 50, CancellationToken cancellationToken = default)
@@ -70,7 +78,12 @@ public sealed class KejiConversationService : IKejiConversationService
     public async Task<bool> RenameConversationAsync(string convId, string title, CancellationToken cancellationToken = default)
     {
         var ownerUserId = RequireUserId();
-        return await _conversationRepository.RenameOwnedAsync(convId, ownerUserId, title, cancellationToken).ConfigureAwait(false);
+        var ok = await _conversationRepository.RenameOwnedAsync(convId, ownerUserId, title, cancellationToken).ConfigureAwait(false);
+        if (!ok)
+        {
+            await AuditDataAccessAsync("conversation_access", KejiAuditOutcome.Denied, "conversation", null, cancellationToken).ConfigureAwait(false);
+        }
+        return ok;
     }
 
     public async Task<bool> DeleteConversationAsync(string convId, CancellationToken cancellationToken = default)
@@ -80,6 +93,10 @@ public sealed class KejiConversationService : IKejiConversationService
         if (deleted)
         {
             await AuditDataAccessAsync("conversation_delete", KejiAuditOutcome.Success, "conversation", convId, cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            await AuditDataAccessAsync("conversation_access", KejiAuditOutcome.Denied, "conversation", null, cancellationToken).ConfigureAwait(false);
         }
         return deleted;
     }
@@ -106,7 +123,7 @@ public sealed class KejiConversationService : IKejiConversationService
     {
         try
         {
-            await _auditService.WriteAsync(
+            var result = await _auditService.WriteAsync(
                 KejiAuditCategory.DataAccess,
                 action: action,
                 outcome: outcome,
@@ -114,14 +131,23 @@ public sealed class KejiConversationService : IKejiConversationService
                 targetType: targetType,
                 targetId: targetId,
                 cancellationToken: cancellationToken).ConfigureAwait(false);
+
+            switch (result)
+            {
+                case KejiAuditResult.PartialFailure:
+                    _logger.LogWarning("ConversationAuditFailure code=AUDIT_PARTIAL_SINK_FAILURE action={Action}", action);
+                    break;
+                case KejiAuditResult.SinkError:
+                    _logger.LogError("ConversationAuditFailure code=AUDIT_SINK_FAILED action={Action}", action);
+                    break;
+                case KejiAuditResult.ValidationError:
+                    _logger.LogWarning("ConversationAuditFailure code=AUDIT_VALIDATION_FAILED action={Action}", action);
+                    break;
+            }
         }
         catch (OperationCanceledException)
         {
             throw;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to write data access audit event: {Action}", action);
         }
     }
 }

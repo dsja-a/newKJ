@@ -1,4 +1,5 @@
 ﻿using Keji.Persistence.Models;
+using Keji.Persistence.Validation;
 using Microsoft.Data.Sqlite;
 
 namespace Keji.Persistence.Repositories;
@@ -16,6 +17,7 @@ public class SqliteMessageRepository : IMessageRepository
 
     public async Task<long> AddOwnedAsync(string conversationId, string ownerUserId, string role, string content, CancellationToken cancellationToken = default)
     {
+        UserIdValidator.RequireValid(ownerUserId);
         if (string.IsNullOrEmpty(role))
             throw new KejiPersistenceException("Message role must not be empty.");
 
@@ -98,6 +100,7 @@ public class SqliteMessageRepository : IMessageRepository
 
     public async Task<List<MessageRecord>> ListOwnedMessagesAsync(string conversationId, string ownerUserId, int limit = 100, CancellationToken cancellationToken = default)
     {
+        UserIdValidator.RequireValid(ownerUserId);
         if (limit < 1) limit = 1;
         if (limit > 1000) limit = 1000;
 
