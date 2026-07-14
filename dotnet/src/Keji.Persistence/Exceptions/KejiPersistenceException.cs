@@ -19,15 +19,4 @@ public class DuplicateUsernameException : KejiPersistenceException
     }
 }
 
-public class ConversationOwnershipException : KejiPersistenceException
-{
-    public string ConversationId { get; }
-    public string UserId { get; }
 
-    public ConversationOwnershipException(string conversationId, string userId)
-        : base($"Conversation '{conversationId}' is owned by another user.")
-    {
-        ConversationId = conversationId;
-        UserId = userId;
-    }
-}

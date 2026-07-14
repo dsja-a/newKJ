@@ -14,7 +14,7 @@ public class SqliteMessageRepository : IMessageRepository
         _timeProvider = timeProvider;
     }
 
-    public async Task<long> AddAsync(string conversationId, string role, string content, string? ownerUserId = null, CancellationToken cancellationToken = default)
+    public async Task<long> AddOwnedAsync(string conversationId, string ownerUserId, string role, string content, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrEmpty(role))
             throw new KejiPersistenceException("Message role must not be empty.");
@@ -32,25 +32,13 @@ public class SqliteMessageRepository : IMessageRepository
 
             using var updateCmd = conn.CreateCommand();
             updateCmd.Transaction = tx;
-
-            if (ownerUserId is not null)
-            {
-                updateCmd.CommandText = """
-                    UPDATE conversations SET updated_at = @now, message_count = message_count + 1
-                    WHERE id = @cid AND owner_user_id = @owner
-                    """;
-                updateCmd.Parameters.AddWithValue("@owner", ownerUserId);
-            }
-            else
-            {
-                updateCmd.CommandText = """
-                    UPDATE conversations SET updated_at = @now, message_count = message_count + 1
-                    WHERE id = @cid
-                    """;
-            }
-
+            updateCmd.CommandText = """
+                UPDATE conversations SET updated_at = @now, message_count = message_count + 1
+                WHERE id = @cid AND owner_user_id = @owner
+                """;
             updateCmd.Parameters.AddWithValue("@now", now);
             updateCmd.Parameters.AddWithValue("@cid", conversationId);
+            updateCmd.Parameters.AddWithValue("@owner", ownerUserId);
             var rows = await updateCmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
 
             if (rows == 0)
@@ -108,7 +96,7 @@ public class SqliteMessageRepository : IMessageRepository
         }
     }
 
-    public async Task<List<MessageRecord>> ListByConversationAsync(string conversationId, int limit = 100, string? ownerUserId = null, CancellationToken cancellationToken = default)
+    public async Task<List<MessageRecord>> ListOwnedMessagesAsync(string conversationId, string ownerUserId, int limit = 100, CancellationToken cancellationToken = default)
     {
         if (limit < 1) limit = 1;
         if (limit > 1000) limit = 1000;
@@ -117,28 +105,15 @@ public class SqliteMessageRepository : IMessageRepository
         {
             using var conn = await _connectionFactory.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
             using var cmd = conn.CreateCommand();
-
-            if (ownerUserId is not null)
-            {
-                cmd.CommandText = """
-                    SELECT m.id, m.conversation_id, m.role, m.content, m.created_at
-                    FROM messages m
-                    JOIN conversations c ON c.id = m.conversation_id
-                    WHERE m.conversation_id = @cid AND c.owner_user_id = @owner
-                    ORDER BY m.created_at ASC, m.id ASC LIMIT @lim
-                    """;
-                cmd.Parameters.AddWithValue("@owner", ownerUserId);
-            }
-            else
-            {
-                cmd.CommandText = """
-                    SELECT id, conversation_id, role, content, created_at
-                    FROM messages WHERE conversation_id = @cid
-                    ORDER BY created_at ASC, id ASC LIMIT @lim
-                    """;
-            }
-
+            cmd.CommandText = """
+                SELECT m.id, m.conversation_id, m.role, m.content, m.created_at
+                FROM messages m
+                JOIN conversations c ON c.id = m.conversation_id
+                WHERE m.conversation_id = @cid AND c.owner_user_id = @owner
+                ORDER BY m.created_at ASC, m.id ASC LIMIT @lim
+                """;
             cmd.Parameters.AddWithValue("@cid", conversationId);
+            cmd.Parameters.AddWithValue("@owner", ownerUserId);
             cmd.Parameters.AddWithValue("@lim", limit);
 
             var list = new List<MessageRecord>();

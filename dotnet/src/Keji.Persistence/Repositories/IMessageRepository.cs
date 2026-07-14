@@ -4,6 +4,6 @@ namespace Keji.Persistence.Repositories;
 
 public interface IMessageRepository
 {
-    Task<long> AddAsync(string conversationId, string role, string content, string? ownerUserId = null, CancellationToken cancellationToken = default);
-    Task<List<MessageRecord>> ListByConversationAsync(string conversationId, int limit = 100, string? ownerUserId = null, CancellationToken cancellationToken = default);
+    Task<long> AddOwnedAsync(string conversationId, string ownerUserId, string role, string content, CancellationToken cancellationToken = default);
+    Task<List<MessageRecord>> ListOwnedMessagesAsync(string conversationId, string ownerUserId, int limit = 100, CancellationToken cancellationToken = default);
 }

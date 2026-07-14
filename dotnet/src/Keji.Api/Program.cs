@@ -1,5 +1,6 @@
 using Keji.Api.HostedServices;
 using Keji.Api.Middleware;
+using Keji.Api.Services;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.AspNetCore.Routing;
 using Keji.Configuration.Loading;
@@ -47,6 +48,7 @@ builder.Services.AddHttpContextAccessor();
 builder.Services.AddSingleton<Keji.Auditing.Abstractions.IKejiAuditCorrelationAccessor, Keji.Api.Middleware.KejiCorrelationAccessor>();
 builder.Services.AddScoped<Keji.Security.Auth.IKejiAuditBridge, Keji.Api.Middleware.KejiAuditBridgeImpl>();
 
+builder.Services.AddScoped<IKejiConversationService, KejiConversationService>();
 builder.Services.AddControllers();
 builder.Services.AddOpenApi();
 
