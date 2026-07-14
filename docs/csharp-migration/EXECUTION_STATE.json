@@ -32,7 +32,7 @@
     "push_performed": true
   },
   "task008": {
-    "status": "not_started"
+    "functional_commit_sha": "546b3a6c2a64a3682eb0b9b364eaf0d8e96e3c65"
   },
   "test_results": {
     "task005_security_restored": "262/262",
