@@ -42,7 +42,16 @@ public sealed class KejiConversationService : IKejiConversationService
     public async Task<ConversationRecord> CreateConversationAsync(string convId, string title = "新对话", CancellationToken cancellationToken = default)
     {
         var ownerUserId = RequireUserId();
-        var record = await _conversationRepository.CreateOwnedAsync(convId, ownerUserId, title, cancellationToken).ConfigureAwait(false);
+        ConversationRecord record;
+        try
+        {
+            record = await _conversationRepository.CreateOwnedAsync(convId, ownerUserId, title, cancellationToken).ConfigureAwait(false);
+        }
+        catch (ConversationNotFoundException)
+        {
+            await AuditDataAccessAsync("conversation_access", KejiAuditOutcome.Denied, "conversation", null, cancellationToken).ConfigureAwait(false);
+            throw;
+        }
         await AuditDataAccessAsync("conversation_create", KejiAuditOutcome.Success, "conversation", convId, cancellationToken).ConfigureAwait(false);
         return record;
     }
@@ -50,7 +59,16 @@ public sealed class KejiConversationService : IKejiConversationService
     public async Task<(ConversationRecord Record, ConversationOwnershipResult Result)> EnsureConversationAsync(string convId, string title = "新对话", CancellationToken cancellationToken = default)
     {
         var ownerUserId = RequireUserId();
-        var result = await _conversationRepository.EnsureOwnedAsync(convId, ownerUserId, title, cancellationToken).ConfigureAwait(false);
+        (ConversationRecord Record, ConversationOwnershipResult Result) result;
+        try
+        {
+            result = await _conversationRepository.EnsureOwnedAsync(convId, ownerUserId, title, cancellationToken).ConfigureAwait(false);
+        }
+        catch (ConversationNotFoundException)
+        {
+            await AuditDataAccessAsync("conversation_access", KejiAuditOutcome.Denied, "conversation", null, cancellationToken).ConfigureAwait(false);
+            throw;
+        }
         if (result.Result == ConversationOwnershipResult.AlreadyOwned)
         {
             await AuditDataAccessAsync("conversation_ensure", KejiAuditOutcome.Success, "conversation", null, cancellationToken).ConfigureAwait(false);
@@ -148,6 +166,10 @@ public sealed class KejiConversationService : IKejiConversationService
         catch (OperationCanceledException)
         {
             throw;
+        }
+        catch
+        {
+            _logger.LogError("ConversationAuditFailure code=AUDIT_UNEXPECTED_FAILURE action={Action}", action);
         }
     }
 }

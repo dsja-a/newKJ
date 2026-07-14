@@ -8,6 +8,14 @@ public class KejiPersistenceException : Exception
     public KejiPersistenceException(string message, int errorCode) : base(message) { ErrorCode = errorCode; }
 }
 
+public class ConversationNotFoundException : KejiPersistenceException
+{
+    public ConversationNotFoundException(string conversationId)
+        : base("Conversation not found.")
+    {
+    }
+}
+
 public class DuplicateUsernameException : KejiPersistenceException
 {
     public string Username { get; }

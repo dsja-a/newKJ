@@ -69,9 +69,14 @@ public class SqliteConversationRepository : IConversationRepository
             }
 
             await SqliteExceptionTranslator.SafeRollbackAsync(tx).ConfigureAwait(false);
-            throw new KejiPersistenceException($"Conversation '{convId}' not found.");
+            throw new ConversationNotFoundException(convId);
         }
         catch (OperationCanceledException)
+        {
+            await SqliteExceptionTranslator.SafeRollbackAsync(tx).ConfigureAwait(false);
+            throw;
+        }
+        catch (ConversationNotFoundException)
         {
             await SqliteExceptionTranslator.SafeRollbackAsync(tx).ConfigureAwait(false);
             throw;
@@ -155,9 +160,14 @@ public class SqliteConversationRepository : IConversationRepository
             }
 
             await SqliteExceptionTranslator.SafeRollbackAsync(tx).ConfigureAwait(false);
-            throw new KejiPersistenceException($"Conversation '{convId}' not found.");
+            throw new ConversationNotFoundException(convId);
         }
         catch (OperationCanceledException)
+        {
+            await SqliteExceptionTranslator.SafeRollbackAsync(tx).ConfigureAwait(false);
+            throw;
+        }
+        catch (ConversationNotFoundException)
         {
             await SqliteExceptionTranslator.SafeRollbackAsync(tx).ConfigureAwait(false);
             throw;

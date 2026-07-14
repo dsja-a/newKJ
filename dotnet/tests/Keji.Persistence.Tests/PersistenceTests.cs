@@ -1017,7 +1017,7 @@ public class PersistenceTests
         var repo = new SqliteConversationRepository(factory, ctx.FixedTime);
 
         await repo.CreateOwnedAsync("owned_conv", "aaaaaaaaaaaaaaaa", "对话");
-        var ex = await Assert.ThrowsAsync<KejiPersistenceException>(() =>
+        var ex = await Assert.ThrowsAsync<ConversationNotFoundException>(() =>
             repo.CreateOwnedAsync("owned_conv", "bbbbbbbbbbbbbbbb", "不应改属于"));
         var c = await repo.GetOwnedAsync("owned_conv", "aaaaaaaaaaaaaaaa");
         Assert.NotNull(c);
@@ -1036,7 +1036,7 @@ public class PersistenceTests
         var c1 = await repo.CreateOwnedAsync("unowned_conv", "aaaaaaaaaaaaaaaa", "对话");
         Assert.Equal("aaaaaaaaaaaaaaaa", c1.OwnerUserId);
 
-        var ex = await Assert.ThrowsAsync<KejiPersistenceException>(() =>
+        var ex = await Assert.ThrowsAsync<ConversationNotFoundException>(() =>
             repo.CreateOwnedAsync("unowned_conv", "9999999999999999", "对话"));
         var c2 = await repo.GetOwnedAsync("unowned_conv", "aaaaaaaaaaaaaaaa");
         Assert.NotNull(c2);
@@ -1095,7 +1095,7 @@ public class PersistenceTests
         var repo = new SqliteConversationRepository(factory, ctx.FixedTime);
 
         await repo.CreateOwnedAsync("taken_conv", "5555555555555555", "对话");
-        var ex = await Assert.ThrowsAsync<KejiPersistenceException>(() =>
+        var ex = await Assert.ThrowsAsync<ConversationNotFoundException>(() =>
             repo.EnsureOwnedAsync("taken_conv", "6666666666666666"));
     }
 
@@ -1126,7 +1126,7 @@ public class PersistenceTests
         Assert.Equal(ConversationOwnershipResult.AlreadyOwned, successResult.result.Item2);
 
         Assert.Single(failed);
-        Assert.IsType<KejiPersistenceException>(failed[0].exception);
+        Assert.IsType<ConversationNotFoundException>(failed[0].exception);
 
         var final = await repo.GetOwnedAsync("concurrent_claim", userA);
         Assert.NotNull(final);
@@ -1153,7 +1153,7 @@ public class PersistenceTests
 
         var thrown = results.Where(r => r.exception is not null).ToList();
         Assert.Single(thrown);
-        Assert.IsType<KejiPersistenceException>(thrown[0].exception);
+        Assert.IsType<ConversationNotFoundException>(thrown[0].exception);
     }
 
     [Fact]
@@ -3117,7 +3117,7 @@ public class PersistenceTests
         var (record1, result1) = await repo.EnsureOwnedAsync("eo_owner", "aaaaaaaaaaaaaaaa");
         Assert.Equal(ConversationOwnershipResult.Created, result1);
 
-        var ex = await Assert.ThrowsAsync<KejiPersistenceException>(() =>
+        var ex = await Assert.ThrowsAsync<ConversationNotFoundException>(() =>
             repo.EnsureOwnedAsync("eo_owner", "bbbbbbbbbbbbbbbb"));
 
         var fetched = await repo.GetOwnedAsync("eo_owner", "aaaaaaaaaaaaaaaa");
