@@ -3,8 +3,8 @@
 | Field | Value |
 |---|---|
 | 当前任务 | TASK-009 |
-| 当前状态 | in_progress |
-| 当前 C# 完成度 | 34% |
+| 当前状态 | accepted |
+| 当前 C# 完成度 | 36% |
 | 下一任务 | TASK-010 |
 
-TASK-009 已实现（待提交）：Conversation 和 Message 的 SQL 级所有权隔离。`GetAsync`、`RenameAsync`、`DeleteAsync`、`AddAsync`（消息）、`ListByConversationAsync` 均支持可选的 `ownerUserId` 参数，过滤条件直接写入 SQL WHERE 子句。测试覆盖 33 个新用例，总计 1196/1196 通过。
+TASK-009 已完成：Conversation 和 Message 的 SQL 级所有权隔离、审计异常安全隔离、跨 Owner 拒绝审计、Service 层架构验证。新增 57 个测试用例（Service 架构、审计隔离、跨 Owner、集成），总计 1253/1253 通过。0 失败，0 跳过，0 警告，0 错误，0 NuGet 漏洞。
