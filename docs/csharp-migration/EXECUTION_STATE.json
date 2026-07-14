@@ -3,6 +3,10 @@
   "branch": "rewrite/csharp-core",
   "python_baseline": "aad0afab7181e529a53691a4f2801f295025a2c7",
   "last_accepted_sha": "b88827df4b68158b0bd6a0a6c9f892c4bda55d92",
+  "task008_accepted_sha": "aaa126eb4d03ca9e8e9aba0c7b1c0931cdcde31e",
+  "task008_initial_commit_sha": "546b3a62729cb916ff0eca0af08e64ff89019df9",
+  "task008_repair_commit_sha": "aaa126eb4d03ca9e8e9aba0c7b1c0931cdcde31e",
+  "task008_final_commit_sha": "aaa126eb4d03ca9e8e9aba0c7b1c0931cdcde31e",
   "task006_main_commit_sha": "2bbdce42494d1e0a7eaaa8bd2905785bc4b6941f",
   "task006_edge_fix_commit_sha": "f6a2dc201d5fb4dafdf04988375751b051743f46",
   "task006_test_handoff_commit_sha": "88a6f8ff7b9e87302ad5233c9914914a572a57ec",
@@ -11,7 +15,7 @@
   "task006_functional_acceptance_sha": "96eed064ef2bbee3f0b04e6727b0b49dbfdd4144",
   "task007_final_commit_sha": "b88827df4b68158b0bd6a0a6c9f892c4bda55d92",
   "current_task": "TASK-008",
-  "status": "repair_in_progress",
+  "status": "accepted",
   "csharp_completion_percent": 32,
   "completed_tasks": [
     "TASK-000",
@@ -21,7 +25,8 @@
     "TASK-004",
     "TASK-005",
     "TASK-006",
-    "TASK-007"
+    "TASK-007",
+    "TASK-008"
   ],
   "next_task": "TASK-009",
   "task007": {
@@ -32,7 +37,8 @@
     "push_performed": true
   },
   "task008": {
-    "functional_commit_sha": "546b3a6c2a64a3682eb0b9b364eaf0d8e96e3c65"
+    "functional_commit_sha": "546b3a62729cb916ff0eca0af08e64ff89019df9",
+    "repair_commit_sha": "aaa126eb4d03ca9e8e9aba0c7b1c0931cdcde31e"
   },
   "test_results": {
     "task005_security_restored": "262/262",
@@ -45,8 +51,8 @@
     "Keji.Agent.Tests": "1/1",
     "Keji.FileSystem.Tests": "289/289",
     "Keji.Tools.Tests": "1/1",
-    "Keji.Auditing.Tests": "60/60",
-    "solution_total": "1121/1121",
+    "Keji.Auditing.Tests": "98/98",
+    "solution_total": "1159/1159",
     "failed": 0,
     "skipped": 0,
     "build_warnings": 0,
