@@ -143,11 +143,21 @@ public class SqliteConversationRepository : IConversationRepository
         }
     }
 
-    public async Task<ConversationRecord?> GetAsync(string convId, CancellationToken cancellationToken = default)
+    public async Task<ConversationRecord?> GetAsync(string convId, string? ownerUserId = null, CancellationToken cancellationToken = default)
     {
         try
         {
             using var conn = await _connectionFactory.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+
+            if (ownerUserId is not null)
+            {
+                using var cmd = conn.CreateCommand();
+                cmd.CommandText = "SELECT id, title, created_at, updated_at, message_count, owner_user_id FROM conversations WHERE id = @id AND owner_user_id = @owner";
+                cmd.Parameters.AddWithValue("@id", convId);
+                cmd.Parameters.AddWithValue("@owner", ownerUserId);
+                return await ReadSingleConversationAsync(cmd, cancellationToken).ConfigureAwait(false);
+            }
+
             return await GetInternalAsync(conn, convId, cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
@@ -200,14 +210,24 @@ public class SqliteConversationRepository : IConversationRepository
         }
     }
 
-    public async Task<bool> RenameAsync(string convId, string title, CancellationToken cancellationToken = default)
+    public async Task<bool> RenameAsync(string convId, string title, string? ownerUserId = null, CancellationToken cancellationToken = default)
     {
         try
         {
             var now = _timeProvider.Now;
             using var conn = await _connectionFactory.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
             using var cmd = conn.CreateCommand();
-            cmd.CommandText = "UPDATE conversations SET title = @title, updated_at = @t WHERE id = @id";
+
+            if (ownerUserId is not null)
+            {
+                cmd.CommandText = "UPDATE conversations SET title = @title, updated_at = @t WHERE id = @id AND owner_user_id = @owner";
+                cmd.Parameters.AddWithValue("@owner", ownerUserId);
+            }
+            else
+            {
+                cmd.CommandText = "UPDATE conversations SET title = @title, updated_at = @t WHERE id = @id";
+            }
+
             cmd.Parameters.AddWithValue("@title", title);
             cmd.Parameters.AddWithValue("@t", now);
             cmd.Parameters.AddWithValue("@id", convId);
@@ -224,7 +244,7 @@ public class SqliteConversationRepository : IConversationRepository
         }
     }
 
-    public async Task<bool> DeleteAsync(string convId, CancellationToken cancellationToken = default)
+    public async Task<bool> DeleteAsync(string convId, string? ownerUserId = null, CancellationToken cancellationToken = default)
     {
         SqliteConnection? conn = null;
         Microsoft.Data.Sqlite.SqliteTransaction? tx = null;
@@ -238,13 +258,33 @@ public class SqliteConversationRepository : IConversationRepository
 
             using var delMsgCmd = conn.CreateCommand();
             delMsgCmd.Transaction = tx;
-            delMsgCmd.CommandText = "DELETE FROM messages WHERE conversation_id = @id";
+
+            if (ownerUserId is not null)
+            {
+                delMsgCmd.CommandText = "DELETE FROM messages WHERE id IN (SELECT m.id FROM messages m JOIN conversations c ON c.id = m.conversation_id WHERE m.conversation_id = @id AND c.owner_user_id = @owner)";
+                delMsgCmd.Parameters.AddWithValue("@owner", ownerUserId);
+            }
+            else
+            {
+                delMsgCmd.CommandText = "DELETE FROM messages WHERE conversation_id = @id";
+            }
+
             delMsgCmd.Parameters.AddWithValue("@id", convId);
             await delMsgCmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
 
             using var delConvCmd = conn.CreateCommand();
             delConvCmd.Transaction = tx;
-            delConvCmd.CommandText = "DELETE FROM conversations WHERE id = @id";
+
+            if (ownerUserId is not null)
+            {
+                delConvCmd.CommandText = "DELETE FROM conversations WHERE id = @id AND owner_user_id = @owner";
+                delConvCmd.Parameters.AddWithValue("@owner", ownerUserId);
+            }
+            else
+            {
+                delConvCmd.CommandText = "DELETE FROM conversations WHERE id = @id";
+            }
+
             delConvCmd.Parameters.AddWithValue("@id", convId);
             var rows = await delConvCmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
 
@@ -290,6 +330,23 @@ public class SqliteConversationRepository : IConversationRepository
         using var cmd = conn.CreateCommand();
         cmd.CommandText = "SELECT id, title, created_at, updated_at, message_count, owner_user_id FROM conversations WHERE id = @id";
         cmd.Parameters.AddWithValue("@id", convId);
+        using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            return null;
+
+        return new ConversationRecord
+        {
+            Id = reader.GetString(0),
+            Title = reader.IsDBNull(1) ? "新对话" : reader.GetString(1),
+            CreatedAt = reader.GetDouble(2),
+            UpdatedAt = reader.GetDouble(3),
+            MessageCount = reader.IsDBNull(4) ? 0 : reader.GetInt32(4),
+            OwnerUserId = reader.IsDBNull(5) ? null : reader.GetString(5),
+        };
+    }
+
+    private static async Task<ConversationRecord?> ReadSingleConversationAsync(SqliteCommand cmd, CancellationToken cancellationToken)
+    {
         using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
         if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
             return null;

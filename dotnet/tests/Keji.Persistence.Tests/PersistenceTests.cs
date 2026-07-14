@@ -1877,7 +1877,7 @@ public class PersistenceTests
         var conv = await convRepo.CreateAsync("ct_conv", cancellationToken: ct);
         Assert.NotNull(conv);
 
-        var msgId = await msgRepo.AddAsync("ct_conv", "user", "test", ct);
+        var msgId = await msgRepo.AddAsync("ct_conv", "user", "test", cancellationToken: ct);
         Assert.True(msgId > 0);
 
         await settingsRepo.SetAsync("ct_key", "ct_val", ct);
@@ -1944,7 +1944,7 @@ public class PersistenceTests
         var repo = new SqliteMessageRepository(factory, ctx.FixedTime);
         var preCancelled = new CancellationToken(true);
         await Assert.ThrowsAsync<OperationCanceledException>(() =>
-            repo.AddAsync("test_conv", "user", "test", preCancelled));
+            repo.AddAsync("test_conv", "user", "test", cancellationToken: preCancelled));
     }
 
     [Fact]
@@ -2525,7 +2525,7 @@ public class PersistenceTests
         var blockingFactory = new BlockingConnectionFactory(factory, ready, proceed);
         var repo = new SqliteConversationRepository(blockingFactory, ctx.FixedTime);
 
-        var repoTask = repo.DeleteAsync("cancel_del", cts.Token);
+        var repoTask = repo.DeleteAsync("cancel_del", cancellationToken: cts.Token);
 
         await ready.Task.WaitAsync(TimeSpan.FromSeconds(5));
         cts.Cancel();
@@ -2580,7 +2580,7 @@ public class PersistenceTests
         var blockingFactory = new BlockingConnectionFactory(factory, ready, proceed);
         var msgRepo = new SqliteMessageRepository(blockingFactory, ctx.FixedTime);
 
-        var repoTask = msgRepo.AddAsync("cancel_after_tx", "user", "test", cts.Token);
+        var repoTask = msgRepo.AddAsync("cancel_after_tx", "user", "test", cancellationToken: cts.Token);
 
         // Wait for connection to be opened (but not yet returned to AddAsync)
         await ready.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -2649,6 +2649,501 @@ public class PersistenceTests
         Assert.IsNotType<SqliteException>(ex);
         Assert.Null(ex.InnerException);
         Assert.True(ex.ErrorCode > 0);
+    }
+
+    // ──────────────────────────────────────────────
+    // Ownership Isolation Tests
+    // ──────────────────────────────────────────────
+
+    [Fact]
+    public async Task Conversation_Get_WithoutOwner_ReturnsAny()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var repo = new SqliteConversationRepository(factory, ctx.FixedTime);
+
+        await repo.CreateAsync("c_get_any", "对话", "user_a");
+        var result = await repo.GetAsync("c_get_any");
+        Assert.NotNull(result);
+        Assert.Equal("user_a", result!.OwnerUserId);
+    }
+
+    [Fact]
+    public async Task Conversation_Get_WithOwner_ReturnsOwned()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var repo = new SqliteConversationRepository(factory, ctx.FixedTime);
+
+        await repo.CreateAsync("c_get_own", "我的对话", "user_a");
+        var result = await repo.GetAsync("c_get_own", ownerUserId: "user_a");
+        Assert.NotNull(result);
+        Assert.Equal("user_a", result!.OwnerUserId);
+    }
+
+    [Fact]
+    public async Task Conversation_Get_WithOwner_ReturnsNullForOtherOwner()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var repo = new SqliteConversationRepository(factory, ctx.FixedTime);
+
+        await repo.CreateAsync("c_get_other", "别人的对话", "user_a");
+        var result = await repo.GetAsync("c_get_other", ownerUserId: "user_b");
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public async Task Conversation_Get_WithOwner_ReturnsNullForNonexistent()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var repo = new SqliteConversationRepository(factory, ctx.FixedTime);
+
+        var result = await repo.GetAsync("nonexistent", ownerUserId: "user_a");
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public async Task Conversation_Get_WithOwner_UnownedIsHidden()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var repo = new SqliteConversationRepository(factory, ctx.FixedTime);
+
+        await repo.CreateAsync("c_unowned", "无主对话");
+        var result = await repo.GetAsync("c_unowned", ownerUserId: "user_a");
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public async Task Conversation_Rename_WithoutOwner_AlwaysWorks()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var repo = new SqliteConversationRepository(factory, ctx.FixedTime);
+
+        await repo.CreateAsync("c_ren_no_owner", "原名", "user_a");
+        var ok = await repo.RenameAsync("c_ren_no_owner", "新名");
+        Assert.True(ok);
+        var updated = await repo.GetAsync("c_ren_no_owner");
+        Assert.Equal("新名", updated!.Title);
+    }
+
+    [Fact]
+    public async Task Conversation_Rename_WithOwner_SucceedsForOwner()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var repo = new SqliteConversationRepository(factory, ctx.FixedTime);
+
+        await repo.CreateAsync("c_ren_owner", "原名", "user_a");
+        var ok = await repo.RenameAsync("c_ren_owner", "新名", ownerUserId: "user_a");
+        Assert.True(ok);
+        var updated = await repo.GetAsync("c_ren_owner");
+        Assert.Equal("新名", updated!.Title);
+    }
+
+    [Fact]
+    public async Task Conversation_Rename_WithOwner_FailsForOtherOwner()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var repo = new SqliteConversationRepository(factory, ctx.FixedTime);
+
+        await repo.CreateAsync("c_ren_other", "原名", "user_a");
+        var ok = await repo.RenameAsync("c_ren_other", "新名", ownerUserId: "user_b");
+        Assert.False(ok);
+        var updated = await repo.GetAsync("c_ren_other");
+        Assert.Equal("原名", updated!.Title);
+    }
+
+    [Fact]
+    public async Task Conversation_Rename_WithOwner_FailsForUnowned()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var repo = new SqliteConversationRepository(factory, ctx.FixedTime);
+
+        await repo.CreateAsync("c_ren_unowned", "原名");
+        var ok = await repo.RenameAsync("c_ren_unowned", "新名", ownerUserId: "user_a");
+        Assert.False(ok);
+        var updated = await repo.GetAsync("c_ren_unowned");
+        Assert.Equal("原名", updated!.Title);
+    }
+
+    [Fact]
+    public async Task Conversation_Rename_WithOwner_FailsForNonexistent()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var repo = new SqliteConversationRepository(factory, ctx.FixedTime);
+
+        var ok = await repo.RenameAsync("nonexistent", "新名", ownerUserId: "user_a");
+        Assert.False(ok);
+    }
+
+    [Fact]
+    public async Task Conversation_Delete_WithoutOwner_AlwaysWorks()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var repo = new SqliteConversationRepository(factory, ctx.FixedTime);
+
+        await repo.CreateAsync("c_del_no_owner", "待删", "user_a");
+        Assert.True(await repo.DeleteAsync("c_del_no_owner"));
+        Assert.Null(await repo.GetAsync("c_del_no_owner"));
+    }
+
+    [Fact]
+    public async Task Conversation_Delete_WithOwner_SucceedsForOwner()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var repo = new SqliteConversationRepository(factory, ctx.FixedTime);
+
+        await repo.CreateAsync("c_del_owner", "待删", "user_a");
+        Assert.True(await repo.DeleteAsync("c_del_owner", ownerUserId: "user_a"));
+        Assert.Null(await repo.GetAsync("c_del_owner"));
+    }
+
+    [Fact]
+    public async Task Conversation_Delete_WithOwner_FailsForOtherOwner()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var repo = new SqliteConversationRepository(factory, ctx.FixedTime);
+
+        await repo.CreateAsync("c_del_other", "别人的对话", "user_a");
+        Assert.False(await repo.DeleteAsync("c_del_other", ownerUserId: "user_b"));
+        Assert.NotNull(await repo.GetAsync("c_del_other"));
+    }
+
+    [Fact]
+    public async Task Conversation_Delete_WithOwner_FailsForUnowned()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var repo = new SqliteConversationRepository(factory, ctx.FixedTime);
+
+        await repo.CreateAsync("c_del_unowned", "无主对话");
+        Assert.False(await repo.DeleteAsync("c_del_unowned", ownerUserId: "user_a"));
+        Assert.NotNull(await repo.GetAsync("c_del_unowned"));
+    }
+
+    [Fact]
+    public async Task Conversation_Delete_WithOwner_FailsForNonexistent()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var repo = new SqliteConversationRepository(factory, ctx.FixedTime);
+
+        Assert.False(await repo.DeleteAsync("nonexistent", ownerUserId: "user_a"));
+    }
+
+    [Fact]
+    public async Task Message_Add_WithoutOwner_AlwaysWorks()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var convRepo = new SqliteConversationRepository(factory, ctx.FixedTime);
+        var msgRepo = new SqliteMessageRepository(factory, ctx.FixedTime);
+
+        await convRepo.CreateAsync("msg_add_no_owner", "对话", "user_a");
+        var msgId = await msgRepo.AddAsync("msg_add_no_owner", "user", "hello");
+        Assert.True(msgId > 0);
+    }
+
+    [Fact]
+    public async Task Message_Add_WithOwner_SucceedsForOwner()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var convRepo = new SqliteConversationRepository(factory, ctx.FixedTime);
+        var msgRepo = new SqliteMessageRepository(factory, ctx.FixedTime);
+
+        await convRepo.CreateAsync("msg_add_own", "我的对话", "user_a");
+        var msgId = await msgRepo.AddAsync("msg_add_own", "user", "hello", ownerUserId: "user_a");
+        Assert.True(msgId > 0);
+    }
+
+    [Fact]
+    public async Task Message_Add_WithOwner_ThrowsForOtherOwner()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var convRepo = new SqliteConversationRepository(factory, ctx.FixedTime);
+        var msgRepo = new SqliteMessageRepository(factory, ctx.FixedTime);
+
+        await convRepo.CreateAsync("msg_add_other", "别人的对话", "user_a");
+        var ex = await Assert.ThrowsAsync<KejiPersistenceException>(() =>
+            msgRepo.AddAsync("msg_add_other", "user", "hello", ownerUserId: "user_b"));
+        Assert.DoesNotContain("hello", ex.Message);
+    }
+
+    [Fact]
+    public async Task Message_Add_WithOwner_ThrowsForUnowned()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var convRepo = new SqliteConversationRepository(factory, ctx.FixedTime);
+        var msgRepo = new SqliteMessageRepository(factory, ctx.FixedTime);
+
+        await convRepo.CreateAsync("msg_add_unowned", "无主对话");
+        var ex = await Assert.ThrowsAsync<KejiPersistenceException>(() =>
+            msgRepo.AddAsync("msg_add_unowned", "user", "hello", ownerUserId: "user_a"));
+        Assert.DoesNotContain("hello", ex.Message);
+    }
+
+    [Fact]
+    public async Task Message_Add_WithOwner_ThrowsForMissingConversation()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var msgRepo = new SqliteMessageRepository(factory, ctx.FixedTime);
+
+        var ex = await Assert.ThrowsAsync<KejiPersistenceException>(() =>
+            msgRepo.AddAsync("nonexistent", "user", "hello", ownerUserId: "user_a"));
+        Assert.IsNotType<SqliteException>(ex);
+    }
+
+    [Fact]
+    public async Task Message_Add_WithOwner_NoResidualRowsOnFailure()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var convRepo = new SqliteConversationRepository(factory, ctx.FixedTime);
+        var msgRepo = new SqliteMessageRepository(factory, ctx.FixedTime);
+
+        await convRepo.CreateAsync("msg_residual", "对话", "user_a");
+        await Assert.ThrowsAsync<KejiPersistenceException>(() =>
+            msgRepo.AddAsync("msg_residual", "user", "secret", ownerUserId: "user_b"));
+
+        using var conn = await GetOpenConnectionAsync(factory);
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT COUNT(*) FROM messages WHERE conversation_id = 'msg_residual'";
+        var count = Convert.ToInt32(await cmd.ExecuteScalarAsync());
+        Assert.Equal(0, count);
+    }
+
+    [Fact]
+    public async Task Message_List_WithoutOwner_ShowsAll()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var convRepo = new SqliteConversationRepository(factory, ctx.FixedTime);
+        var msgRepo = new SqliteMessageRepository(factory, ctx.FixedTime);
+
+        await convRepo.CreateAsync("msg_list_all", "对话", "user_a");
+        await msgRepo.AddAsync("msg_list_all", "user", "hello");
+        var msgs = await msgRepo.ListByConversationAsync("msg_list_all");
+        Assert.Single(msgs);
+    }
+
+    [Fact]
+    public async Task Message_List_WithOwner_ShowsForOwner()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var convRepo = new SqliteConversationRepository(factory, ctx.FixedTime);
+        var msgRepo = new SqliteMessageRepository(factory, ctx.FixedTime);
+
+        await convRepo.CreateAsync("msg_list_own", "对话", "user_a");
+        await msgRepo.AddAsync("msg_list_own", "user", "hello");
+        var msgs = await msgRepo.ListByConversationAsync("msg_list_own", ownerUserId: "user_a");
+        Assert.Single(msgs);
+        Assert.Equal("hello", msgs[0].Content);
+    }
+
+    [Fact]
+    public async Task Message_List_WithOwner_EmptyForOtherOwner()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var convRepo = new SqliteConversationRepository(factory, ctx.FixedTime);
+        var msgRepo = new SqliteMessageRepository(factory, ctx.FixedTime);
+
+        await convRepo.CreateAsync("msg_list_other", "对话", "user_a");
+        await msgRepo.AddAsync("msg_list_other", "user", "hello");
+        var msgs = await msgRepo.ListByConversationAsync("msg_list_other", ownerUserId: "user_b");
+        Assert.Empty(msgs);
+    }
+
+    [Fact]
+    public async Task Message_List_WithOwner_EmptyForUnowned()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var convRepo = new SqliteConversationRepository(factory, ctx.FixedTime);
+        var msgRepo = new SqliteMessageRepository(factory, ctx.FixedTime);
+
+        await convRepo.CreateAsync("msg_list_unowned", "无主对话");
+        await msgRepo.AddAsync("msg_list_unowned", "user", "hello");
+        var msgs = await msgRepo.ListByConversationAsync("msg_list_unowned", ownerUserId: "user_a");
+        Assert.Empty(msgs);
+    }
+
+    [Fact]
+    public async Task Message_List_WithOwner_EmptyForNonexistent()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var msgRepo = new SqliteMessageRepository(factory, ctx.FixedTime);
+
+        var msgs = await msgRepo.ListByConversationAsync("nonexistent", ownerUserId: "user_a");
+        Assert.Empty(msgs);
+    }
+
+    [Fact]
+    public async Task Conversation_List_WithOwner_HidesOtherOwners()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var repo = new SqliteConversationRepository(factory, ctx.FixedTime);
+
+        await repo.CreateAsync("c_list_a1", "a1", "user_a");
+        await repo.CreateAsync("c_list_b1", "b1", "user_b");
+        await repo.CreateAsync("c_list_a2", "a2", "user_a");
+        await repo.CreateAsync("c_list_b2", "b2", "user_b");
+        await repo.CreateAsync("c_list_unowned", "无主");
+
+        var aConvs = await repo.ListAsync(limit: 50, ownerUserId: "user_a");
+        Assert.Equal(2, aConvs.Count);
+        Assert.All(aConvs, c => Assert.Equal("user_a", c.OwnerUserId));
+    }
+
+    [Fact]
+    public async Task Conversation_List_WithOwner_ExcludesUnowned()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var repo = new SqliteConversationRepository(factory, ctx.FixedTime);
+
+        await repo.CreateAsync("c_list_owned", "有主", "user_a");
+        await repo.CreateAsync("c_list_unowned", "无主");
+
+        var aConvs = await repo.ListAsync(limit: 50, ownerUserId: "user_a");
+        Assert.Single(aConvs);
+        Assert.Equal("c_list_owned", aConvs[0].Id);
+    }
+
+    [Fact]
+    public async Task Conversation_List_WithoutOwner_IncludesAll()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var repo = new SqliteConversationRepository(factory, ctx.FixedTime);
+
+        await repo.CreateAsync("c_list_all1", "a", "user_a");
+        await repo.CreateAsync("c_list_all2", "b", "user_b");
+        await repo.CreateAsync("c_list_all3", "无主");
+
+        var all = await repo.ListAsync(limit: 50);
+        Assert.Equal(3, all.Count);
+    }
+
+    [Fact]
+    public async Task Conversation_Delete_WithOwner_RemovesMessagesOnlyForOwner()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var convRepo = new SqliteConversationRepository(factory, ctx.FixedTime);
+        var msgRepo = new SqliteMessageRepository(factory, ctx.FixedTime);
+
+        await convRepo.CreateAsync("c_del_msgs_own", "对话", "user_a");
+        await msgRepo.AddAsync("c_del_msgs_own", "user", "hello");
+
+        Assert.True(await convRepo.DeleteAsync("c_del_msgs_own", ownerUserId: "user_a"));
+        var msgs = await msgRepo.ListByConversationAsync("c_del_msgs_own");
+        Assert.Empty(msgs);
+    }
+
+    [Fact]
+    public async Task Conversation_Delete_WithOwner_FailsForOtherOwner_MessagesPreserved()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var convRepo = new SqliteConversationRepository(factory, ctx.FixedTime);
+        var msgRepo = new SqliteMessageRepository(factory, ctx.FixedTime);
+
+        await convRepo.CreateAsync("c_del_msgs_other", "对话", "user_a");
+        await msgRepo.AddAsync("c_del_msgs_other", "user", "hello");
+
+        Assert.False(await convRepo.DeleteAsync("c_del_msgs_other", ownerUserId: "user_b"));
+        var msgs = await msgRepo.ListByConversationAsync("c_del_msgs_other");
+        Assert.Single(msgs);
+    }
+
+    [Fact]
+    public async Task EnsureOwned_WithOwner_IsolationPreserved()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var repo = new SqliteConversationRepository(factory, ctx.FixedTime);
+
+        var (record1, result1) = await repo.EnsureOwnedAsync("eo_owner", "user_a");
+        Assert.Equal(ConversationOwnershipResult.Created, result1);
+
+        var (record2, result2) = await repo.EnsureOwnedAsync("eo_owner", "user_b");
+        Assert.Equal(ConversationOwnershipResult.OwnedByAnotherUser, result2);
+
+        var fetched = await repo.GetAsync("eo_owner", ownerUserId: "user_a");
+        Assert.NotNull(fetched);
+
+        var hidden = await repo.GetAsync("eo_owner", ownerUserId: "user_b");
+        Assert.Null(hidden);
+    }
+
+    [Fact]
+    public async Task Message_Add_WithOwner_Failure_DoesNotLeakSensitiveContent()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        var convRepo = new SqliteConversationRepository(factory, ctx.FixedTime);
+        var msgRepo = new SqliteMessageRepository(factory, ctx.FixedTime);
+
+        await convRepo.CreateAsync("leak_test", "对话", "user_a");
+        try
+        {
+            await msgRepo.AddAsync("leak_test", "user", "超敏感API_Key_12345", ownerUserId: "user_b");
+        }
+        catch (KejiPersistenceException ex)
+        {
+            Assert.DoesNotContain("超敏感API_Key", ex.Message);
+        }
     }
 
     private static async Task<List<string>> GetTableNamesAsync(SqliteConnection conn)
