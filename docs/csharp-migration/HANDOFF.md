@@ -4,9 +4,9 @@
 
 - Repository: `dsja-a/newKJ`
 - Branch: `rewrite/csharp-core`
-- Last accepted baseline: `96eed064ef2bbee3f0b04e6727b0b49dbfdd4144`
+- Last accepted baseline: `b88827df4b68158b0bd6a0a6c9f892c4bda55d92`
 - Current task: TASK-007
-- Current status: ready_for_acceptance
+- Current status: accepted
 - Formal C# completion: 28%
 - Next task: TASK-008
 - TASK-008 status: not started
@@ -58,4 +58,4 @@
 
 ## Next action
 
-Accept TASK-007 by creating the `feat: implement workspace path sandbox` commit on `rewrite/csharp-core`, push, record the acceptance SHA, then enter TASK-008.
+TASK-007 is accepted. The `feat: implement workspace path sandbox` commit is `b88827df4b68158b0bd6a0a6c9f892c4bda55d92`. The next task is TASK-008 (structured security audit foundation), which has not started.

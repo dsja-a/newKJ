@@ -84,4 +84,4 @@ All operations revalidate handle identity immediately before execution. A missin
 - Known NuGet vulnerabilities: 0
 - `git diff --check`: empty stdout and stderr
 
-TASK-007 P1-P4 is fully implemented and verified, pending acceptance commit.
+TASK-007 P1-P4 is accepted at commit `b88827df4b68158b0bd6a0a6c9f892c4bda55d92`.
