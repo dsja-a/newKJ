@@ -12,9 +12,20 @@ using Keji.Tools.Validation;
 
 namespace Keji.ToolWorker.Client;
 
-public sealed record WorkerExecutionConfig
+public sealed class WorkerExecutionConfig
 {
-    public TimeSpan Timeout { get; init; } = TimeSpan.FromSeconds(10);
+    private TimeSpan _timeout = TimeSpan.FromSeconds(10);
+
+    public TimeSpan Timeout
+    {
+        get => _timeout;
+        set
+        {
+            if (value <= TimeSpan.Zero || value > TimeSpan.FromSeconds(60))
+                throw new ArgumentOutOfRangeException(nameof(value), "Timeout must be between 1ms and 60s");
+            _timeout = value;
+        }
+    }
 
     public WorkerExecutionConfig()
     {
@@ -22,8 +33,6 @@ public sealed record WorkerExecutionConfig
 
     public WorkerExecutionConfig(TimeSpan timeout)
     {
-        if (timeout <= TimeSpan.Zero || timeout > TimeSpan.FromSeconds(60))
-            throw new ArgumentOutOfRangeException(nameof(timeout), "Timeout must be between 1ms and 60s");
         Timeout = timeout;
     }
 }
@@ -188,7 +197,7 @@ public sealed class ToolExecutionCoordinator : IToolExecutionCoordinator
         }
         catch
         {
-            // Audit failure must not change execution outcome
+            System.Diagnostics.Trace.TraceWarning("KEJI_TOOL_AUDIT_WRITE_FAILED");
         }
     }
 }

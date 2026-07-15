@@ -79,4 +79,29 @@ public class ArchitectureTests
         var method = extensionType.GetMethod("AddKejiToolPipelineForwarder");
         Assert.NotNull(method);
     }
+
+    [Fact]
+    public void AuditCatch_DoesNotUseExMessage()
+    {
+        var dir = AppContext.BaseDirectory;
+        string? coordinatorSourcePath = null;
+        while (dir is not null)
+        {
+            var candidate = Path.Combine(dir, "dotnet", "src", "Keji.ToolWorker.Client", "ToolExecutionCoordinator.cs");
+            if (File.Exists(candidate))
+            {
+                coordinatorSourcePath = candidate;
+                break;
+            }
+            dir = Path.GetDirectoryName(dir);
+        }
+
+        Assert.NotNull(coordinatorSourcePath);
+        var content = File.ReadAllText(coordinatorSourcePath);
+
+        // The AuditAsync catch block must not reference Exception members
+        Assert.DoesNotContain("ex.Message", content);
+        Assert.DoesNotContain("ex.ToString", content);
+        Assert.DoesNotContain("StackTrace", content);
+    }
 }

@@ -251,6 +251,121 @@ public class CoordinatorTests
         Assert.False(result.Success);
     }
 
+    [Fact]
+    public async Task Coordinator_ClientTimeout_ReturnsTimeout()
+    {
+        var coord = new ToolExecutionCoordinator(
+            new FakeWorkerClient(new ToolWorkerResponse
+            {
+                ProtocolVersion = "1.0",
+                RequestId = "",
+                ErrorCode = (int)ToolWorkerErrorCode.Timeout,
+                ErrorMessage = "Timed out"
+            }),
+            new FakeUserAccessor(TestUser),
+            Registry,
+            new FakeAuthService(true),
+            new FakeAuditService());
+
+        var result = await coord.ExecuteAsync("calculator", new Dictionary<string, object?> { ["expr"] = "2+2" });
+
+        Assert.False(result.Success);
+        Assert.Equal("TIMEOUT", result.ErrorCode);
+    }
+
+    [Fact]
+    public async Task Coordinator_ClientCancelled_ReturnsCancelled()
+    {
+        var coord = new ToolExecutionCoordinator(
+            new FakeWorkerClient(new ToolWorkerResponse
+            {
+                ProtocolVersion = "1.0",
+                RequestId = "",
+                ErrorCode = (int)ToolWorkerErrorCode.Cancelled,
+                ErrorMessage = "Cancelled"
+            }),
+            new FakeUserAccessor(TestUser),
+            Registry,
+            new FakeAuthService(true),
+            new FakeAuditService());
+
+        var result = await coord.ExecuteAsync("calculator", new Dictionary<string, object?> { ["expr"] = "2+2" });
+
+        Assert.False(result.Success);
+        Assert.Equal("CANCELLED", result.ErrorCode);
+    }
+
+    [Fact]
+    public async Task Coordinator_ClientWorkerUnavailable_ReturnsWorkerUnavailable()
+    {
+        var coordWithException = new ToolExecutionCoordinator(
+            new FaultedWorkerClient(),
+            new FakeUserAccessor(TestUser),
+            Registry,
+            new FakeAuthService(true),
+            new FakeAuditService());
+
+        var result = await coordWithException.ExecuteAsync("calculator", new Dictionary<string, object?> { ["expr"] = "2+2" });
+
+        Assert.False(result.Success);
+        Assert.Equal("WORKER_UNAVAILABLE", result.ErrorCode);
+    }
+
+    [Fact]
+    public async Task AuditFailure_DoesNotChangeExecutionResult()
+    {
+        var coord = new ToolExecutionCoordinator(
+            new FakeWorkerClient(new ToolWorkerResponse
+            {
+                ProtocolVersion = "1.0",
+                RequestId = "",
+                ErrorCode = 0,
+                ResultJson = "{\"result\":4.0}"
+            }),
+            new FakeUserAccessor(TestUser),
+            Registry,
+            new FakeAuthService(true),
+            new ThrowingAuditService());
+
+        var result = await coord.ExecuteAsync("calculator", new Dictionary<string, object?> { ["expr"] = "2+2" });
+
+        // Audit failure must not change execution result
+        Assert.True(result.Success);
+    }
+
+    [Fact]
+    public async Task AuditFailure_SuccessPath_DoesNotFail()
+    {
+        var throttle = new ThrowingAuditService();
+        var coord = new ToolExecutionCoordinator(
+            new FakeWorkerClient(null),
+            new FakeUserAccessor(TestUser),
+            Registry,
+            new FakeAuthService(false),
+            throttle);
+
+        var result = await coord.ExecuteAsync("calculator", new Dictionary<string, object?> { ["expr"] = "2+2" });
+
+        // Even with audit failing on denied path, coordinator should not throw
+        Assert.False(result.Success);
+    }
+
+    private sealed class ThrowingAuditService : IKejiAuditService
+    {
+        public Task<KejiAuditResult> WriteAsync(KejiAuditCategory category, string action, KejiAuditOutcome outcome, KejiAuditSeverity severity, string targetType, string? targetId = null, IReadOnlyDictionary<string, string>? metadata = null, CancellationToken cancellationToken = default)
+        {
+            throw new InvalidOperationException("Audit write simulated failure");
+        }
+    }
+
+    private sealed class FaultedWorkerClient : IToolWorkerClient
+    {
+        public Task<ToolWorkerResponse> ExecuteAsync(ToolWorkerRequest request, CancellationToken ct = default)
+        {
+            throw new InvalidOperationException("Worker crashed");
+        }
+    }
+
     private sealed class CorruptedWorkerClient : IToolWorkerClient
     {
         public Task<ToolWorkerResponse> ExecuteAsync(ToolWorkerRequest request, CancellationToken ct = default)

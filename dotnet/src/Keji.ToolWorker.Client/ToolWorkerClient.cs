@@ -137,6 +137,8 @@ public sealed class ToolWorkerClient : IToolWorkerClient, IDisposable
         {
             ProtocolVersion = Protocol.ProtocolVersion.String,
             RequestId = request.RequestId,
+            ToolName = request.ToolName,
+            ContractVersion = request.ContractVersion,
             ErrorCode = (int)code,
             ErrorMessage = message
         };

@@ -68,6 +68,13 @@ if (!DateTimeOffset.TryParse(request.DeadlineUtc, out var deadline) || deadline 
     return 1;
 }
 
+var maxDeadline = DateTimeOffset.UtcNow.AddSeconds(61);
+if (deadline > maxDeadline)
+{
+    await writer.WriteResponseAsync(MakeError(requestId, ToolWorkerErrorCode.InvalidRequest, "Deadline too far in the future"));
+    return 1;
+}
+
 var toolName = request.ToolName;
 if (string.IsNullOrEmpty(toolName) || !KejiToolName.TryCreate(toolName, out var name))
 {

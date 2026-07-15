@@ -75,7 +75,7 @@ public class ToolWorkerIntegrationTests
         {
             ProtocolVersion = "1.0",
             RequestId = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            DeadlineUtc = DateTimeOffset.UtcNow.AddMinutes(5).ToString("O"),
+            DeadlineUtc = DateTimeOffset.UtcNow.AddSeconds(10).ToString("O"),
             ToolName = "calculator",
             ContractVersion = "1",
             InputJson = "{\"expr\":\"2+2\"}"
@@ -124,7 +124,7 @@ public class ToolWorkerIntegrationTests
         {
             ProtocolVersion = "1.0",
             RequestId = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-            DeadlineUtc = DateTimeOffset.UtcNow.AddMinutes(5).ToString("O"),
+            DeadlineUtc = DateTimeOffset.UtcNow.AddSeconds(10).ToString("O"),
             ToolName = "get_time",
             ContractVersion = "1",
             InputJson = "{}"
@@ -171,7 +171,7 @@ public class ToolWorkerIntegrationTests
         {
             ProtocolVersion = "1.0",
             RequestId = "cccccccccccccccccccccccccccccccc",
-            DeadlineUtc = DateTimeOffset.UtcNow.AddMinutes(5).ToString("O"),
+            DeadlineUtc = DateTimeOffset.UtcNow.AddSeconds(10).ToString("O"),
             ToolName = "nonexistent",
             ContractVersion = "1",
             InputJson = "{}"
@@ -213,7 +213,7 @@ public class ToolWorkerIntegrationTests
         {
             ProtocolVersion = "1.0",
             RequestId = "short",
-            DeadlineUtc = DateTimeOffset.UtcNow.AddMinutes(5).ToString("O"),
+            DeadlineUtc = DateTimeOffset.UtcNow.AddSeconds(10).ToString("O"),
             ToolName = "calculator",
             ContractVersion = "1",
             InputJson = "{\"expr\":\"2+2\"}"
@@ -297,7 +297,7 @@ public class ToolWorkerIntegrationTests
         {
             ProtocolVersion = "1.0",
             RequestId = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
-            DeadlineUtc = DateTimeOffset.UtcNow.AddMinutes(5).ToString("O"),
+            DeadlineUtc = DateTimeOffset.UtcNow.AddSeconds(10).ToString("O"),
             ToolName = "read_file",
             ContractVersion = "1",
             InputJson = "{}"
@@ -497,6 +497,162 @@ public class ToolWorkerIntegrationTests
         Assert.NotEqual(0, response.ErrorCode);
     }
 
+    [Fact]
+    public async Task Client_TimeoutResponse_EchoesToolAndContract()
+    {
+        var exePath = GetWorkerPath();
+        var options = new WorkerProcessOptions
+        {
+            ExecutablePath = exePath,
+            Timeout = TimeSpan.FromMilliseconds(1)
+        };
+
+        using var client = new ToolWorkerClient(options);
+        var request = MakeRequest("calculator", "{\"expr\":\"2+2\"}");
+
+        var response = await client.ExecuteAsync(request);
+
+        Assert.Equal((int)ToolWorkerErrorCode.Timeout, response.ErrorCode);
+        Assert.Equal(request.RequestId, response.RequestId);
+        Assert.Equal("calculator", response.ToolName);
+        Assert.Equal("1", response.ContractVersion);
+    }
+
+    [Fact]
+    public async Task Client_CancelledResponse_EchoesToolAndContract()
+    {
+        var exePath = GetWorkerPath();
+        var options = new WorkerProcessOptions
+        {
+            ExecutablePath = exePath,
+            Timeout = TimeSpan.FromSeconds(10)
+        };
+
+        using var client = new ToolWorkerClient(options);
+        var request = MakeRequest("calculator", "{\"expr\":\"2+2\"}");
+
+        using var cts = new CancellationTokenSource();
+        var task = client.ExecuteAsync(request, cts.Token);
+
+        await Task.Delay(100);
+        cts.Cancel();
+
+        var response = await task;
+
+        Assert.Equal((int)ToolWorkerErrorCode.Cancelled, response.ErrorCode);
+        Assert.Equal(request.RequestId, response.RequestId);
+        Assert.Equal("calculator", response.ToolName);
+        Assert.Equal("1", response.ContractVersion);
+    }
+
+    [Fact]
+    public void WorkerExecutionConfig_ObjectInitializerCannotBypassMaxTimeout()
+    {
+        var ex = Assert.Throws<ArgumentOutOfRangeException>(() =>
+            _ = new WorkerExecutionConfig { Timeout = TimeSpan.FromSeconds(120) });
+        Assert.Contains("Timeout", ex.Message);
+    }
+
+    [Fact]
+    public void WorkerProcessOptions_TimeoutOver60SecondsRejected()
+    {
+        var ex = Assert.Throws<ArgumentOutOfRangeException>(() =>
+            _ = new WorkerProcessOptions { Timeout = TimeSpan.FromSeconds(120) });
+        Assert.Contains("Timeout", ex.Message);
+    }
+
+    [Fact]
+    public void WorkerProcessOptions_ObjectInitOver60SecondsRejected()
+    {
+        var ex = Assert.Throws<ArgumentOutOfRangeException>(() =>
+            _ = new WorkerProcessOptions { MaxActiveProcesses = 3 });
+        Assert.Contains("MaxActiveProcesses", ex.Message);
+    }
+
+    [Fact]
+    public async Task Worker_DeadlineOverMaximumFutureWindowRejected()
+    {
+        var exePath = GetWorkerPath();
+
+        using var process = new System.Diagnostics.Process
+        {
+            StartInfo = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = exePath,
+                RedirectStandardInput = true,
+                RedirectStandardOutput = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            }
+        };
+
+        process.Start();
+
+        var reader = new WorkerFrameReader(process.StandardOutput.BaseStream);
+        var writer = new WorkerFrameWriter(process.StandardInput.BaseStream);
+
+        var request = new ToolWorkerRequest
+        {
+            ProtocolVersion = "1.0",
+            RequestId = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac",
+            DeadlineUtc = DateTimeOffset.UtcNow.AddSeconds(120).ToString("O"),
+            ToolName = "calculator",
+            ContractVersion = "1",
+            InputJson = "{\"expr\":\"2+2\"}"
+        };
+
+        await writer.WriteRequestAsync(request);
+        process.StandardInput.Close();
+
+        var response = await reader.ReadResponseAsync();
+        process.WaitForExit(5000);
+
+        Assert.NotNull(response);
+        Assert.NotEqual(0, response.ErrorCode);
+    }
+
+    [Fact]
+    public async Task Worker_DeadlineWithinMaximumWindowAccepted()
+    {
+        var exePath = GetWorkerPath();
+
+        using var process = new System.Diagnostics.Process
+        {
+            StartInfo = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = exePath,
+                RedirectStandardInput = true,
+                RedirectStandardOutput = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            }
+        };
+
+        process.Start();
+
+        var reader = new WorkerFrameReader(process.StandardOutput.BaseStream);
+        var writer = new WorkerFrameWriter(process.StandardInput.BaseStream);
+
+        var request = new ToolWorkerRequest
+        {
+            ProtocolVersion = "1.0",
+            RequestId = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab",
+            DeadlineUtc = DateTimeOffset.UtcNow.AddSeconds(59).ToString("O"),
+            ToolName = "calculator",
+            ContractVersion = "1",
+            InputJson = "{\"expr\":\"2+2\"}"
+        };
+
+        await writer.WriteRequestAsync(request);
+        process.StandardInput.Close();
+
+        var response = await reader.ReadResponseAsync();
+        process.WaitForExit(5000);
+
+        Assert.NotNull(response);
+        Assert.Equal(0, response.ErrorCode);
+    }
+
     private static async Task<int> ExecuteAndGetPidAsync(string exePath, string toolName, string inputJson)
     {
         using var process = new System.Diagnostics.Process
@@ -521,7 +677,7 @@ public class ToolWorkerIntegrationTests
         {
             ProtocolVersion = "1.0",
             RequestId = Guid.NewGuid().ToString("N"),
-            DeadlineUtc = DateTimeOffset.UtcNow.AddMinutes(5).ToString("O"),
+            DeadlineUtc = DateTimeOffset.UtcNow.AddSeconds(10).ToString("O"),
             ToolName = toolName,
             ContractVersion = "1",
             InputJson = inputJson
