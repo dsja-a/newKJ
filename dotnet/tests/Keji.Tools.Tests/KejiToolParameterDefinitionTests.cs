@@ -8,7 +8,7 @@ public class KejiToolParameterDefinitionTests
     [Fact]
     public void Parameter_AllProperties_Set()
     {
-        var p = new KejiToolParameterDefinition("path", KejiToolParameterType.String, true, "File path.");
+        var p = new KejiToolParameterDefinition("path", KejiToolParameterType.String, true, "File path.", maxLength: 1024);
         Assert.Equal("path", p.Name);
         Assert.Equal(KejiToolParameterType.String, p.Type);
         Assert.True(p.Required);
@@ -16,7 +16,7 @@ public class KejiToolParameterDefinitionTests
         Assert.Null(p.DefaultValue);
         Assert.Null(p.Minimum);
         Assert.Null(p.Maximum);
-        Assert.Null(p.MaxLength);
+        Assert.Equal(1024, p.MaxLength);
         Assert.Null(p.MinLength);
         Assert.Null(p.MaxItems);
         Assert.Null(p.AllowedValues);
@@ -28,7 +28,7 @@ public class KejiToolParameterDefinitionTests
     {
         var allowed = new HashSet<string>(StringComparer.Ordinal) { "csv", "json", "xml" };
         var p = new KejiToolParameterDefinition("format", KejiToolParameterType.String, false, "Format.",
-            allowedValues: allowed);
+            allowedValues: allowed, maxLength: 10);
         Assert.False(p.Required);
         Assert.NotNull(p.AllowedValues);
         Assert.Equal(3, p.AllowedValues.Count);
@@ -38,42 +38,42 @@ public class KejiToolParameterDefinitionTests
     public void Parameter_NullName_Throws()
     {
         Assert.Throws<KejiToolContractException>(() =>
-            new KejiToolParameterDefinition(null!, KejiToolParameterType.String, true, "desc"));
+            new KejiToolParameterDefinition(null!, KejiToolParameterType.String, true, "desc", maxLength: 100));
     }
 
     [Fact]
     public void Parameter_EmptyName_Throws()
     {
         Assert.Throws<KejiToolContractException>(() =>
-            new KejiToolParameterDefinition("", KejiToolParameterType.String, true, "desc"));
+            new KejiToolParameterDefinition("", KejiToolParameterType.String, true, "desc", maxLength: 100));
     }
 
     [Fact]
     public void Parameter_NameInvalidChars_Throws()
     {
         Assert.Throws<KejiToolContractException>(() =>
-            new KejiToolParameterDefinition("Invalid_Name", KejiToolParameterType.String, true, "desc"));
+            new KejiToolParameterDefinition("Invalid_Name", KejiToolParameterType.String, true, "desc", maxLength: 100));
     }
 
     [Fact]
     public void Parameter_NameTooLong_Throws()
     {
         Assert.Throws<KejiToolContractException>(() =>
-            new KejiToolParameterDefinition(new string('x', 65), KejiToolParameterType.String, true, "desc"));
+            new KejiToolParameterDefinition(new string('x', 65), KejiToolParameterType.String, true, "desc", maxLength: 100));
     }
 
     [Fact]
     public void Parameter_NullDescription_Throws()
     {
         Assert.Throws<KejiToolContractException>(() =>
-            new KejiToolParameterDefinition("param", KejiToolParameterType.String, true, null!));
+            new KejiToolParameterDefinition("param", KejiToolParameterType.String, true, null!, maxLength: 100));
     }
 
     [Fact]
     public void Parameter_EmptyDescription_Throws()
     {
         Assert.Throws<KejiToolContractException>(() =>
-            new KejiToolParameterDefinition("param", KejiToolParameterType.String, true, ""));
+            new KejiToolParameterDefinition("param", KejiToolParameterType.String, true, "", maxLength: 100));
     }
 
     [Fact]
@@ -88,7 +88,7 @@ public class KejiToolParameterDefinitionTests
     public void Parameter_DefaultValueString_Succeeds()
     {
         var p = new KejiToolParameterDefinition("name", KejiToolParameterType.String, false, "Name.",
-            defaultValue: "default_name");
+            defaultValue: "default_name", maxLength: 100);
         Assert.Equal("default_name", p.DefaultValue);
     }
 
@@ -161,14 +161,14 @@ public class KejiToolParameterDefinitionTests
     public void Parameter_Sensitive_True()
     {
         var p = new KejiToolParameterDefinition("password", KejiToolParameterType.String, true, "Password.",
-            sensitive: true);
+            sensitive: true, maxLength: 512);
         Assert.True(p.Sensitive);
     }
 
     [Fact]
     public void Parameter_Sensitive_DefaultFalse()
     {
-        var p = new KejiToolParameterDefinition("name", KejiToolParameterType.String, true, "Name.");
+        var p = new KejiToolParameterDefinition("name", KejiToolParameterType.String, true, "Name.", maxLength: 100);
         Assert.False(p.Sensitive);
     }
 
@@ -177,7 +177,7 @@ public class KejiToolParameterDefinitionTests
     {
         var allowed = new HashSet<string>(StringComparer.Ordinal) { "z", "a", "a" };
         var p = new KejiToolParameterDefinition("mode", KejiToolParameterType.String, false, "Mode.",
-            allowedValues: allowed);
+            allowedValues: allowed, maxLength: 10);
         Assert.Equal(2, p.AllowedValues!.Count);
         Assert.Contains("a", p.AllowedValues);
         Assert.Contains("z", p.AllowedValues);
@@ -213,6 +213,207 @@ public class KejiToolParameterDefinitionTests
     {
         Assert.Throws<KejiToolContractException>(() =>
             new KejiToolParameterDefinition("mode", KejiToolParameterType.String, false, "Mode.",
-                allowedValues: new HashSet<string>()));
+                allowedValues: new HashSet<string>(), maxLength: 100));
+    }
+
+    [Fact]
+    public void Parameter_InvalidEnumType_Zero_Throws()
+    {
+        Assert.Throws<KejiToolContractException>(() =>
+            new KejiToolParameterDefinition("x", (KejiToolParameterType)0, false, "desc", maxLength: 100));
+    }
+
+    [Fact]
+    public void Parameter_InvalidEnumType_Negative_Throws()
+    {
+        Assert.Throws<KejiToolContractException>(() =>
+            new KejiToolParameterDefinition("x", (KejiToolParameterType)(-1), false, "desc", maxLength: 100));
+    }
+
+    [Fact]
+    public void Parameter_InvalidEnumType_OutOfRange_Throws()
+    {
+        Assert.Throws<KejiToolContractException>(() =>
+            new KejiToolParameterDefinition("x", (KejiToolParameterType)999, false, "desc", maxLength: 100));
+    }
+
+    [Fact]
+    public void Parameter_AllDefinedTypes_Pass()
+    {
+        foreach (KejiToolParameterType t in Enum.GetValues<KejiToolParameterType>())
+        {
+            if (t == KejiToolParameterType.String)
+            {
+                var p = new KejiToolParameterDefinition("x", t, false, "desc", maxLength: 100);
+                Assert.Equal(t, p.Type);
+            }
+            else if (t == KejiToolParameterType.StringArray || t == KejiToolParameterType.IntegerArray)
+            {
+                var p = new KejiToolParameterDefinition("x", t, false, "desc", maxItems: 10);
+                Assert.Equal(t, p.Type);
+            }
+            else
+            {
+                var p = new KejiToolParameterDefinition("x", t, false, "desc");
+                Assert.Equal(t, p.Type);
+            }
+        }
+    }
+
+    [Fact]
+    public void Parameter_StringWithoutMaxLength_Throws()
+    {
+        Assert.Throws<KejiToolContractException>(() =>
+            new KejiToolParameterDefinition("x", KejiToolParameterType.String, false, "desc"));
+    }
+
+    [Fact]
+    public void Parameter_StringWithMinMaxConstraints_Throws()
+    {
+        Assert.Throws<KejiToolContractException>(() =>
+            new KejiToolParameterDefinition("x", KejiToolParameterType.String, false, "desc",
+                maxLength: 100, minimum: 1));
+    }
+
+    [Fact]
+    public void Parameter_IntegerWithStringConstraints_Throws()
+    {
+        Assert.Throws<KejiToolContractException>(() =>
+            new KejiToolParameterDefinition("x", KejiToolParameterType.Integer, false, "desc",
+                maxLength: 100));
+    }
+
+    [Fact]
+    public void Parameter_IntegerWithMaxItems_Throws()
+    {
+        Assert.Throws<KejiToolContractException>(() =>
+            new KejiToolParameterDefinition("x", KejiToolParameterType.Integer, false, "desc",
+                maxItems: 10));
+    }
+
+    [Fact]
+    public void Parameter_IntegerWithAllowedValues_Throws()
+    {
+        Assert.Throws<KejiToolContractException>(() =>
+            new KejiToolParameterDefinition("x", KejiToolParameterType.Integer, false, "desc",
+                allowedValues: new HashSet<string> { "a" }));
+    }
+
+    [Fact]
+    public void Parameter_NumberWithStringConstraints_Throws()
+    {
+        Assert.Throws<KejiToolContractException>(() =>
+            new KejiToolParameterDefinition("x", KejiToolParameterType.Number, false, "desc",
+                maxLength: 100));
+    }
+
+    [Fact]
+    public void Parameter_NumberWithAllowedValues_Throws()
+    {
+        Assert.Throws<KejiToolContractException>(() =>
+            new KejiToolParameterDefinition("x", KejiToolParameterType.Number, false, "desc",
+                allowedValues: new HashSet<string> { "a" }));
+    }
+
+    [Fact]
+    public void Parameter_BooleanWithAnyConstraints_Throws()
+    {
+        Assert.Throws<KejiToolContractException>(() =>
+            new KejiToolParameterDefinition("x", KejiToolParameterType.Boolean, false, "desc",
+                minimum: 1));
+    }
+
+    [Fact]
+    public void Parameter_BooleanWithAllowedValues_Throws()
+    {
+        Assert.Throws<KejiToolContractException>(() =>
+            new KejiToolParameterDefinition("x", KejiToolParameterType.Boolean, false, "desc",
+                allowedValues: new HashSet<string> { "a" }));
+    }
+
+    [Fact]
+    public void Parameter_StringArrayWithScalarConstraints_Throws()
+    {
+        Assert.Throws<KejiToolContractException>(() =>
+            new KejiToolParameterDefinition("x", KejiToolParameterType.StringArray, false, "desc",
+                maxItems: 10, minimum: 1));
+    }
+
+    [Fact]
+    public void Parameter_StringArrayWithAllowedValues_Throws()
+    {
+        Assert.Throws<KejiToolContractException>(() =>
+            new KejiToolParameterDefinition("x", KejiToolParameterType.StringArray, false, "desc",
+                maxItems: 10, allowedValues: new HashSet<string> { "a" }));
+    }
+
+    [Fact]
+    public void Parameter_StringArrayWithoutMaxItems_Throws()
+    {
+        Assert.Throws<KejiToolContractException>(() =>
+            new KejiToolParameterDefinition("x", KejiToolParameterType.StringArray, false, "desc"));
+    }
+
+    [Fact]
+    public void Parameter_IntegerArrayWithScalarConstraints_Throws()
+    {
+        Assert.Throws<KejiToolContractException>(() =>
+            new KejiToolParameterDefinition("x", KejiToolParameterType.IntegerArray, false, "desc",
+                maxItems: 10, minLength: 1));
+    }
+
+    [Fact]
+    public void Parameter_IntegerArrayWithAllowedValues_Throws()
+    {
+        Assert.Throws<KejiToolContractException>(() =>
+            new KejiToolParameterDefinition("x", KejiToolParameterType.IntegerArray, false, "desc",
+                maxItems: 10, allowedValues: new HashSet<string> { "a" }));
+    }
+
+    [Fact]
+    public void Parameter_IntegerArrayWithoutMaxItems_Throws()
+    {
+        Assert.Throws<KejiToolContractException>(() =>
+            new KejiToolParameterDefinition("x", KejiToolParameterType.IntegerArray, false, "desc"));
+    }
+
+    [Fact]
+    public void Parameter_DefaultValueStringArray_DeepImmutable()
+    {
+        var original = new List<string> { "a", "b" };
+        var p = new KejiToolParameterDefinition("items", KejiToolParameterType.StringArray, false, "Items.",
+            defaultValue: original, maxItems: 10);
+        original.Add("c");
+        var dv = (string[])p.DefaultValue!;
+        Assert.Equal(2, dv.Length);
+        Assert.Equal("a", dv[0]);
+        Assert.Equal("b", dv[1]);
+    }
+
+    [Fact]
+    public void Parameter_DefaultValueIntegerArray_DeepImmutable()
+    {
+        var original = new List<int> { 1, 2 };
+        var p = new KejiToolParameterDefinition("ids", KejiToolParameterType.IntegerArray, false, "IDs.",
+            defaultValue: original, maxItems: 10);
+        original.Add(3);
+        var dv = (int[])p.DefaultValue!;
+        Assert.Equal(2, dv.Length);
+    }
+
+    [Fact]
+    public void Parameter_DescriptionMaxLength_Throws()
+    {
+        Assert.Throws<KejiToolContractException>(() =>
+            new KejiToolParameterDefinition("x", KejiToolParameterType.String, false,
+                new string('x', 2001), maxLength: 100));
+    }
+
+    [Fact]
+    public void Parameter_NegativeMinLength_Throws()
+    {
+        Assert.Throws<KejiToolContractException>(() =>
+            new KejiToolParameterDefinition("x", KejiToolParameterType.String, false, "desc",
+                maxLength: 100, minLength: -1));
     }
 }

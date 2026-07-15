@@ -32,7 +32,7 @@ public class KejiToolValidationTests
     public void Validate_ValidInput_Passes()
     {
         var registry = CreateBuilderWith(MakeDef("test_tool",
-            new KejiToolParameterDefinition("path", KejiToolParameterType.String, true, "Path.")))
+            new KejiToolParameterDefinition("path", KejiToolParameterType.String, true, "Path.", maxLength: 1024)))
             .Build();
         var result = KejiToolInputValidator.Validate(registry, "test_tool", DI(("path", "/some/file.txt")));
         Assert.True(result.IsValid);
@@ -43,7 +43,7 @@ public class KejiToolValidationTests
     public void Validate_NullInputs_Passes()
     {
         var registry = CreateBuilderWith(MakeDef("test_tool",
-            new KejiToolParameterDefinition("path", KejiToolParameterType.String, false, "Path.")))
+            new KejiToolParameterDefinition("path", KejiToolParameterType.String, false, "Path.", maxLength: 1024)))
             .Build();
         var result = KejiToolInputValidator.Validate(registry, "test_tool", null);
         Assert.True(result.IsValid);
@@ -71,7 +71,7 @@ public class KejiToolValidationTests
     public void Validate_MissingRequiredParam_ReturnsError()
     {
         var registry = CreateBuilderWith(MakeDef("test_tool",
-            new KejiToolParameterDefinition("path", KejiToolParameterType.String, true, "Path.")))
+            new KejiToolParameterDefinition("path", KejiToolParameterType.String, true, "Path.", maxLength: 1024)))
             .Build();
         var result = KejiToolInputValidator.Validate(registry, "test_tool", DI());
         Assert.False(result.IsValid);
@@ -100,6 +100,41 @@ public class KejiToolValidationTests
     }
 
     [Fact]
+    public void Validate_IntegerLongValid_Passes()
+    {
+        var registry = CreateBuilderWith(MakeDef("test_tool",
+            new KejiToolParameterDefinition("count", KejiToolParameterType.Integer, true, "Count.",
+                minimum: 1, maximum: 100)))
+            .Build();
+        var result = KejiToolInputValidator.Validate(registry, "test_tool", DI(("count", 50L)));
+        Assert.True(result.IsValid);
+    }
+
+    [Fact]
+    public void Validate_IntegerLongBelowMin_ReturnsError()
+    {
+        var registry = CreateBuilderWith(MakeDef("test_tool",
+            new KejiToolParameterDefinition("count", KejiToolParameterType.Integer, true, "Count.",
+                minimum: 10)))
+            .Build();
+        var result = KejiToolInputValidator.Validate(registry, "test_tool", DI(("count", 5L)));
+        Assert.False(result.IsValid);
+        Assert.Contains(KejiToolValidationError.ValueOutOfRange, result.Errors);
+    }
+
+    [Fact]
+    public void Validate_IntegerLongAboveMax_ReturnsError()
+    {
+        var registry = CreateBuilderWith(MakeDef("test_tool",
+            new KejiToolParameterDefinition("count", KejiToolParameterType.Integer, true, "Count.",
+                maximum: 100)))
+            .Build();
+        var result = KejiToolInputValidator.Validate(registry, "test_tool", DI(("count", 200L)));
+        Assert.False(result.IsValid);
+        Assert.Contains(KejiToolValidationError.ValueOutOfRange, result.Errors);
+    }
+
+    [Fact]
     public void Validate_NumberType_AcceptsInteger()
     {
         var registry = CreateBuilderWith(MakeDef("test_tool",
@@ -117,6 +152,110 @@ public class KejiToolValidationTests
             .Build();
         var result = KejiToolInputValidator.Validate(registry, "test_tool", DI(("ratio", 3.14)));
         Assert.True(result.IsValid);
+    }
+
+    [Fact]
+    public void Validate_NumberType_AcceptsFloat()
+    {
+        var registry = CreateBuilderWith(MakeDef("test_tool",
+            new KejiToolParameterDefinition("ratio", KejiToolParameterType.Number, true, "Ratio.")))
+            .Build();
+        var result = KejiToolInputValidator.Validate(registry, "test_tool", DI(("ratio", 3.14f)));
+        Assert.True(result.IsValid);
+    }
+
+    [Fact]
+    public void Validate_NumberType_RejectsNaN()
+    {
+        var registry = CreateBuilderWith(MakeDef("test_tool",
+            new KejiToolParameterDefinition("ratio", KejiToolParameterType.Number, true, "Ratio.")))
+            .Build();
+        var result = KejiToolInputValidator.Validate(registry, "test_tool", DI(("ratio", double.NaN)));
+        Assert.False(result.IsValid);
+    }
+
+    [Fact]
+    public void Validate_NumberType_RejectsInfinity()
+    {
+        var registry = CreateBuilderWith(MakeDef("test_tool",
+            new KejiToolParameterDefinition("ratio", KejiToolParameterType.Number, true, "Ratio.")))
+            .Build();
+        var result = KejiToolInputValidator.Validate(registry, "test_tool", DI(("ratio", double.PositiveInfinity)));
+        Assert.False(result.IsValid);
+    }
+
+    [Fact]
+    public void Validate_NumberType_RejectsNegativeInfinity()
+    {
+        var registry = CreateBuilderWith(MakeDef("test_tool",
+            new KejiToolParameterDefinition("ratio", KejiToolParameterType.Number, true, "Ratio.")))
+            .Build();
+        var result = KejiToolInputValidator.Validate(registry, "test_tool", DI(("ratio", double.NegativeInfinity)));
+        Assert.False(result.IsValid);
+    }
+
+    [Fact]
+    public void Validate_NumberType_FloatNan_Rejected()
+    {
+        var registry = CreateBuilderWith(MakeDef("test_tool",
+            new KejiToolParameterDefinition("ratio", KejiToolParameterType.Number, true, "Ratio.")))
+            .Build();
+        var result = KejiToolInputValidator.Validate(registry, "test_tool", DI(("ratio", float.NaN)));
+        Assert.False(result.IsValid);
+    }
+
+    [Fact]
+    public void Validate_NumberType_FloatInfinity_Rejected()
+    {
+        var registry = CreateBuilderWith(MakeDef("test_tool",
+            new KejiToolParameterDefinition("ratio", KejiToolParameterType.Number, true, "Ratio.")))
+            .Build();
+        var result = KejiToolInputValidator.Validate(registry, "test_tool", DI(("ratio", float.PositiveInfinity)));
+        Assert.False(result.IsValid);
+    }
+
+    [Fact]
+    public void Validate_NumberType_LongAboveMax_ReturnsError()
+    {
+        var registry = CreateBuilderWith(MakeDef("test_tool",
+            new KejiToolParameterDefinition("ratio", KejiToolParameterType.Number, true, "Ratio.",
+                maximum: 100)))
+            .Build();
+        var result = KejiToolInputValidator.Validate(registry, "test_tool", DI(("ratio", 200L)));
+        Assert.False(result.IsValid);
+    }
+
+    [Fact]
+    public void Validate_NumberType_LongBelowMin_ReturnsError()
+    {
+        var registry = CreateBuilderWith(MakeDef("test_tool",
+            new KejiToolParameterDefinition("ratio", KejiToolParameterType.Number, true, "Ratio.",
+                minimum: 10)))
+            .Build();
+        var result = KejiToolInputValidator.Validate(registry, "test_tool", DI(("ratio", 5L)));
+        Assert.False(result.IsValid);
+    }
+
+    [Fact]
+    public void Validate_NumberType_DoubleBelowMin_ReturnsError()
+    {
+        var registry = CreateBuilderWith(MakeDef("test_tool",
+            new KejiToolParameterDefinition("ratio", KejiToolParameterType.Number, true, "Ratio.",
+                minimum: 10)))
+            .Build();
+        var result = KejiToolInputValidator.Validate(registry, "test_tool", DI(("ratio", 5.0)));
+        Assert.False(result.IsValid);
+    }
+
+    [Fact]
+    public void Validate_NumberType_DoubleAboveMax_ReturnsError()
+    {
+        var registry = CreateBuilderWith(MakeDef("test_tool",
+            new KejiToolParameterDefinition("ratio", KejiToolParameterType.Number, true, "Ratio.",
+                maximum: 100)))
+            .Build();
+        var result = KejiToolInputValidator.Validate(registry, "test_tool", DI(("ratio", 200.0)));
+        Assert.False(result.IsValid);
     }
 
     [Fact]
@@ -163,7 +302,7 @@ public class KejiToolValidationTests
     }
 
     [Fact]
-    public void Validate_IntegerArrayType_AcceptsList()
+    public void Validate_IntegerArrayType_AcceptsIntList()
     {
         var registry = CreateBuilderWith(MakeDef("test_tool",
             new KejiToolParameterDefinition("ids", KejiToolParameterType.IntegerArray, true, "IDs.",
@@ -171,6 +310,43 @@ public class KejiToolValidationTests
             .Build();
         var result = KejiToolInputValidator.Validate(registry, "test_tool", DI(("ids", new List<int> { 1, 2, 3 })));
         Assert.True(result.IsValid);
+    }
+
+    [Fact]
+    public void Validate_IntegerArrayType_AcceptsLongList()
+    {
+        var registry = CreateBuilderWith(MakeDef("test_tool",
+            new KejiToolParameterDefinition("ids", KejiToolParameterType.IntegerArray, true, "IDs.",
+                maxItems: 10)))
+            .Build();
+        var result = KejiToolInputValidator.Validate(registry, "test_tool", DI(("ids", new List<long> { 1L, 2L })));
+        Assert.True(result.IsValid);
+    }
+
+    [Fact]
+    public void Validate_IntegerArrayType_ExceedsMaxItems_ReturnsError()
+    {
+        var registry = CreateBuilderWith(MakeDef("test_tool",
+            new KejiToolParameterDefinition("ids", KejiToolParameterType.IntegerArray, true, "IDs.",
+                maxItems: 2)))
+            .Build();
+        var result = KejiToolInputValidator.Validate(registry, "test_tool",
+            DI(("ids", new List<int> { 1, 2, 3 })));
+        Assert.False(result.IsValid);
+        Assert.Contains(KejiToolValidationError.TooManyItems, result.Errors);
+    }
+
+    [Fact]
+    public void Validate_IntegerArrayType_LongListExceedsMaxItems_ReturnsError()
+    {
+        var registry = CreateBuilderWith(MakeDef("test_tool",
+            new KejiToolParameterDefinition("ids", KejiToolParameterType.IntegerArray, true, "IDs.",
+                maxItems: 2)))
+            .Build();
+        var result = KejiToolInputValidator.Validate(registry, "test_tool",
+            DI(("ids", new List<long> { 1L, 2L, 3L })));
+        Assert.False(result.IsValid);
+        Assert.Contains(KejiToolValidationError.TooManyItems, result.Errors);
     }
 
     [Fact]
@@ -203,7 +379,7 @@ public class KejiToolValidationTests
     {
         var registry = CreateBuilderWith(MakeDef("test_tool",
             new KejiToolParameterDefinition("name", KejiToolParameterType.String, true, "Name.",
-                minLength: 3)))
+                minLength: 3, maxLength: 100)))
             .Build();
         var result = KejiToolInputValidator.Validate(registry, "test_tool", DI(("name", "ab")));
         Assert.False(result.IsValid);
@@ -239,7 +415,7 @@ public class KejiToolValidationTests
     {
         var registry = CreateBuilderWith(MakeDef("test_tool",
             new KejiToolParameterDefinition("mode", KejiToolParameterType.String, true, "Mode.",
-                allowedValues: new HashSet<string>(StringComparer.Ordinal) { "read", "write" })))
+                allowedValues: new HashSet<string>(StringComparer.Ordinal) { "read", "write" }, maxLength: 100)))
             .Build();
         var result = KejiToolInputValidator.Validate(registry, "test_tool", DI(("mode", "read")));
         Assert.True(result.IsValid);
@@ -250,7 +426,7 @@ public class KejiToolValidationTests
     {
         var registry = CreateBuilderWith(MakeDef("test_tool",
             new KejiToolParameterDefinition("mode", KejiToolParameterType.String, true, "Mode.",
-                allowedValues: new HashSet<string>(StringComparer.Ordinal) { "read", "write" })))
+                allowedValues: new HashSet<string>(StringComparer.Ordinal) { "read", "write" }, maxLength: 100)))
             .Build();
         var result = KejiToolInputValidator.Validate(registry, "test_tool", DI(("mode", "delete")));
         Assert.False(result.IsValid);
@@ -261,7 +437,7 @@ public class KejiToolValidationTests
     public void Validate_UnknownParam_ReturnsError()
     {
         var registry = CreateBuilderWith(MakeDef("test_tool",
-            new KejiToolParameterDefinition("path", KejiToolParameterType.String, false, "Path.")))
+            new KejiToolParameterDefinition("path", KejiToolParameterType.String, false, "Path.", maxLength: 1024)))
             .Build();
         var result = KejiToolInputValidator.Validate(registry, "test_tool", DI(("extra_param", "value")));
         Assert.False(result.IsValid);
@@ -329,5 +505,16 @@ public class KejiToolValidationTests
         Assert.Single(result.Errors);
         Assert.Contains(KejiToolValidationError.MissingRequiredParameter, result.Errors);
         Assert.Equal("Path is required.", result.ErrorMessage);
+    }
+
+    [Fact]
+    public void Validate_Integer_NullInputForNonNullable_ReturnsError()
+    {
+        var registry = CreateBuilderWith(MakeDef("test_tool",
+            new KejiToolParameterDefinition("count", KejiToolParameterType.Integer, true, "Count.")))
+            .Build();
+        var result = KejiToolInputValidator.Validate(registry, "test_tool", DI(("count", null)));
+        Assert.False(result.IsValid);
+        Assert.Contains(KejiToolValidationError.MissingRequiredParameter, result.Errors);
     }
 }

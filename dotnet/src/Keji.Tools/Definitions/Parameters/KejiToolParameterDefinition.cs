@@ -5,6 +5,8 @@ namespace Keji.Tools.Definitions.Parameters;
 public sealed class KejiToolParameterDefinition
 {
     private static readonly int MaxNameLength = 64;
+    private static readonly int MaxDescriptionLength = 2000;
+    private static readonly int GlobalMaxLength = 100000;
 
     public string Name { get; }
     public KejiToolParameterType Type { get; }
@@ -48,42 +50,90 @@ public sealed class KejiToolParameterDefinition
             throw new KejiToolContractException("Parameter description must not be null.");
         if (description.Length == 0)
             throw new KejiToolContractException("Parameter description must not be empty.");
+        if (description.Length > MaxDescriptionLength)
+            throw new KejiToolContractException($"Parameter description must not exceed {MaxDescriptionLength} characters.");
+
+        if (!Enum.IsDefined(type))
+            throw new KejiToolContractException("Parameter type must be a defined enum value.");
+
+        switch (type)
+        {
+            case KejiToolParameterType.String:
+                if (minimum.HasValue || maximum.HasValue || maxItems.HasValue)
+                    throw new KejiToolContractException("String parameters must not use Minimum, Maximum, or MaxItems constraints.");
+                if (!maxLength.HasValue)
+                    throw new KejiToolContractException("String parameters must specify MaxLength.");
+                if (maxLength.Value < 1 || maxLength.Value > GlobalMaxLength)
+                    throw new KejiToolContractException($"MaxLength must be between 1 and {GlobalMaxLength}.");
+                if (minLength.HasValue && minLength.Value < 0)
+                    throw new KejiToolContractException("MinLength must not be negative.");
+                if (allowedValues is not null)
+                {
+                    if (allowedValues.Count == 0)
+                        throw new KejiToolContractException("AllowedValues must contain at least one value.");
+                    if (allowedValues.Count != new HashSet<string>(allowedValues, StringComparer.Ordinal).Count)
+                        throw new KejiToolContractException("AllowedValues must not contain duplicates.");
+                }
+                break;
+
+            case KejiToolParameterType.Integer:
+                if (minLength.HasValue || maxLength.HasValue || maxItems.HasValue)
+                    throw new KejiToolContractException("Integer parameters must not use string or array constraints.");
+                if (allowedValues is not null)
+                    throw new KejiToolContractException("Integer parameters must not use AllowedValues.");
+                break;
+
+            case KejiToolParameterType.Number:
+                if (minLength.HasValue || maxLength.HasValue || maxItems.HasValue)
+                    throw new KejiToolContractException("Number parameters must not use string or array constraints.");
+                if (allowedValues is not null)
+                    throw new KejiToolContractException("Number parameters must not use AllowedValues.");
+                break;
+
+            case KejiToolParameterType.Boolean:
+                if (minimum.HasValue || maximum.HasValue || minLength.HasValue || maxLength.HasValue || maxItems.HasValue)
+                    throw new KejiToolContractException("Boolean parameters must not use any constraints.");
+                if (allowedValues is not null)
+                    throw new KejiToolContractException("Boolean parameters must not use AllowedValues.");
+                break;
+
+            case KejiToolParameterType.StringArray:
+                if (!maxItems.HasValue)
+                    throw new KejiToolContractException("Array parameters must specify MaxItems.");
+                if (maxItems.Value <= 0)
+                    throw new KejiToolContractException("MaxItems must be greater than 0.");
+                if (minimum.HasValue || maximum.HasValue || minLength.HasValue || maxLength.HasValue)
+                    throw new KejiToolContractException("StringArray parameters must not use scalar constraints.");
+                if (allowedValues is not null)
+                    throw new KejiToolContractException("StringArray parameters must not use AllowedValues.");
+                break;
+
+            case KejiToolParameterType.IntegerArray:
+                if (!maxItems.HasValue)
+                    throw new KejiToolContractException("Array parameters must specify MaxItems.");
+                if (maxItems.Value <= 0)
+                    throw new KejiToolContractException("MaxItems must be greater than 0.");
+                if (minimum.HasValue || maximum.HasValue || minLength.HasValue || maxLength.HasValue)
+                    throw new KejiToolContractException("IntegerArray parameters must not use scalar constraints.");
+                if (allowedValues is not null)
+                    throw new KejiToolContractException("IntegerArray parameters must not use AllowedValues.");
+                break;
+        }
 
         if (defaultValue is not null && !IsDefaultValueValid(type, defaultValue))
             throw new KejiToolContractException("Default value type does not match parameter type.");
 
-        if (required && defaultValue is not null && defaultValue is string s && s.Length == 0)
-            throw new KejiToolContractException("Required parameter must not have a null or empty default value.");
-
-        if (maxLength.HasValue && maxLength.Value <= 0)
-            throw new KejiToolContractException("MaxLength must be greater than 0.");
-        if (minLength.HasValue && maxLength.HasValue && minLength > maxLength)
-            throw new KejiToolContractException("MinLength must not exceed MaxLength.");
-
-        if (type == KejiToolParameterType.StringArray || type == KejiToolParameterType.IntegerArray)
-        {
-            if (!maxItems.HasValue)
-                throw new KejiToolContractException("Array parameters must specify MaxItems.");
-            if (maxItems.Value <= 0)
-                throw new KejiToolContractException("MaxItems must be greater than 0.");
-        }
-
         if (minimum.HasValue && maximum.HasValue && minimum > maximum)
             throw new KejiToolContractException("Minimum must not exceed Maximum.");
 
-        if (allowedValues is not null)
-        {
-            if (allowedValues.Count == 0)
-                throw new KejiToolContractException("AllowedValues must contain at least one value.");
-            if (allowedValues.Count != new HashSet<string>(allowedValues, StringComparer.Ordinal).Count)
-                throw new KejiToolContractException("AllowedValues must not contain duplicates.");
-        }
+        if (minLength.HasValue && maxLength.HasValue && minLength > maxLength)
+            throw new KejiToolContractException("MinLength must not exceed MaxLength.");
 
         Name = name;
         Type = type;
         Required = required;
         Description = description;
-        DefaultValue = defaultValue;
+        DefaultValue = TakeSnapshot(type, defaultValue);
         Minimum = minimum;
         Maximum = maximum;
         MinLength = minLength;
@@ -105,6 +155,23 @@ public sealed class KejiToolParameterDefinition
         return true;
     }
 
+    private static object? TakeSnapshot(KejiToolParameterType type, object? value)
+    {
+        if (value is null)
+            return null;
+
+        return type switch
+        {
+            KejiToolParameterType.StringArray when value is IReadOnlyList<string> list
+                => list.ToArray(),
+            KejiToolParameterType.IntegerArray when value is IReadOnlyList<int> list
+                => list.ToArray(),
+            KejiToolParameterType.IntegerArray when value is IReadOnlyList<long> list
+                => list.ToArray(),
+            _ => value,
+        };
+    }
+
     private static bool IsDefaultValueValid(KejiToolParameterType type, object value)
     {
         return type switch
@@ -114,7 +181,7 @@ public sealed class KejiToolParameterDefinition
             KejiToolParameterType.Number => value is double or float or int or long,
             KejiToolParameterType.Boolean => value is bool,
             KejiToolParameterType.StringArray => value is IReadOnlyList<string>,
-            KejiToolParameterType.IntegerArray => value is IReadOnlyList<int>,
+            KejiToolParameterType.IntegerArray => value is IReadOnlyList<int> or IReadOnlyList<long>,
             _ => false,
         };
     }

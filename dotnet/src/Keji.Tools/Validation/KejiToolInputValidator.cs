@@ -76,16 +76,15 @@ public static class KejiToolInputValidator
         out KejiToolValidationError error, out string message)
     {
         var expectedType = param.Type;
-        var actualValue = value;
 
         bool ok = expectedType switch
         {
-            KejiToolParameterType.String => actualValue is string,
-            KejiToolParameterType.Integer => actualValue is int or long,
-            KejiToolParameterType.Number => actualValue is double or float or int or long,
-            KejiToolParameterType.Boolean => actualValue is bool,
-            KejiToolParameterType.StringArray => actualValue is IReadOnlyList<string> && ((IReadOnlyList<string>)actualValue).All(e => e is not null),
-            KejiToolParameterType.IntegerArray => actualValue is IReadOnlyList<int> || actualValue is IReadOnlyList<long>,
+            KejiToolParameterType.String => value is string,
+            KejiToolParameterType.Integer => value is int or long,
+            KejiToolParameterType.Number => IsValidNumber(value),
+            KejiToolParameterType.Boolean => value is bool,
+            KejiToolParameterType.StringArray => value is IReadOnlyList<string> list && list.All(e => e is not null),
+            KejiToolParameterType.IntegerArray => value is IReadOnlyList<int> || value is IReadOnlyList<long>,
             _ => false,
         };
 
@@ -101,6 +100,15 @@ public static class KejiToolInputValidator
             ? "Parameter has an invalid type."
             : $"Parameter '{param.Name}' has an invalid type.";
         return false;
+    }
+
+    private static bool IsValidNumber(object value)
+    {
+        if (value is double d)
+            return !double.IsNaN(d) && !double.IsInfinity(d);
+        if (value is float f)
+            return !float.IsNaN(f) && !float.IsInfinity(f);
+        return value is int or long;
     }
 
     private static bool ValidateValueConstraints(
@@ -157,6 +165,106 @@ public static class KejiToolInputValidator
                 }
                 break;
             }
+            case KejiToolParameterType.Integer when value is long l:
+            {
+                if (param.Minimum.HasValue && l < param.Minimum.Value)
+                {
+                    error = KejiToolValidationError.ValueOutOfRange;
+                    message = param.Sensitive
+                        ? "Parameter value is out of range."
+                        : $"Parameter '{param.Name}' is below minimum.";
+                    return false;
+                }
+                if (param.Maximum.HasValue && l > param.Maximum.Value)
+                {
+                    error = KejiToolValidationError.ValueOutOfRange;
+                    message = param.Sensitive
+                        ? "Parameter value is out of range."
+                        : $"Parameter '{param.Name}' exceeds maximum.";
+                    return false;
+                }
+                break;
+            }
+            case KejiToolParameterType.Number when value is int i:
+            {
+                if (param.Minimum.HasValue && i < param.Minimum.Value)
+                {
+                    error = KejiToolValidationError.ValueOutOfRange;
+                    message = param.Sensitive
+                        ? "Parameter value is out of range."
+                        : $"Parameter '{param.Name}' is below minimum.";
+                    return false;
+                }
+                if (param.Maximum.HasValue && i > param.Maximum.Value)
+                {
+                    error = KejiToolValidationError.ValueOutOfRange;
+                    message = param.Sensitive
+                        ? "Parameter value is out of range."
+                        : $"Parameter '{param.Name}' exceeds maximum.";
+                    return false;
+                }
+                break;
+            }
+            case KejiToolParameterType.Number when value is long l:
+            {
+                if (param.Minimum.HasValue && l < param.Minimum.Value)
+                {
+                    error = KejiToolValidationError.ValueOutOfRange;
+                    message = param.Sensitive
+                        ? "Parameter value is out of range."
+                        : $"Parameter '{param.Name}' is below minimum.";
+                    return false;
+                }
+                if (param.Maximum.HasValue && l > param.Maximum.Value)
+                {
+                    error = KejiToolValidationError.ValueOutOfRange;
+                    message = param.Sensitive
+                        ? "Parameter value is out of range."
+                        : $"Parameter '{param.Name}' exceeds maximum.";
+                    return false;
+                }
+                break;
+            }
+            case KejiToolParameterType.Number when value is double d:
+            {
+                if (param.Minimum.HasValue && d < (double)param.Minimum.Value)
+                {
+                    error = KejiToolValidationError.ValueOutOfRange;
+                    message = param.Sensitive
+                        ? "Parameter value is out of range."
+                        : $"Parameter '{param.Name}' is below minimum.";
+                    return false;
+                }
+                if (param.Maximum.HasValue && d > (double)param.Maximum.Value)
+                {
+                    error = KejiToolValidationError.ValueOutOfRange;
+                    message = param.Sensitive
+                        ? "Parameter value is out of range."
+                        : $"Parameter '{param.Name}' exceeds maximum.";
+                    return false;
+                }
+                break;
+            }
+            case KejiToolParameterType.Number when value is float f:
+            {
+                if (param.Minimum.HasValue && f < (float)param.Minimum.Value)
+                {
+                    error = KejiToolValidationError.ValueOutOfRange;
+                    message = param.Sensitive
+                        ? "Parameter value is out of range."
+                        : $"Parameter '{param.Name}' is below minimum.";
+                    return false;
+                }
+                if (param.Maximum.HasValue && f > (float)param.Maximum.Value)
+                {
+                    error = KejiToolValidationError.ValueOutOfRange;
+                    message = param.Sensitive
+                        ? "Parameter value is out of range."
+                        : $"Parameter '{param.Name}' exceeds maximum.";
+                    return false;
+                }
+                break;
+            }
             case KejiToolParameterType.StringArray when value is IReadOnlyList<string> list:
             {
                 if (param.MaxItems.HasValue && list.Count > param.MaxItems.Value)
@@ -170,6 +278,18 @@ public static class KejiToolInputValidator
                 break;
             }
             case KejiToolParameterType.IntegerArray when value is IReadOnlyList<int> list:
+            {
+                if (param.MaxItems.HasValue && list.Count > param.MaxItems.Value)
+                {
+                    error = KejiToolValidationError.TooManyItems;
+                    message = param.Sensitive
+                        ? "Too many items."
+                        : $"Parameter '{param.Name}' has too many items.";
+                    return false;
+                }
+                break;
+            }
+            case KejiToolParameterType.IntegerArray when value is IReadOnlyList<long> list:
             {
                 if (param.MaxItems.HasValue && list.Count > param.MaxItems.Value)
                 {

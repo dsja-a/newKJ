@@ -65,8 +65,8 @@ public static class BuiltInToolCatalog
         inputSchema: new KejiToolInputSchema(new List<KejiToolParameterDefinition>
         {
             P("path", KejiToolParameterType.String, true, "Path to the file.", maxLength: 1024),
-            P("old_text", KejiToolParameterType.String, true, "Text to replace."),
-            P("new_text", KejiToolParameterType.String, true, "Replacement text."),
+            P("old_text", KejiToolParameterType.String, true, "Text to replace.", maxLength: 100000),
+            P("new_text", KejiToolParameterType.String, true, "Replacement text.", maxLength: 100000),
         }));
 
     private static KejiToolDefinition ListDir() => new(
@@ -85,7 +85,7 @@ public static class BuiltInToolCatalog
         KejiPermission.FileRead,
         inputSchema: new KejiToolInputSchema(new List<KejiToolParameterDefinition>
         {
-            P("pattern", KejiToolParameterType.String, true, "Glob pattern."),
+            P("pattern", KejiToolParameterType.String, true, "Glob pattern.", maxLength: 256),
             P("path", KejiToolParameterType.String, false, "Root directory.", maxLength: 1024),
         }));
 
@@ -95,9 +95,9 @@ public static class BuiltInToolCatalog
         KejiPermission.FileRead,
         inputSchema: new KejiToolInputSchema(new List<KejiToolParameterDefinition>
         {
-            P("pattern", KejiToolParameterType.String, true, "Regex pattern."),
+            P("pattern", KejiToolParameterType.String, true, "Regex pattern.", maxLength: 2048),
             P("path", KejiToolParameterType.String, false, "Directory to search.", maxLength: 1024),
-            P("glob", KejiToolParameterType.String, false, "File glob filter."),
+            P("glob", KejiToolParameterType.String, false, "File glob filter.", maxLength: 256),
         }));
 
     private static KejiToolDefinition BrowseFiles() => new(
@@ -115,7 +115,7 @@ public static class BuiltInToolCatalog
         KejiPermission.FileRead,
         inputSchema: new KejiToolInputSchema(new List<KejiToolParameterDefinition>
         {
-            P("pattern", KejiToolParameterType.String, true, "Search pattern."),
+            P("pattern", KejiToolParameterType.String, true, "Search pattern.", maxLength: 256),
             P("folder", KejiToolParameterType.String, false, "Folder to search.", maxLength: 1024),
         }));
 
@@ -168,8 +168,8 @@ public static class BuiltInToolCatalog
         inputSchema: new KejiToolInputSchema(new List<KejiToolParameterDefinition>
         {
             P("directory", KejiToolParameterType.String, true, "Directory.", maxLength: 1024),
-            P("pattern", KejiToolParameterType.String, true, "Rename pattern."),
-            P("value", KejiToolParameterType.String, false, "Replacement value."),
+            P("pattern", KejiToolParameterType.String, true, "Rename pattern.", maxLength: 256),
+            P("value", KejiToolParameterType.String, false, "Replacement value.", maxLength: 256),
         }));
 
     private static KejiToolDefinition OrganizeFiles() => new(
@@ -179,7 +179,7 @@ public static class BuiltInToolCatalog
         inputSchema: new KejiToolInputSchema(new List<KejiToolParameterDefinition>
         {
             P("source_dir", KejiToolParameterType.String, true, "Source directory.", maxLength: 1024),
-            P("mode", KejiToolParameterType.String, false, "Organization mode."),
+            P("mode", KejiToolParameterType.String, false, "Organization mode.", maxLength: 128),
         }));
 
     private static KejiToolDefinition DeduplicateFiles() => new(
@@ -211,8 +211,8 @@ public static class BuiltInToolCatalog
         KejiPermission.FileWrite,
         inputSchema: new KejiToolInputSchema(new List<KejiToolParameterDefinition>
         {
-            P("data", KejiToolParameterType.String, true, "Data to format."),
-            P("operation", KejiToolParameterType.String, true, "Format operation."),
+            P("data", KejiToolParameterType.String, true, "Data to format.", maxLength: 100000),
+            P("operation", KejiToolParameterType.String, true, "Format operation.", maxLength: 256),
         }));
 
     private static KejiToolDefinition CleanData() => new(
@@ -222,7 +222,7 @@ public static class BuiltInToolCatalog
         inputSchema: new KejiToolInputSchema(new List<KejiToolParameterDefinition>
         {
             P("source", KejiToolParameterType.String, true, "Data source.", maxLength: 1024),
-            P("operations", KejiToolParameterType.String, false, "Cleaning operations."),
+            P("operations", KejiToolParameterType.String, false, "Cleaning operations.", maxLength: 2048),
         }));
 
     private static KejiToolDefinition ConvertData() => new(
@@ -232,7 +232,7 @@ public static class BuiltInToolCatalog
         inputSchema: new KejiToolInputSchema(new List<KejiToolParameterDefinition>
         {
             P("source", KejiToolParameterType.String, true, "Source path.", maxLength: 1024),
-            P("target_format", KejiToolParameterType.String, true, "Target format."),
+            P("target_format", KejiToolParameterType.String, true, "Target format.", maxLength: 128),
         }));
 
     private static KejiToolDefinition EtlPipeline() => new(
@@ -242,7 +242,7 @@ public static class BuiltInToolCatalog
         inputSchema: new KejiToolInputSchema(new List<KejiToolParameterDefinition>
         {
             P("source", KejiToolParameterType.String, true, "Source.", maxLength: 1024),
-            P("steps", KejiToolParameterType.String, true, "ETL steps."),
+            P("steps", KejiToolParameterType.String, true, "ETL steps.", maxLength: 100000),
         }));
 
     private static KejiToolDefinition QueryKnowledge() => new(
@@ -251,7 +251,7 @@ public static class BuiltInToolCatalog
         KejiPermission.KnowledgeRead,
         inputSchema: new KejiToolInputSchema(new List<KejiToolParameterDefinition>
         {
-            P("query", KejiToolParameterType.String, true, "Search query."),
+            P("query", KejiToolParameterType.String, true, "Search query.", maxLength: 4000),
             P("n_results", KejiToolParameterType.Integer, false, "Max results.", minimum: 1, maximum: 50),
         }));
 
@@ -271,7 +271,7 @@ public static class BuiltInToolCatalog
         KejiPermission.KnowledgeWrite,
         inputSchema: new KejiToolInputSchema(new List<KejiToolParameterDefinition>
         {
-            P("name", KejiToolParameterType.String, true, "Entry name to remove."),
+            P("name", KejiToolParameterType.String, true, "Entry name to remove.", maxLength: 256),
         }));
 
     private static KejiToolDefinition CreateDocument() => new(
@@ -280,7 +280,7 @@ public static class BuiltInToolCatalog
         KejiPermission.FileWrite,
         inputSchema: new KejiToolInputSchema(new List<KejiToolParameterDefinition>
         {
-            P("title", KejiToolParameterType.String, true, "Document title."),
+            P("title", KejiToolParameterType.String, true, "Document title.", maxLength: 256),
             P("save_path", KejiToolParameterType.String, true, "Save path.", maxLength: 1024),
         }));
 
@@ -290,7 +290,7 @@ public static class BuiltInToolCatalog
         KejiPermission.FileWrite,
         inputSchema: new KejiToolInputSchema(new List<KejiToolParameterDefinition>
         {
-            P("headers", KejiToolParameterType.String, true, "Column headers."),
+            P("headers", KejiToolParameterType.String, true, "Column headers.", maxLength: 2048),
             P("save_path", KejiToolParameterType.String, true, "Save path.", maxLength: 1024),
         }));
 
@@ -300,7 +300,7 @@ public static class BuiltInToolCatalog
         KejiPermission.FileWrite,
         inputSchema: new KejiToolInputSchema(new List<KejiToolParameterDefinition>
         {
-            P("title", KejiToolParameterType.String, true, "Presentation title."),
+            P("title", KejiToolParameterType.String, true, "Presentation title.", maxLength: 256),
             P("save_path", KejiToolParameterType.String, true, "Save path.", maxLength: 1024),
         }));
 
@@ -329,7 +329,7 @@ public static class BuiltInToolCatalog
         KejiPermission.FileWrite,
         inputSchema: new KejiToolInputSchema(new List<KejiToolParameterDefinition>
         {
-            P("sources", KejiToolParameterType.String, true, "Source paths."),
+            P("sources", KejiToolParameterType.String, true, "Source paths.", maxLength: 100000),
             P("output_path", KejiToolParameterType.String, true, "Output path.", maxLength: 1024),
         }));
 
@@ -368,7 +368,7 @@ public static class BuiltInToolCatalog
         inputSchema: new KejiToolInputSchema(new List<KejiToolParameterDefinition>
         {
             P("path", KejiToolParameterType.String, true, "Image path.", maxLength: 1024),
-            P("lang", KejiToolParameterType.String, false, "Language code."),
+            P("lang", KejiToolParameterType.String, false, "Language code.", maxLength: 32),
         }));
 
     private static KejiToolDefinition OcrPdf() => new(
@@ -378,7 +378,7 @@ public static class BuiltInToolCatalog
         inputSchema: new KejiToolInputSchema(new List<KejiToolParameterDefinition>
         {
             P("path", KejiToolParameterType.String, true, "PDF path.", maxLength: 1024),
-            P("lang", KejiToolParameterType.String, false, "Language code."),
+            P("lang", KejiToolParameterType.String, false, "Language code.", maxLength: 32),
         }));
 
     private static KejiToolDefinition OcrBatch() => new(
@@ -397,11 +397,11 @@ public static class BuiltInToolCatalog
         KejiPermission.DatabaseManage,
         inputSchema: new KejiToolInputSchema(new List<KejiToolParameterDefinition>
         {
-            P("db_type", KejiToolParameterType.String, true, "Database type."),
-            P("host", KejiToolParameterType.String, true, "Host."),
-            P("database", KejiToolParameterType.String, true, "Database name."),
-            P("username", KejiToolParameterType.String, true, "Username."),
-            P("password", KejiToolParameterType.String, true, "Password.", sensitive: true),
+            P("db_type", KejiToolParameterType.String, true, "Database type.", maxLength: 64),
+            P("host", KejiToolParameterType.String, true, "Host.", maxLength: 256),
+            P("database", KejiToolParameterType.String, true, "Database name.", maxLength: 256),
+            P("username", KejiToolParameterType.String, true, "Username.", maxLength: 256),
+            P("password", KejiToolParameterType.String, true, "Password.", sensitive: true, maxLength: 512),
         }));
 
     private static KejiToolDefinition DbListTables() => new(
@@ -410,7 +410,7 @@ public static class BuiltInToolCatalog
         KejiPermission.DatabaseRead,
         inputSchema: new KejiToolInputSchema(new List<KejiToolParameterDefinition>
         {
-            P("connection_id", KejiToolParameterType.String, true, "Connection ID."),
+            P("connection_id", KejiToolParameterType.String, true, "Connection ID.", maxLength: 128),
         }));
 
     private static KejiToolDefinition DbDescribeTable() => new(
@@ -419,8 +419,8 @@ public static class BuiltInToolCatalog
         KejiPermission.DatabaseRead,
         inputSchema: new KejiToolInputSchema(new List<KejiToolParameterDefinition>
         {
-            P("connection_id", KejiToolParameterType.String, true, "Connection ID."),
-            P("table_name", KejiToolParameterType.String, true, "Table name."),
+            P("connection_id", KejiToolParameterType.String, true, "Connection ID.", maxLength: 128),
+            P("table_name", KejiToolParameterType.String, true, "Table name.", maxLength: 256),
         }));
 
     private static KejiToolDefinition DbTestConnection() => new(
@@ -429,11 +429,11 @@ public static class BuiltInToolCatalog
         KejiPermission.DatabaseRead,
         inputSchema: new KejiToolInputSchema(new List<KejiToolParameterDefinition>
         {
-            P("db_type", KejiToolParameterType.String, true, "Database type."),
-            P("host", KejiToolParameterType.String, true, "Host."),
-            P("database", KejiToolParameterType.String, true, "Database name."),
-            P("username", KejiToolParameterType.String, true, "Username."),
-            P("password", KejiToolParameterType.String, true, "Password.", sensitive: true),
+            P("db_type", KejiToolParameterType.String, true, "Database type.", maxLength: 64),
+            P("host", KejiToolParameterType.String, true, "Host.", maxLength: 256),
+            P("database", KejiToolParameterType.String, true, "Database name.", maxLength: 256),
+            P("username", KejiToolParameterType.String, true, "Username.", maxLength: 256),
+            P("password", KejiToolParameterType.String, true, "Password.", sensitive: true, maxLength: 512),
         }));
 
     private static KejiToolDefinition DbDisconnect() => new(
@@ -442,7 +442,7 @@ public static class BuiltInToolCatalog
         KejiPermission.DatabaseRead,
         inputSchema: new KejiToolInputSchema(new List<KejiToolParameterDefinition>
         {
-            P("connection_id", KejiToolParameterType.String, true, "Connection ID."),
+            P("connection_id", KejiToolParameterType.String, true, "Connection ID.", maxLength: 128),
         }));
 
     private static KejiToolDefinition GetTime() => new(
@@ -456,7 +456,7 @@ public static class BuiltInToolCatalog
         KejiPermission.ToolCatalogRead,
         inputSchema: new KejiToolInputSchema(new List<KejiToolParameterDefinition>
         {
-            P("expr", KejiToolParameterType.String, true, "Mathematical expression."),
+            P("expr", KejiToolParameterType.String, true, "Mathematical expression.", maxLength: 2000),
         }));
 
     private static KejiToolDefinition WebSearch() => new(
@@ -465,7 +465,7 @@ public static class BuiltInToolCatalog
         KejiPermission.ToolExecuteRead,
         inputSchema: new KejiToolInputSchema(new List<KejiToolParameterDefinition>
         {
-            P("query", KejiToolParameterType.String, true, "Search query."),
+            P("query", KejiToolParameterType.String, true, "Search query.", maxLength: 4000),
             P("max_results", KejiToolParameterType.Integer, false, "Max results.", minimum: 1, maximum: 20),
         }));
 
@@ -475,7 +475,7 @@ public static class BuiltInToolCatalog
         KejiPermission.ToolExecuteRead,
         inputSchema: new KejiToolInputSchema(new List<KejiToolParameterDefinition>
         {
-            P("url", KejiToolParameterType.String, true, "URL to fetch."),
+            P("url", KejiToolParameterType.String, true, "URL to fetch.", maxLength: 4096),
         }));
 
     private static KejiToolDefinition SelfCheckRun() => new(
@@ -484,7 +484,7 @@ public static class BuiltInToolCatalog
         KejiPermission.SystemRead,
         inputSchema: new KejiToolInputSchema(new List<KejiToolParameterDefinition>
         {
-            P("scope", KejiToolParameterType.String, false, "Check scope.",
+            P("scope", KejiToolParameterType.String, false, "Check scope.", maxLength: 128,
                 allowedValues: new HashSet<string>(StringComparer.Ordinal) { "full", "tools", "mcp", "database" }),
         }));
 }

@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using Keji.Security.Authorization;
 using Keji.Tools.Definitions.Parameters;
 using Keji.Tools.Names;
@@ -24,7 +25,7 @@ public sealed class KejiToolDefinition
     private static readonly int MaxTagCount = 16;
 
     public KejiToolDefinition(
-        KejiToolName name,
+        KejiToolName? name,
         int contractVersion,
         string description,
         KejiToolCategory category,
@@ -37,6 +38,8 @@ public sealed class KejiToolDefinition
         bool supportsCancellation = false,
         IReadOnlySet<string>? tags = null)
     {
+        if (name is null)
+            throw new KejiToolContractException("Name must not be null.");
         if (description is null)
             throw new KejiToolContractException("Description must not be null.");
         if (description.Length == 0)
@@ -63,8 +66,23 @@ public sealed class KejiToolDefinition
                 throw new KejiToolContractException($"Tags must not exceed {MaxTagCount} entries.");
             foreach (var tag in tags)
             {
-                if (tag.Length == 0 || tag.Length > MaxTagLength)
+                if (tag is null)
+                    throw new KejiToolContractException("Tag must not be null.");
+                if (tag.Length == 0)
+                    throw new KejiToolContractException("Tag must not be empty.");
+                if (tag.Length > MaxTagLength)
                     throw new KejiToolContractException($"Each tag must be 1-{MaxTagLength} characters.");
+                if (tag.Any(c => char.IsControl(c)))
+                    throw new KejiToolContractException("Tag must not contain control characters.");
+            }
+        }
+
+        if (inputSchema is not null)
+        {
+            foreach (var p in inputSchema.Parameters)
+            {
+                if (p is null)
+                    throw new KejiToolContractException("Schema parameter must not be null.");
             }
         }
 
@@ -80,7 +98,7 @@ public sealed class KejiToolDefinition
         IsDeterministic = isDeterministic;
         SupportsCancellation = supportsCancellation;
         Tags = tags is not null
-            ? new HashSet<string>(tags, StringComparer.Ordinal)
-            : new HashSet<string>(StringComparer.Ordinal);
+            ? tags.ToFrozenSet(StringComparer.Ordinal)
+            : FrozenSet<string>.Empty;
     }
 }

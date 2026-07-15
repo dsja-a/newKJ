@@ -62,7 +62,7 @@ public class KejiToolDefinitionTests
     {
         var schema = new KejiToolInputSchema(new List<KejiToolParameterDefinition>
         {
-            new("path", KejiToolParameterType.String, true, "File path."),
+            new("path", KejiToolParameterType.String, true, "File path.", maxLength: 1024),
         });
         var def = new KejiToolDefinition(
             KejiToolName.Create("tool"), 1, "desc",
@@ -190,6 +190,28 @@ public class KejiToolDefinitionTests
     }
 
     [Fact]
+    public void Definition_NullTag_Throws()
+    {
+        var tags = new HashSet<string> { null! };
+        Assert.Throws<KejiToolContractException>(() => new KejiToolDefinition(
+            KejiToolName.Create("tool"), 1, "desc",
+            KejiToolCategory.Utility, KejiToolRiskLevel.ReadOnly, KejiToolExecutionTarget.Host,
+            KejiPermission.FileRead,
+            tags: tags));
+    }
+
+    [Fact]
+    public void Definition_TagWithControlChars_Throws()
+    {
+        var tags = new HashSet<string> { "tag\t" };
+        Assert.Throws<KejiToolContractException>(() => new KejiToolDefinition(
+            KejiToolName.Create("tool"), 1, "desc",
+            KejiToolCategory.Utility, KejiToolRiskLevel.ReadOnly, KejiToolExecutionTarget.Host,
+            KejiPermission.FileRead,
+            tags: tags));
+    }
+
+    [Fact]
     public void Definition_ValidTagsAtBoundaries_Succeeds()
     {
         var tags = new HashSet<string> { new string('x', 32), "a" };
@@ -291,5 +313,57 @@ public class KejiToolDefinitionTests
                 availability: a);
             Assert.Equal(a, def.Availability);
         }
+    }
+
+    [Fact]
+    public void Definition_NullName_Throws()
+    {
+        Assert.Throws<KejiToolContractException>(() => new KejiToolDefinition(
+            null!, 1, "desc",
+            KejiToolCategory.Utility, KejiToolRiskLevel.ReadOnly, KejiToolExecutionTarget.Host,
+            KejiPermission.FileRead));
+    }
+
+    [Fact]
+    public void Definition_Tags_DeepImmutable()
+    {
+        var original = new HashSet<string> { "tag1", "tag2" };
+        var def = new KejiToolDefinition(
+            KejiToolName.Create("tool"), 1, "desc",
+            KejiToolCategory.Utility, KejiToolRiskLevel.ReadOnly, KejiToolExecutionTarget.Host,
+            KejiPermission.FileRead,
+            tags: original);
+        original.Add("tag3");
+        Assert.Equal(2, def.Tags.Count);
+    }
+
+    [Fact]
+    public void Definition_Tags_CannotBeMutatedAfterCast()
+    {
+        var tags = new HashSet<string> { "tag1" };
+        var def = new KejiToolDefinition(
+            KejiToolName.Create("tool"), 1, "desc",
+            KejiToolCategory.Utility, KejiToolRiskLevel.ReadOnly, KejiToolExecutionTarget.Host,
+            KejiPermission.FileRead,
+            tags: tags);
+        var extracted = def.Tags;
+        Assert.False(extracted is HashSet<string>);
+    }
+
+    [Fact]
+    public void Definition_NullParameterInSchema_Throws()
+    {
+        Assert.Throws<KejiToolContractException>(() =>
+        {
+            var schema = new KejiToolInputSchema(new List<KejiToolParameterDefinition>
+            {
+                null!,
+            });
+            _ = new KejiToolDefinition(
+                KejiToolName.Create("tool"), 1, "desc",
+                KejiToolCategory.Utility, KejiToolRiskLevel.ReadOnly, KejiToolExecutionTarget.Host,
+                KejiPermission.FileRead,
+                inputSchema: schema);
+        });
     }
 }

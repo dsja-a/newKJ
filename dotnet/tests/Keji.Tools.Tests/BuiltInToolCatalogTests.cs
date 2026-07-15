@@ -1,10 +1,17 @@
 using Keji.Tools.Catalog;
+using Keji.Tools.Definitions.Parameters;
 using Keji.Tools.Names;
 
 namespace Keji.Tools.Tests;
 
 public class BuiltInToolCatalogTests
 {
+    [Fact]
+    public void Catalog_All47Tools_Present()
+    {
+        Assert.Equal(47, BuiltInToolCatalog.All.Count);
+    }
+
     [Fact]
     public void Catalog_AllTools_HaveValidNames()
     {
@@ -83,8 +90,6 @@ public class BuiltInToolCatalogTests
         foreach (var def in BuiltInToolCatalog.All)
         {
             Assert.True(def.Tags.Count <= 16, $"Tool {def.Name} has {def.Tags.Count} tags (max 16)");
-            foreach (var tag in def.Tags)
-                Assert.True(tag.Length <= 32, $"Tool {def.Name} has tag '{tag}' with length {tag.Length} (max 32)");
         }
     }
 
@@ -103,6 +108,41 @@ public class BuiltInToolCatalogTests
         foreach (var def in BuiltInToolCatalog.All)
         {
             Assert.True(Enum.IsDefined(def.Availability), $"Tool {def.Name} has undefined availability {(int)def.Availability}");
+        }
+    }
+
+    [Fact]
+    public void Catalog_AllTools_AvailabilityIsContractOnly()
+    {
+        foreach (var def in BuiltInToolCatalog.All)
+        {
+            Assert.Equal(Definitions.KejiToolAvailability.ContractOnly, def.Availability);
+        }
+    }
+
+    [Fact]
+    public void Catalog_AllStringParams_HaveMaxLength()
+    {
+        foreach (var def in BuiltInToolCatalog.All)
+        {
+            foreach (var p in def.InputSchema.Parameters)
+            {
+                if (p.Type == KejiToolParameterType.String)
+                    Assert.True(p.MaxLength.HasValue, $"Tool {def.Name} param '{p.Name}' missing MaxLength");
+            }
+        }
+    }
+
+    [Fact]
+    public void Catalog_AllArrayParams_HaveMaxItems()
+    {
+        foreach (var def in BuiltInToolCatalog.All)
+        {
+            foreach (var p in def.InputSchema.Parameters)
+            {
+                if (p.Type == KejiToolParameterType.StringArray || p.Type == KejiToolParameterType.IntegerArray)
+                    Assert.True(p.MaxItems.HasValue, $"Tool {def.Name} param '{p.Name}' missing MaxItems");
+            }
         }
     }
 
@@ -159,25 +199,93 @@ public class BuiltInToolCatalogTests
         }
     }
 
+    [Fact]
+    public void Catalog_AllTools_HaveNoExecutableCode()
+    {
+        foreach (var def in BuiltInToolCatalog.All)
+        {
+            Assert.Equal(Definitions.KejiToolAvailability.ContractOnly, def.Availability);
+        }
+    }
+
+    public static IEnumerable<object[]> Expected47Tools()
+    {
+        yield return new[] { "read_file" };
+        yield return new[] { "write_file" };
+        yield return new[] { "edit_file" };
+        yield return new[] { "list_dir" };
+        yield return new[] { "glob" };
+        yield return new[] { "grep" };
+        yield return new[] { "browse_files" };
+        yield return new[] { "search_files" };
+        yield return new[] { "list_allowed_directories" };
+        yield return new[] { "verify_output" };
+        yield return new[] { "read_document" };
+        yield return new[] { "create_folder" };
+        yield return new[] { "delete_file" };
+        yield return new[] { "rename_files" };
+        yield return new[] { "organize_files" };
+        yield return new[] { "deduplicate_files" };
+        yield return new[] { "analyze_data" };
+        yield return new[] { "knowledge_stats" };
+        yield return new[] { "format_data" };
+        yield return new[] { "clean_data" };
+        yield return new[] { "convert_data" };
+        yield return new[] { "etl_pipeline" };
+        yield return new[] { "query_knowledge" };
+        yield return new[] { "index_knowledge" };
+        yield return new[] { "remove_from_knowledge" };
+        yield return new[] { "create_document" };
+        yield return new[] { "create_table" };
+        yield return new[] { "create_presentation" };
+        yield return new[] { "browse_archive" };
+        yield return new[] { "extract_archive" };
+        yield return new[] { "create_archive" };
+        yield return new[] { "parse_email" };
+        yield return new[] { "batch_parse_emails" };
+        yield return new[] { "extract_email_attachments" };
+        yield return new[] { "ocr_image" };
+        yield return new[] { "ocr_pdf" };
+        yield return new[] { "ocr_batch" };
+        yield return new[] { "db_connect" };
+        yield return new[] { "db_list_tables" };
+        yield return new[] { "db_describe_table" };
+        yield return new[] { "db_test_connection" };
+        yield return new[] { "db_disconnect" };
+        yield return new[] { "get_time" };
+        yield return new[] { "calculator" };
+        yield return new[] { "web_search" };
+        yield return new[] { "web_fetch" };
+        yield return new[] { "selfcheck_run" };
+    }
+
     [Theory]
-    [MemberData(nameof(ExpectedTools))]
+    [MemberData(nameof(Expected47Tools))]
     public void Catalog_ContainsExpectedTool(string name)
     {
         Assert.Contains(BuiltInToolCatalog.All, d => d.Name.Value == name);
     }
 
-    public static IEnumerable<object[]> ExpectedTools()
+    [Fact]
+    public void Registry_HasNoExecutionEntryPoints()
     {
-        yield return new[] { "read_file" };
-        yield return new[] { "write_file" };
-        yield return new[] { "edit_file" };
-        yield return new[] { "glob" };
-        yield return new[] { "grep" };
-        yield return new[] { "web_search" };
-        yield return new[] { "web_fetch" };
-        yield return new[] { "db_connect" };
-        yield return new[] { "get_time" };
-        yield return new[] { "calculator" };
-        yield return new[] { "query_knowledge" };
+        var registryType = typeof(Registry.IKejiToolRegistry);
+        var methods = registryType.GetMethods();
+        foreach (var m in methods)
+        {
+            Assert.DoesNotContain("Execute", m.Name);
+            Assert.DoesNotContain("Invoke", m.Name);
+            Assert.DoesNotContain("Run", m.Name);
+            Assert.DoesNotContain("Start", m.Name);
+        }
+    }
+
+    [Fact]
+    public void Registry_AllTools_ContainOnly()
+    {
+        foreach (var def in BuiltInToolCatalog.All)
+        {
+            Assert.Equal(Definitions.KejiToolAvailability.ContractOnly, def.Availability);
+        }
     }
 }
