@@ -59,7 +59,7 @@
   "task011": {
     "final_commit_sha": "1728b8abd3134c9ed02a4e70a0e738f63015e320",
     "accepted_sha": "1728b8abd3134c9ed02a4e70a0e738f63015e320",
-    "repair_sha_r1": "HEAD"
+    "repair_sha_r1": "1470cf412c0620fb669f97ae94f1bcf8150c7d03"
   },
   "test_results": {
     "task005_security_restored": "262/262",
