@@ -1,6 +1,5 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <OutputType>Exe</OutputType>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
@@ -8,5 +7,7 @@
   <ItemGroup>
     <ProjectReference Include="..\Keji.ToolWorker.Protocol\Keji.ToolWorker.Protocol.csproj" />
     <ProjectReference Include="..\Keji.Tools\Keji.Tools.csproj" />
+    <ProjectReference Include="..\Keji.Security\Keji.Security.csproj" />
+    <ProjectReference Include="..\Keji.Auditing\Keji.Auditing.csproj" />
   </ItemGroup>
 </Project>

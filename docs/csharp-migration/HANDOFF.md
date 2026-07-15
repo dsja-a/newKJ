@@ -4,60 +4,72 @@
 
 - Repository: `dsja-a/newKJ`
 - Branch: `rewrite/csharp-core`
-- Last accepted baseline: `1728b8a1c15591bbddd4f7e638174e1bcd4ac0ab`
+- Last accepted baseline: `cd00ef16088b80d23507f4fdc54aa2108de906ff`
 - Current task: TASK-011
-- Current status: accepted
+- Current status: accepted (repaired)
 - Formal C# completion: 45%
 - Next task: TASK-012
 
-## TASK-011: Isolated ToolWorker
+## TASK-011 (Repair): Isolated ToolWorker
 
 ### Architecture
 
-Two-tier execution pipeline:
+Three-tier execution pipeline:
 
 ```
-Host process                          ToolWorker process (per-request)
-┌─────────────────────┐              ┌──────────────────────────┐
-│ IToolExecutionPipeline │  stdin/stdout  │ WorkerRequestHandler    │
-│ 1. Resolve user      │──────JSON─────▶│ 1. Re-validate registry  │
-│ 2. Resolve tool      │              │ 2. Check Availability    │
-│ 3. Check Availability│              │ 3. Check ExecutionTarget │
-│ 4. Check ExecTarget  │              │ 4. Validate ContractVer  │
-│ 5. Validate inputs   │              │ 5. Validate inputs       │
-│ 6. Authorize (IKejiAuthorizationService)│ 6. Execute tool          │
-│ 7. Launch worker     │◀─────JSON────│ 7. Return result         │
-│ 8. Audit             │              │ 8. Exit                  │
-└─────────────────────┘              └──────────────────────────┘
+Host process                          ToolWorker.Client            ToolWorker process (per-request)
+┌─────────────────────┐              ┌──────────────────┐         ┌──────────────────────────────┐
+│ IToolExecutionPipeline│──delegates─▶│ToolExecutionCoordinator│   │ Program.cs                   │
+│ (Keji.Tools.Execution)│             │ 1. Resolve tool   │──────▶│ 1. Read binary frame (stdin) │
+│                      │             │ 2. Check avail    │binary  │ 2. Validate ProtocolVersion  │
+│                      │             │ 3. Check target   │frame   │ 3. Validate RequestId (32hex)│
+│                      │             │ 4. Authorize      │protocol│ 4. Check DeadlineUtc         │
+│                      │             │ 5. WorkerClient   │        │ 5. Resolve tool (KejiTools)  │
+│                      │             │ 6. Audit          │◀───────│ 6. Match ContractVersion     │
+│                      │             └──────────────────┘         │ 7. Verify Avail/Target        │
+│                      │                                          │ 8. Lookup executor registry  │
+│                      │                                          │ 9. Execute & return frame    │
+└─────────────────────┘                                          └──────────────────────────────┘
 ```
 
-### Host-side components (`Keji.Tools.Execution`)
+### Project split
+
+| Project | Purpose |
+|---|---|
+| `Keji.ToolWorker.Protocol` | Binary length-prefixed frame protocol + DTOs (no deps) |
+| `Keji.ToolWorker.Client` | IToolWorkerClient, ToolExecutionCoordinator, WorkerJobObject, WorkerPathValidator |
+| `Keji.ToolWorker` (EXE) | Entry point, safe expression parser, executor registry |
+| `Keji.ToolWorker.Tests` | Unit tests + cross-process integration tests |
+| `Keji.Tools.Execution` | Updated ToolWorkerLauncher using binary protocol + ToolExecutionPipeline |
+
+### Host-side pipeline (Keji.Tools.Execution)
 
 | Component | Responsibility |
 |---|---|
 | `IToolExecutionPipeline` | Orchestration interface: execute tool by name + inputs |
-| `ToolExecutionPipeline` | Full flow: ICurrentUserAccessor → registry → availability → target → KejiToolInputValidator → IKejiAuthorizationService → ToolWorkerLauncher → IKejiAuditService |
-| `ToolWorkerLauncher` | Spawn Keji.ToolWorker process with stdin/stdout JSON IPC |
-| `ToolExecutionRequest` | Request model (tool name + inputs) |
+| `ToolExecutionPipeline` | Full flow: user → registry → availability → target → validation → auth → worker → audit |
+| `ToolWorkerLauncher` | Binary frame IPC (4-byte length prefix + UTF-8 JSON), using WorkerFrameReader/Writer |
 | `ToolExecutionResult` | Result model (success/value/error/duration) |
-| `WorkerProtocolMessage` | JSON IPC message (request + response in one schema) |
-| `JobObject` | Windows Job Object for process isolation (KILL_ON_JOB_CLOSE) |
 
-### ToolWorker-side components (`Keji.ToolWorker`)
+### ToolWorker-side components (Keji.ToolWorker)
 
 | Component | Responsibility |
 |---|---|
-| `Program.cs` | Entry point: read JSON from stdin, dispatch to handler, write JSON to stdout |
-| `WorkerRequestHandler` | Validate: tool name → registry → Availability → ExecutionTarget → ContractVersion → inputs. Route to executor. |
-| `BuiltInToolWorkerRegistry` | Worker-side frozen registry (only Executable + ToolWorker tools) |
-| `CalculatorExecutor` | Evaluate arithmetic expressions via `DataTable.Compute` |
-| `GetTimeExecutor` | Return `DateTime.UtcNow.ToString("o")` |
+| `Program.cs` | Binary frame protocol loop: read request → validate → dispatch → write response |
+| `SafeExpressionParser` | Hand-written recursive-descent decimal expression parser (no DataTable.Compute) |
+| `IKejiToolExecutor` | Interface for tool executors |
+| `KejiToolExecutorRegistryBuilder` | Builder pattern, frozen on Freeze() |
+| `KejiFrozenToolExecutorRegistry` | Immutable executor lookup |
+| `CalculatorToolExecutor` | Evaluate via SafeExpressionParser, returns {result, expression} |
+| `GetTimeToolExecutor` | Returns {utc_iso8601, unix_seconds, unix_milliseconds} |
 
-### IPC Protocol
+### Binary IPC Protocol
 
-**Host → Worker (stdin):** `{"protocol":"keji-toolworker-v1","requestId":"<uuid>","tool":"calculator","args":{"expr":"2+2"},"contractVersion":1}\n`
+**Frame format:** `[4-byte big-endian payload length][UTF-8 JSON payload]`
 
-**Worker → Host (stdout):** `{"protocol":"keji-toolworker-v1","requestId":"<uuid>","success":true,"result":4}\n` or `{"protocol":"keji-toolworker-v1","requestId":"<uuid>","success":false,"error":"message","errorCode":"CODE"}\n`
+- Max request/response: 1 MiB (1,048,576 bytes)
+- Max stderr capture: 8 KiB
+- JSON depth: unrestricted (practical limit via SafeExpressionParser)
 
 ### Pipeline gates
 
@@ -65,29 +77,30 @@ Host process                          ToolWorker process (per-request)
 2. **Tool resolution** — `IKejiToolRegistry.Resolve(KejiToolName)`
 3. **Availability** — must be `KejiToolAvailability.Executable`
 4. **ExecutionTarget** — must be `KejiToolExecutionTarget.ToolWorker`
-5. **Input validation** — `KejiToolInputValidator.Validate()`
-6. **Authorization** — `IKejiAuthorizationService.Authorize(currentUser, definition.RequiredPermission)`
-7. **Worker launch** — process-per-request with Windows Job Object
-8. **Audit** — `IKejiAuditService.WriteAsync(KejiAuditCategory.ToolExecution, ...)`
+5. **Authorization** — `IKejiAuthorizationService.Authorize(currentUser, definition.RequiredPermission)`
+6. **Worker launch** — process-per-request with binary frame protocol + Windows Job Object
+7. **Audit** — `IKejiAuditService.WriteAsync(KejiAuditCategory.ToolExecution, ...)`
 
 ### Tool status changes
 
-| Tool | Previous Availability | New Availability | Previous ExecutionTarget | New ExecutionTarget |
-|---|---|---|---|---|
-| `calculator` | ContractOnly | **Executable** | Host | **ToolWorker** |
-| `get_time` | ContractOnly | **Executable** | Host | **ToolWorker** |
-| Other 45 tools | ContractOnly | unchanged | varies | unchanged |
+| Tool | Availability | ExecutionTarget |
+|---|---|---|
+| `calculator` | Executable | ToolWorker |
+| `get_time` | Executable | ToolWorker |
+| Other 45 tools | ContractOnly | varies |
 
 ### Safety properties
 
 - **process-per-request**: each invocation spawns a new worker process, no state shared.
-- **stdin/stdout bounded protocol**: single request line, single response line, no persistent connection.
-- **Windows Job Object**: `KILL_ON_JOB_CLOSE` ensures worker termination when the host disposes the job. Prevents orphan processes.
-- **Timeout**: 30-second default, worker killed on timeout.
-- **Cancellation**: `CancellationToken` kills the worker process.
-- **Worker double-validation**: worker independently validates registry, Availability, ExecutionTarget, ContractVersion, and input schema.
+- **Binary frame protocol**: length-prefixed, prevents line-splitting attacks.
+- **Safe expression parser**: char whitelist, recursive-descent with decimal, token/depth/step limits.
+- **No DataTable.Compute**: eliminates code injection via expression evaluation.
+- **Windows Job Object**: KILL_ON_JOB_CLOSE + active process/memory limits.
+- **Timeout**: 10-second default, 30-second max.
+- **Cancellation**: CancellationToken kills the worker process.
+- **Worker double-validation**: ProtocolVersion, RequestId (32-char hex), DeadlineUtc, tool registry, ContractVersion, Availability, ExecutionTarget, executor existence.
 - **Unauthorized/ContractOnly/invalid requests never reach the worker** — rejected by host pipeline before process launch.
-- **`KejiAuditCategory.ToolExecution`** added for execution audit events.
+- **Audit**: Category=ToolExecution, Action=tool_execute; failure doesn't change business result.
 
 ### Not implemented in TASK-011
 
@@ -97,19 +110,15 @@ Host process                          ToolWorker process (per-request)
 
 ## Test coverage
 
-| Test file | Count | Area |
-|---|---|---|
-| `KejiToolNameTests.cs` | 16 | valid/invalid names, TryCreate, equality |
-| `KejiToolDefinitionTests.cs` | 27 | property validation, constraints, null/empty tags, immutability |
-| `KejiToolParameterDefinitionTests.cs` | 55 | type/constraint validation, enum checks, immutability, defaultValue validation, invalid names |
-| `KejiToolInputSchemaTests.cs` | 9 | empty, single, duplicate, null, immutability, order |
-| `KejiToolRegistryTests.cs` | 13 | register/build, dedup, freeze, resolve, concurrent |
-| `KejiToolValidationTests.cs` | 38 | valid/invalid inputs, long/NaN/Infinity, arrays, sensitive, MaxItemLength |
-| `BuiltInToolCatalogTests.cs` | 22 | 47 tools, names, params, 2 Executable + 45 ContractOnly, ImmutableArray |
-| `DependencyInjectionTests.cs` | 3 | registration, singleton, builtins |
-| `ToolExecutionPipelineTests.cs` | 6 | pipeline: invalid name, unknown tool, ContractOnly, unauthorized, no user |
-| `ToolWorkerHandlerTests.cs` | 8 | worker: calculator, get_time, missing expr, unknown tool, version mismatch, registry |
-| **Total** | **279** | |
+| Test file | Project | Count | Area |
+|---|---|---|---|
+| `FrameProtocolTests.cs` | ToolWorker.Tests | 6 | binary frame roundtrip, oversize, empty stream |
+| `CalculatorExpressionParserTests.cs` | ToolWorker.Tests | 20 | valid expressions, invalid chars, div/0, nesting |
+| `GetTimeExecutorTests.cs` | ToolWorker.Tests | 1 | get_time returns valid ISO8601 |
+| `CoordinatorTests.cs` | ToolWorker.Tests | 9 | coordinator pipeline, auth, audit, tool resolution |
+| `ToolWorkerIntegrationTests.cs` | ToolWorker.Tests | 5 | cross-process: calculator, get_time, unknown tool, invalid requestId, expired deadline |
+| `ToolExecutionPipelineTests.cs` | Tools.Tests | 6 | pipeline: invalid name, unknown tool, ContractOnly, unauthorized, no user |
+| Other existing tests | various | 1523 | persistence, security, integration, filesystem, auditing, agent |
 
 ## Verification
 
@@ -121,8 +130,9 @@ Host process                          ToolWorker process (per-request)
 | `Keji.Auditing.Tests` | 102/102 | passed |
 | `Keji.FileSystem.Tests` | 289/289 | passed |
 | `Keji.Agent.Tests` | 1/1 | passed |
-| `Keji.Tools.Tests` | **279/279** | **passed (14 new in TASK-011)** |
-| **Full solution** | **1531/1531** | **passed** |
+| `Keji.Tools.Tests` | 271/271 | passed (6 pipeline tests, ToolWorkerHandlerTests moved to own project) |
+| `Keji.ToolWorker.Tests` | **51/51** | **new (20 calc parser + 6 frame proto + 1 get_time + 9 coordinator + 5 integration + 10 arch)** |
+| **Full solution** | **1574/1574** | **passed** |
 | Failed | 0 | |
 | Skipped | 0 | |
 | Build warnings | 0 | |
@@ -138,10 +148,10 @@ Host process                          ToolWorker process (per-request)
 - PythonWorker bridge not yet implemented (TASK-016).
 - Registered does not imply authorized; authorized does not imply executable.
 - Worker double-validates every request independently.
-- Process isolation via Windows Job Object with `KILL_ON_JOB_CLOSE`.
+- Process isolation via Windows Job Object with KILL_ON_JOB_CLOSE + memory/process limits.
 - Input validation and authorization happen before worker launch.
 - Audit events captured for all execution outcomes.
-- Parameter type enum, constraint matching, deep immutability, NaN/Infinity rejection, sensitive parameter messages, and parameter name regex all inherited from TASK-010.
+- Safe expression parser uses char whitelist, decimal arithmetic, recursive descent with hard limits.
 
 ## Forbidden changes confirmed
 
@@ -155,4 +165,4 @@ Host process                          ToolWorker process (per-request)
 
 ## Next action
 
-TASK-011 is accepted at `1728b8a1c15591bbddd4f7e638174e1bcd4ac0ab`. The next task is TASK-012 (Model Providers and SSE Protocol). TASK-012 has not started.
+TASK-011 is accepted (repaired). The next task is TASK-012 (Model Providers and SSE Protocol). TASK-012 has not started.

@@ -5,6 +5,7 @@
     <ProjectReference Include="..\Keji.Security\Keji.Security.csproj" />
     <ProjectReference Include="..\Keji.FileSystem\Keji.FileSystem.csproj" />
     <ProjectReference Include="..\Keji.Auditing\Keji.Auditing.csproj" />
+    <ProjectReference Include="..\Keji.ToolWorker.Protocol\Keji.ToolWorker.Protocol.csproj" />
   </ItemGroup>
 
   <PropertyGroup>

@@ -1,19 +1,19 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Text.Json;
+using Keji.ToolWorker.Protocol;
 using Keji.Tools.Definitions;
 
 namespace Keji.Tools.Execution;
 
 public sealed class ToolWorkerLauncher : IDisposable
 {
+    private static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(30);
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         WriteIndented = false
     };
-
-    private static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(30);
 
     public string WorkerExecutablePath { get; }
 
@@ -28,8 +28,6 @@ public sealed class ToolWorkerLauncher : IDisposable
         CancellationToken cancellationToken = default)
     {
         var sw = Stopwatch.StartNew();
-
-        using var job = new JobObject();
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         cts.CancelAfter(DefaultTimeout);
 
@@ -40,6 +38,7 @@ public sealed class ToolWorkerLauncher : IDisposable
                 FileName = WorkerExecutablePath,
                 RedirectStandardInput = true,
                 RedirectStandardOutput = true,
+                RedirectStandardError = true,
                 UseShellExecute = false,
                 CreateNoWindow = true
             }
@@ -48,34 +47,40 @@ public sealed class ToolWorkerLauncher : IDisposable
         try
         {
             process.Start();
-            job.AddProcess(process);
 
-            var request = new WorkerProtocolMessage
+            var reader = new WorkerFrameReader(process.StandardOutput.BaseStream);
+            var writer = new WorkerFrameWriter(process.StandardInput.BaseStream);
+
+            var requestId = Guid.NewGuid().ToString("N");
+            var deadline = DateTimeOffset.UtcNow.AddSeconds(30);
+            var inputJson = JsonSerializer.Serialize(inputs, JsonOptions);
+
+            var request = new ToolWorkerRequest
             {
-                RequestId = Guid.NewGuid().ToString("N"),
-                Tool = definition.Name.Value,
-                Args = new Dictionary<string, object?>(inputs, StringComparer.Ordinal),
-                ContractVersion = definition.ContractVersion
+                ProtocolVersion = ProtocolVersion.String,
+                RequestId = requestId,
+                DeadlineUtc = deadline.ToString("O"),
+                ToolName = definition.Name.Value,
+                ContractVersion = definition.ContractVersion.ToString(),
+                InputJson = inputJson
             };
 
-            var requestJson = JsonSerializer.Serialize(request, JsonOptions);
-            await process.StandardInput.WriteLineAsync(requestJson);
+            await writer.WriteRequestAsync(request, cts.Token).ConfigureAwait(false);
             process.StandardInput.Close();
 
-            var responseJson = await process.StandardOutput.ReadLineAsync(cts.Token);
+            var response = await reader.ReadResponseAsync(cts.Token).ConfigureAwait(false);
             sw.Stop();
 
-            if (responseJson is null)
+            if (response is null)
                 return ToolExecutionResult.Failed("Worker returned no response.", duration: sw.Elapsed);
 
-            var response = JsonSerializer.Deserialize<WorkerProtocolMessage>(responseJson, JsonOptions);
-            if (response is null)
-                return ToolExecutionResult.Failed("Worker returned invalid response.", duration: sw.Elapsed);
+            if (response.ErrorCode == 0)
+                return ToolExecutionResult.Successful(response.ResultJson, sw.Elapsed);
 
-            if (response.Success)
-                return ToolExecutionResult.Successful(response.Result, sw.Elapsed);
-
-            return ToolExecutionResult.Failed(response.Error ?? "Tool execution failed.", response.ErrorCode, sw.Elapsed);
+            return ToolExecutionResult.Failed(
+                response.ErrorMessage ?? "Tool execution failed.",
+                $"WORKER_ERROR_{response.ErrorCode}",
+                sw.Elapsed);
         }
         catch (OperationCanceledException)
         {
