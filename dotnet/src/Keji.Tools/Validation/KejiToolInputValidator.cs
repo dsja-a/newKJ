@@ -275,6 +275,20 @@ public static class KejiToolInputValidator
                         : $"Parameter '{param.Name}' has too many items.";
                     return false;
                 }
+                if (param.MaxItemLength.HasValue)
+                {
+                    foreach (var item in list)
+                    {
+                        if (item is not null && item.Length > param.MaxItemLength.Value)
+                        {
+                            error = KejiToolValidationError.ValueTooLong;
+                            message = param.Sensitive
+                                ? "Parameter item exceeds maximum length."
+                                : $"Parameter '{param.Name}' has an item exceeding maximum length.";
+                            return false;
+                        }
+                    }
+                }
                 break;
             }
             case KejiToolParameterType.IntegerArray when value is IReadOnlyList<int> list:

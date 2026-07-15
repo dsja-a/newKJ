@@ -1,5 +1,6 @@
 using Keji.Tools.Definitions.Parameters;
 using Keji.Tools.Names;
+using System.Collections.Immutable;
 
 namespace Keji.Tools.Tests;
 
@@ -127,7 +128,7 @@ public class KejiToolParameterDefinitionTests
     public void Parameter_ArrayTypeWithMaxItems_Succeeds()
     {
         var p = new KejiToolParameterDefinition("items", KejiToolParameterType.StringArray, false, "Items.",
-            maxItems: 10);
+            maxItems: 10, maxItemLength: 100);
         Assert.Equal(10, p.MaxItems);
     }
 
@@ -247,7 +248,12 @@ public class KejiToolParameterDefinitionTests
                 var p = new KejiToolParameterDefinition("x", t, false, "desc", maxLength: 100);
                 Assert.Equal(t, p.Type);
             }
-            else if (t == KejiToolParameterType.StringArray || t == KejiToolParameterType.IntegerArray)
+            else if (t == KejiToolParameterType.StringArray)
+            {
+                var p = new KejiToolParameterDefinition("x", t, false, "desc", maxItems: 10, maxItemLength: 100);
+                Assert.Equal(t, p.Type);
+            }
+            else if (t == KejiToolParameterType.IntegerArray)
             {
                 var p = new KejiToolParameterDefinition("x", t, false, "desc", maxItems: 10);
                 Assert.Equal(t, p.Type);
@@ -382,9 +388,9 @@ public class KejiToolParameterDefinitionTests
     {
         var original = new List<string> { "a", "b" };
         var p = new KejiToolParameterDefinition("items", KejiToolParameterType.StringArray, false, "Items.",
-            defaultValue: original, maxItems: 10);
+            defaultValue: original, maxItems: 10, maxItemLength: 100);
         original.Add("c");
-        var dv = (string[])p.DefaultValue!;
+        var dv = (ImmutableArray<string>)p.DefaultValue!;
         Assert.Equal(2, dv.Length);
         Assert.Equal("a", dv[0]);
         Assert.Equal("b", dv[1]);
@@ -397,7 +403,7 @@ public class KejiToolParameterDefinitionTests
         var p = new KejiToolParameterDefinition("ids", KejiToolParameterType.IntegerArray, false, "IDs.",
             defaultValue: original, maxItems: 10);
         original.Add(3);
-        var dv = (int[])p.DefaultValue!;
+        var dv = (ImmutableArray<long>)p.DefaultValue!;
         Assert.Equal(2, dv.Length);
     }
 
@@ -415,5 +421,84 @@ public class KejiToolParameterDefinitionTests
         Assert.Throws<KejiToolContractException>(() =>
             new KejiToolParameterDefinition("x", KejiToolParameterType.String, false, "desc",
                 maxLength: 100, minLength: -1));
+    }
+
+    [Fact]
+    public void Parameter_StringArrayWithoutMaxItemLength_Throws()
+    {
+        Assert.Throws<KejiToolContractException>(() =>
+            new KejiToolParameterDefinition("x", KejiToolParameterType.StringArray, false, "desc",
+                maxItems: 10));
+    }
+
+    [Fact]
+    public void Parameter_DefaultValueStringExceedsMaxLength_Throws()
+    {
+        Assert.Throws<KejiToolContractException>(() =>
+            new KejiToolParameterDefinition("x", KejiToolParameterType.String, false, "desc",
+                defaultValue: "toolong", maxLength: 3));
+    }
+
+    [Fact]
+    public void Parameter_DefaultValueIntegerOutOfRange_Throws()
+    {
+        Assert.Throws<KejiToolContractException>(() =>
+            new KejiToolParameterDefinition("x", KejiToolParameterType.Integer, false, "desc",
+                defaultValue: 200, maximum: 100));
+    }
+
+    [Fact]
+    public void Parameter_DefaultValueNumberNaN_Throws()
+    {
+        Assert.Throws<KejiToolContractException>(() =>
+            new KejiToolParameterDefinition("x", KejiToolParameterType.Number, false, "desc",
+                defaultValue: double.NaN));
+    }
+
+    [Fact]
+    public void Parameter_DefaultValueNumberInfinity_Throws()
+    {
+        Assert.Throws<KejiToolContractException>(() =>
+            new KejiToolParameterDefinition("x", KejiToolParameterType.Number, false, "desc",
+                defaultValue: double.PositiveInfinity));
+    }
+
+    [Fact]
+    public void Parameter_DefaultValueArrayExceedsMaxItems_Throws()
+    {
+        Assert.Throws<KejiToolContractException>(() =>
+            new KejiToolParameterDefinition("x", KejiToolParameterType.StringArray, false, "desc",
+                defaultValue: new List<string> { "a", "b", "c" }, maxItems: 2, maxItemLength: 100));
+    }
+
+    [Fact]
+    public void Parameter_DefaultValueStringArrayItemExceedsMaxItemLength_Throws()
+    {
+        Assert.Throws<KejiToolContractException>(() =>
+            new KejiToolParameterDefinition("x", KejiToolParameterType.StringArray, false, "desc",
+                defaultValue: new List<string> { "a", "toolong" }, maxItems: 10, maxItemLength: 3));
+    }
+
+    [Fact]
+    public void Parameter_DefaultValueStringArray_ImmutableElement_NotModifiable()
+    {
+        var p = new KejiToolParameterDefinition("x", KejiToolParameterType.StringArray, false, "desc",
+            defaultValue: new List<string> { "a", "b" }, maxItems: 10, maxItemLength: 100);
+        var dv = (ImmutableArray<string>)p.DefaultValue!;
+        Assert.Equal("a", dv[0]);
+        Assert.Equal("b", dv[1]);
+        Assert.Equal(2, dv.Length);
+    }
+
+    [Theory]
+    [InlineData("_path")]
+    [InlineData("1path")]
+    [InlineData("Path")]
+    [InlineData(" path")]
+    [InlineData("path ")]
+    public void Parameter_InvalidName_Throws(string name)
+    {
+        Assert.Throws<KejiToolContractException>(() =>
+            new KejiToolParameterDefinition(name, KejiToolParameterType.String, true, "desc", maxLength: 100));
     }
 }

@@ -1,3 +1,5 @@
+using System.Collections.Immutable;
+
 namespace Keji.Tools.Definitions.Parameters;
 
 public sealed class KejiToolInputSchema
@@ -8,7 +10,7 @@ public sealed class KejiToolInputSchema
     {
         if (parameters is null)
         {
-            Parameters = Array.Empty<KejiToolParameterDefinition>();
+            Parameters = ImmutableArray<KejiToolParameterDefinition>.Empty;
             return;
         }
 
@@ -21,7 +23,7 @@ public sealed class KejiToolInputSchema
                 throw new KejiToolContractException($"Duplicate parameter name: '{p.Name}'.");
         }
 
-        Parameters = parameters.ToArray();
+        Parameters = ImmutableArray.CreateRange(parameters);
     }
 
     public bool HasRequiredParams => Parameters.Any(p => p.Required);

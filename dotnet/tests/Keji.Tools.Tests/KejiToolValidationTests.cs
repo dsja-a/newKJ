@@ -283,7 +283,7 @@ public class KejiToolValidationTests
     {
         var registry = CreateBuilderWith(MakeDef("test_tool",
             new KejiToolParameterDefinition("items", KejiToolParameterType.StringArray, true, "Items.",
-                maxItems: 5)))
+                maxItems: 5, maxItemLength: 100)))
             .Build();
         var result = KejiToolInputValidator.Validate(registry, "test_tool", DI(("items", new List<string> { "a", "b" })));
         Assert.True(result.IsValid);
@@ -294,7 +294,7 @@ public class KejiToolValidationTests
     {
         var registry = CreateBuilderWith(MakeDef("test_tool",
             new KejiToolParameterDefinition("items", KejiToolParameterType.StringArray, true, "Items.",
-                maxItems: 5)))
+                maxItems: 5, maxItemLength: 100)))
             .Build();
         var result = KejiToolInputValidator.Validate(registry, "test_tool", DI(("items", "not_a_list")));
         Assert.False(result.IsValid);
@@ -354,7 +354,7 @@ public class KejiToolValidationTests
     {
         var registry = CreateBuilderWith(MakeDef("test_tool",
             new KejiToolParameterDefinition("items", KejiToolParameterType.StringArray, true, "Items.",
-                maxItems: 2)))
+                maxItems: 2, maxItemLength: 100)))
             .Build();
         var result = KejiToolInputValidator.Validate(registry, "test_tool",
             DI(("items", new List<string> { "a", "b", "c" })));
@@ -516,5 +516,17 @@ public class KejiToolValidationTests
         var result = KejiToolInputValidator.Validate(registry, "test_tool", DI(("count", null)));
         Assert.False(result.IsValid);
         Assert.Contains(KejiToolValidationError.MissingRequiredParameter, result.Errors);
+    }
+
+    [Fact]
+    public void Validate_StringArrayItemMaxItemLength_Exceeded_ReturnsError()
+    {
+        var registry = CreateBuilderWith(MakeDef("test_tool",
+            new KejiToolParameterDefinition("items", KejiToolParameterType.StringArray, true, "Items.",
+                maxItems: 10, maxItemLength: 3)))
+            .Build();
+        var result = KejiToolInputValidator.Validate(registry, "test_tool",
+            DI(("items", new List<string> { "a", "toolong" })));
+        Assert.False(result.IsValid);
     }
 }

@@ -1,5 +1,6 @@
 using Keji.Tools.Definitions.Parameters;
 using Keji.Tools.Names;
+using System.Collections.Immutable;
 
 namespace Keji.Tools.Tests;
 
@@ -84,7 +85,7 @@ public class KejiToolInputSchemaTests
     public void Schema_EmptySchema_Immutable()
     {
         var schema = new KejiToolInputSchema(null);
-        Assert.IsAssignableFrom<KejiToolParameterDefinition[]>(schema.Parameters);
+        Assert.IsAssignableFrom<ImmutableArray<KejiToolParameterDefinition>>(schema.Parameters);
         Assert.Empty(schema.Parameters);
     }
 

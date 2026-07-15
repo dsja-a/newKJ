@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using Keji.Security.Authorization;
 using Keji.Tools.Definitions;
 using Keji.Tools.Definitions.Parameters;
@@ -8,7 +9,7 @@ namespace Keji.Tools.Catalog;
 
 public static class BuiltInToolCatalog
 {
-    public static IReadOnlyList<KejiToolDefinition> All => _all.Value;
+    public static ImmutableArray<KejiToolDefinition> All => _all.Value;
     public static KejiToolRegistryBuilder CreateBuilder()
     {
         var builder = new KejiToolRegistryBuilder();
@@ -17,7 +18,7 @@ public static class BuiltInToolCatalog
         return builder;
     }
 
-    private static readonly Lazy<IReadOnlyList<KejiToolDefinition>> _all = new(() => new List<KejiToolDefinition>
+    private static readonly Lazy<ImmutableArray<KejiToolDefinition>> _all = new(() => new List<KejiToolDefinition>
     {
         ReadFile(), ListDir(), Glob(), Grep(),
         BrowseFiles(), SearchFiles(), ListAllowedDirectories(), VerifyOutput(), ReadDocument(),
@@ -32,7 +33,7 @@ public static class BuiltInToolCatalog
         DbConnect(), DbListTables(), DbDescribeTable(), DbTestConnection(), DbDisconnect(),
         GetTime(), Calculator(), SelfCheckRun(),
         WebSearch(), WebFetch(),
-    });
+    }.ToImmutableArray());
 
     private static KejiToolParameterDefinition P(string name, KejiToolParameterType type, bool required, string description, bool sensitive = false, int? maxLength = null, int? minLength = null, int? minimum = null, int? maximum = null, int? maxItems = null, object? defaultValue = null, IReadOnlySet<string>? allowedValues = null) =>
         new(name, type, required, description, defaultValue: defaultValue, minimum: minimum, maximum: maximum, minLength: minLength, maxLength: maxLength, maxItems: maxItems, sensitive: sensitive, allowedValues: allowedValues);

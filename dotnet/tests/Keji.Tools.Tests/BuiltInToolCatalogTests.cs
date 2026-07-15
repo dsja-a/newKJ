@@ -1,6 +1,8 @@
 using Keji.Tools.Catalog;
+using Keji.Tools.Definitions;
 using Keji.Tools.Definitions.Parameters;
 using Keji.Tools.Names;
+using System.Collections.Immutable;
 
 namespace Keji.Tools.Tests;
 
@@ -9,7 +11,7 @@ public class BuiltInToolCatalogTests
     [Fact]
     public void Catalog_All47Tools_Present()
     {
-        Assert.Equal(47, BuiltInToolCatalog.All.Count);
+        Assert.Equal(47, BuiltInToolCatalog.All.Length);
     }
 
     [Fact]
@@ -186,7 +188,7 @@ public class BuiltInToolCatalogTests
         var builder = BuiltInToolCatalog.CreateBuilder();
         var registry = builder.Build();
         Assert.NotNull(registry);
-        Assert.Equal(BuiltInToolCatalog.All.Count, registry.GetAll().Count);
+        Assert.Equal(BuiltInToolCatalog.All.Length, registry.GetAll().Count);
     }
 
     [Fact]
@@ -287,5 +289,19 @@ public class BuiltInToolCatalogTests
         {
             Assert.Equal(Definitions.KejiToolAvailability.ContractOnly, def.Availability);
         }
+    }
+
+    [Fact]
+    public void Catalog_All_IsImmutableArray()
+    {
+        Assert.IsAssignableFrom<ImmutableArray<KejiToolDefinition>>(BuiltInToolCatalog.All);
+    }
+
+    [Fact]
+    public void Catalog_All_ModifyAttemptDoesNotAffectBuilder()
+    {
+        var count = BuiltInToolCatalog.All.Length;
+        var builder = BuiltInToolCatalog.CreateBuilder();
+        Assert.Equal(count, builder.Build().GetAll().Count);
     }
 }
