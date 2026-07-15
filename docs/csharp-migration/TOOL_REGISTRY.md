@@ -49,25 +49,26 @@ Runtime: IKejiToolRegistry / KejiFrozenToolRegistry  (immutable, concurrent-safe
 | `Type` | `Enum.IsDefined` (rejects 0, negative, out-of-range) |
 | `Required` | Boolean |
 | `Description` | 1–2000 chars |
-| `DefaultValue` | Deep immutable snapshot for array types (`string[]`, `int[]`) |
+| `DefaultValue` | Deep immutable snapshot: StringArray → `ImmutableArray<string>`, IntegerArray → `ImmutableArray<long>`. Validated against constraints (MaxLength, MinLength, Min/Max, NaN/Infinity, AllowedValues, MaxItems, MaxItemLength). |
 | `Minimum` / `Maximum` | Only for Integer, Number. Mutually checked (Min ≤ Max). |
 | `MinLength` / `MaxLength` | Only for String. MaxLength required (1–100000). MinLength ≥ 0. |
 | `AllowedValues` | Only for String. Deduplicated via `StringComparer.Ordinal`. Non-empty. |
 | `MaxItems` | Required for StringArray, IntegerArray. > 0. |
+| `MaxItemLength` | Required for StringArray. 1–100000. Rejected for other types. |
 | `Sensitive` | If true, validator returns generic error messages (no value leak). |
 
 **Constraint type matching:**
-- `String` — only MinLength, MaxLength (required), AllowedValues. No Minimum/Maximum/MaxItems.
+- `String` — only MinLength, MaxLength (required), AllowedValues. No Minimum/Maximum/MaxItems/MaxItemLength.
 - `Integer` — only Minimum, Maximum. No string/array constraints or AllowedValues.
 - `Number` — only Minimum, Maximum. No string/array constraints or AllowedValues.
 - `Boolean` — no constraints at all. No AllowedValues.
-- `StringArray` — only MaxItems (required). No scalar constraints or AllowedValues.
-- `IntegerArray` — only MaxItems (required). No scalar constraints or AllowedValues.
+- `StringArray` — only MaxItems (required) and MaxItemLength (required). No scalar constraints or AllowedValues.
+- `IntegerArray` — only MaxItems (required). No scalar constraints, MaxItemLength, or AllowedValues.
 
 ### `KejiToolInputSchema`
 
-- Null constructor arg → `Array.Empty<KejiToolParameterDefinition>()` (truly immutable).
-- Non-null → `parameters.ToArray()` (preserves insertion order, immutable snapshot).
+- Null constructor arg → `ImmutableArray<KejiToolParameterDefinition>.Empty` (truly immutable).
+- Non-null → `ImmutableArray.CreateRange(parameters)` (preserves insertion order, immutable snapshot).
 - Null parameter in list throws `KejiToolContractException`.
 - Duplicate parameter names (Ordinal) throw `KejiToolContractException`.
 
@@ -181,7 +182,7 @@ services.AddKejiToolRegistry();  // registers IKejiToolRegistry as singleton
 - All string parameters have explicit MaxLength. All array parameters have explicit MaxItems.
 - `ParameterType` enum validated at construction (rejects 0, -1, 999).
 - Constraint type matching enforced: strings only string constraints, integers only numeric constraints, etc.
-- Deep immutability: `DefaultValue` for arrays is a snapshot (`ToArray()`), `Tags` is `FrozenSet<string>`, schema parameters are `ToArray()`.
-- Empty schema uses `Array.Empty<KejiToolParameterDefinition>()`.
+- Deep immutability: `DefaultValue` for StringArray is `ImmutableArray<string>`, for IntegerArray is `ImmutableArray<long>`, `Tags` is `FrozenSet<string>`, schema parameters are `ImmutableArray<KejiToolParameterDefinition>`, catalog is `ImmutableArray<KejiToolDefinition>`.
+- Empty schema uses `ImmutableArray<KejiToolParameterDefinition>.Empty`.
 - Input schema preserves insertion order.
 - NuGet vulnerabilities: 0.

@@ -2,7 +2,7 @@
   "repository": "dsja-a/newKJ",
   "branch": "rewrite/csharp-core",
   "python_baseline": "aad0afab7181e529a53691a4f2801f295025a2c7",
-  "last_accepted_sha": "c550d5da76bc5339a389950fdfdb62e12d7c8e2a",
+  "last_accepted_sha": "cd00ef16088b80d23507f4fdc54aa2108de906ff",
   "task006_main_commit_sha": "2bbdce42494d1e0a7eaaa8bd2905785bc4b6941f",
   "task006_edge_fix_commit_sha": "f6a2dc201d5fb4dafdf04988375751b051743f46",
   "task006_test_handoff_commit_sha": "88a6f8ff7b9e87302ad5233c9914914a572a57ec",
@@ -50,8 +50,10 @@
   },
   "task010": {
     "initial_commit_sha": "bfe047aaa0f3549c95b1f840e372758c70a71e2c",
-    "final_commit_sha": "c550d5da76bc5339a389950fdfdb62e12d7c8e2a",
-    "accepted_sha": "c550d5da76bc5339a389950fdfdb62e12d7c8e2a"
+    "first_hardening_sha": "c550d5da76bc5339a389950fdfdb62e12d7c8e2a",
+    "first_hardening_docs_sha": "a29819eeb2a0ff2c00ee01f353eede1ab534905a",
+    "final_commit_sha": "cd00ef16088b80d23507f4fdc54aa2108de906ff",
+    "accepted_sha": "cd00ef16088b80d23507f4fdc54aa2108de906ff"
   },
   "test_results": {
     "task005_security_restored": "262/262",
@@ -63,9 +65,9 @@
     "Keji.Integration.Tests": "148/148",
     "Keji.Agent.Tests": "1/1",
     "Keji.FileSystem.Tests": "289/289",
-    "Keji.Tools.Tests": "249/249",
+    "Keji.Tools.Tests": "265/265",
     "Keji.Auditing.Tests": "102/102",
-    "solution_total": "1501/1501",
+    "solution_total": "1517/1517",
     "failed": 0,
     "skipped": 0,
     "build_warnings": 0,

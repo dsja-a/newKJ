@@ -4,7 +4,7 @@
 
 - Repository: `dsja-a/newKJ`
 - Branch: `rewrite/csharp-core`
-- Last accepted baseline: `c550d5da76bc5339a389950fdfdb62e12d7c8e2a`
+- Last accepted baseline: `cd00ef16088b80d23507f4fdc54aa2108de906ff`
 - Current task: TASK-010
 - Current status: accepted
 - Formal C# completion: 40%
@@ -22,12 +22,12 @@ Each `KejiToolParameterType` only accepts its valid constraints:
 
 | Type | Valid Constraints | Invalid Constraints (rejected) |
 |---|---|---|
-| `String` | MinLength, MaxLength (required), AllowedValues | Minimum, Maximum, MaxItems |
-| `Integer` | Minimum, Maximum | MinLength, MaxLength, MaxItems, AllowedValues |
-| `Number` | Minimum, Maximum | MinLength, MaxLength, MaxItems, AllowedValues |
+| `String` | MinLength, MaxLength (required), AllowedValues | Minimum, Maximum, MaxItems, MaxItemLength |
+| `Integer` | Minimum, Maximum | MinLength, MaxLength, MaxItems, MaxItemLength, AllowedValues |
+| `Number` | Minimum, Maximum | MinLength, MaxLength, MaxItems, MaxItemLength, AllowedValues |
 | `Boolean` | None | All constraints, AllowedValues |
-| `StringArray` | MaxItems (required) | Minimum, Maximum, MinLength, MaxLength, AllowedValues |
-| `IntegerArray` | MaxItems (required) | Minimum, Maximum, MinLength, MaxLength, AllowedValues |
+| `StringArray` | MaxItems (required), MaxItemLength (required) | Minimum, Maximum, MinLength, MaxLength, AllowedValues |
+| `IntegerArray` | MaxItems (required) | Minimum, Maximum, MinLength, MaxLength, MaxItemLength, AllowedValues |
 
 ### 3. Long/Number/array type handling (`KejiToolInputValidator`)
 
@@ -37,10 +37,12 @@ Each `KejiToolParameterType` only accepts its valid constraints:
 
 ### 4. Deep immutability
 
-- `DefaultValue` for arrays: snapshot via `ToArray()` (caller modifications don't affect stored value).
+- `DefaultValue` for StringArray: stored as `ImmutableArray<string>` (snapshot via `ImmutableArray.Create`).
+- `DefaultValue` for IntegerArray: stored as `ImmutableArray<long>` (snapshot via `ImmutableArray.CreateRange`).
 - `Tags`: stored as `FrozenSet<string>` (not `HashSet<string>`).
-- `InputSchema.Parameters`: stored as `ToArray()` (preserves insertion order, immutable).
-- Empty schema: `Array.Empty<KejiToolParameterDefinition>()`.
+- `InputSchema.Parameters`: stored as `ImmutableArray<KejiToolParameterDefinition>` (preserves insertion order, immutable).
+- Empty schema: `ImmutableArray<KejiToolParameterDefinition>.Empty`.
+- `BuiltInToolCatalog.All`: stored as `ImmutableArray<KejiToolDefinition>`.
 
 ### 5. Null contracts
 
@@ -68,13 +70,13 @@ Complete per-tool mapping table created in `TOOL_REGISTRY.md` showing Python sou
 |---|---|---|
 | `KejiToolNameTests.cs` | 16 | valid/invalid names, TryCreate, equality |
 | `KejiToolDefinitionTests.cs` | 27 | property validation, constraints, null/empty tags, immutability |
-| `KejiToolParameterDefinitionTests.cs` | 44 | type/constraint validation, enum checks, immutability |
+| `KejiToolParameterDefinitionTests.cs` | 55 | type/constraint validation, enum checks, immutability, defaultValue validation, invalid names |
 | `KejiToolInputSchemaTests.cs` | 9 | empty, single, duplicate, null, immutability, order |
 | `KejiToolRegistryTests.cs` | 13 | register/build, dedup, freeze, resolve, concurrent |
-| `KejiToolValidationTests.cs` | 37 | valid/invalid inputs, long/NaN/Infinity, arrays, sensitive |
-| `BuiltInToolCatalogTests.cs` | 20 | 47 tools, names, params, MaxLength, MaxItems, ContractOnly |
+| `KejiToolValidationTests.cs` | 38 | valid/invalid inputs, long/NaN/Infinity, arrays, sensitive, MaxItemLength |
+| `BuiltInToolCatalogTests.cs` | 22 | 47 tools, names, params, MaxLength, MaxItems, ContractOnly, ImmutableArray |
 | `DependencyInjectionTests.cs` | 3 | registration, singleton, builtins |
-| **Total** | **249** | |
+| **Total** | **265** | |
 
 ## Verification
 
@@ -86,8 +88,8 @@ Complete per-tool mapping table created in `TOOL_REGISTRY.md` showing Python sou
 | `Keji.Auditing.Tests` | 102/102 | passed |
 | `Keji.FileSystem.Tests` | 289/289 | passed |
 | `Keji.Agent.Tests` | 1/1 | passed |
-| `Keji.Tools.Tests` | **249/249** | **passed (92 new in repair)** |
-| **Full solution** | **1501/1501** | **passed** |
+| `Keji.Tools.Tests` | **265/265** | **passed (16 new in immutable refactor)** |
+| **Full solution** | **1517/1517** | **passed** |
 | Failed | 0 | |
 | Skipped | 0 | |
 | Build warnings | 0 | |
@@ -102,9 +104,10 @@ Complete per-tool mapping table created in `TOOL_REGISTRY.md` showing Python sou
 - All 47 tools are `ContractOnly`.
 - Parameter type enum validated at construction (rejects 0, -1, 999).
 - Constraint type matching enforced at construction.
-- Deep immutability prevents mutation via caller references.
+- Deep immutability (ImmutableArray<string>, ImmutableArray<long>, ImmutableArray<KejiToolParameterDefinition>, ImmutableArray<KejiToolDefinition>) prevents mutation via caller references.
 - NaN/Infinity rejected for Number type.
 - Sensitive parameters return generic error messages (no value leak).
+- Parameter names rejected if not matching ^[a-z][a-z0-9_]{0,63}$.
 
 ## Forbidden changes confirmed
 
@@ -116,4 +119,4 @@ Complete per-tool mapping table created in `TOOL_REGISTRY.md` showing Python sou
 
 ## Next action
 
-TASK-010 is accepted at `c550d5da76bc5339a389950fdfdb62e12d7c8e2a`. The next task is TASK-011 (Isolated ToolWorker). TASK-011 has not started.
+TASK-010 is accepted at `cd00ef16088b80d23507f4fdc54aa2108de906ff`. The next task is TASK-011 (Isolated ToolWorker). TASK-011 has not started.
