@@ -93,7 +93,7 @@ Returns `KejiToolValidationResult` via `Valid()` / `Invalid(error, message)` fac
 
 ## Built-in tool catalog
 
-47 tools defined in `BuiltInToolCatalog`. All `KejiToolAvailability.ContractOnly`. No executable code. TASK-011 (ToolWorker) has not started.
+47 tools defined in `BuiltInToolCatalog`. 45 tools are `ContractOnly`. `calculator` and `get_time` are `Executable` with `ExecutionTarget = ToolWorker`. TASK-011 (ToolWorker) is accepted. TASK-012 (Model Providers) has not started.
 
 ### Python baseline mapping
 
@@ -174,7 +174,8 @@ services.AddKejiToolRegistry();  // registers IKejiToolRegistry as singleton
 
 ## Security properties
 
-- All 47 tools have `Availability = ContractOnly` (no executable code). TASK-011 (ToolWorker) has not started.
+- 45 of 47 tools have `Availability = ContractOnly` (no executable code). `calculator` and `get_time` have `Availability = Executable` with `ExecutionTarget = ToolWorker`.
+- TASK-011 (ToolWorker) implements Host execution coordinator + isolated worker process. TASK-012 has not started.
 - Registry is immutable after startup — no hot-reload or dynamic registration path.
 - Only compile-time trusted C# code can register tools (`BuiltInToolCatalog`).
 - Python baseline high-risk tools are explicitly excluded from the catalog.
@@ -185,4 +186,7 @@ services.AddKejiToolRegistry();  // registers IKejiToolRegistry as singleton
 - Deep immutability: `DefaultValue` for StringArray is `ImmutableArray<string>`, for IntegerArray is `ImmutableArray<long>`, `Tags` is `FrozenSet<string>`, schema parameters are `ImmutableArray<KejiToolParameterDefinition>`, catalog is `ImmutableArray<KejiToolDefinition>`.
 - Empty schema uses `ImmutableArray<KejiToolParameterDefinition>.Empty`.
 - Input schema preserves insertion order.
+- ToolWorker process-per-request with stdin/stdout JSON IPC, Windows Job Object isolation, 30s timeout, cancellation support.
+- Worker double-validates registry, Availability, ExecutionTarget, ContractVersion, and input schema before executing.
+- Unauthorized and ContractOnly requests are rejected before spawning any process.
 - NuGet vulnerabilities: 0.

@@ -2,9 +2,9 @@
 
 | Field | Value |
 |---|---|
-| 当前任务 | TASK-010 |
+| 当前任务 | TASK-011 |
 | 当前状态 | accepted |
-| 当前 C# 完成度 | 40% |
-| 下一任务 | TASK-011 |
+| 当前 C# 完成度 | 45% |
+| 下一任务 | TASK-012 |
 
-TASK-010 修复完成：参数类型验证（拒绝0/-1/999）、约束类型匹配、long/Number/数组类型处理、深度不可变性（ImmutableArray DefaultValue/FrozenSet Tags/ImmutableArray Parameters/ImmutableArray Catalog）、DefaultValue完整约束验证（MaxLength/MinLength/AllowedValues/Minimum/Maximum/NaN/Infinity/MaxItems/MaxItemLength）、MaxItemLength要求、参数名严格regex、47个Built-in工具完整参数边界（MaxLength/MaxItems/MaxItemLength）、Python基线映射表。Tools测试 265/265，全解决方案 1517/1517 通过。0 失败，0 跳过，0 警告，0 错误，0 NuGet 漏洞。
+TASK-011 完成：Host 执行协调器（IToolExecutionPipeline）+ 独立 ToolWorker 进程（process-per-request，stdin/stdout JSON IPC，Windows Job Object 隔离）。calculator 和 get_time 变更为 Executable + ToolWorker，其余 45 个工具保持 ContractOnly。二次验证、超时、取消、授权、审计全链路完整。Tools 测试 279/279，全解决方案 1531/1531 通过。0 失败，0 跳过，0 警告，0 错误，0 NuGet 漏洞。
