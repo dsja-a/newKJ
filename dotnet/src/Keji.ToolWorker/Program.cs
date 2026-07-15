@@ -26,14 +26,14 @@ while (true)
     {
         return 0;
     }
-    catch (Exception ex)
+    catch (Exception)
     {
         await writer.WriteResponseAsync(new ToolWorkerResponse
         {
             ProtocolVersion = ProtocolVersion.String,
             RequestId = "",
             ErrorCode = (int)ToolWorkerErrorCode.ProtocolError,
-            ErrorMessage = $"Frame read error: {ex.Message}"
+            ErrorMessage = "Protocol error"
         });
         return 1;
     }
@@ -123,14 +123,14 @@ while (true)
             ResultJson = resultJson
         });
     }
-    catch (Exception ex)
+    catch (Exception)
     {
         await writer.WriteResponseAsync(new ToolWorkerResponse
         {
             ProtocolVersion = ProtocolVersion.String,
             RequestId = requestId,
             ErrorCode = (int)ToolWorkerErrorCode.ExecutionFailed,
-            ErrorMessage = ex.Message
+            ErrorMessage = "Execution failed"
         });
     }
 }

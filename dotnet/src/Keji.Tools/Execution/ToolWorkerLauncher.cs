@@ -8,18 +8,26 @@ namespace Keji.Tools.Execution;
 
 public sealed class ToolWorkerLauncher : IDisposable
 {
-    private static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(30);
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         WriteIndented = false
     };
 
-    public string WorkerExecutablePath { get; }
+    private readonly ToolWorkerOptions _options;
 
-    public ToolWorkerLauncher(string workerExecutablePath)
+    public string WorkerExecutablePath => _options.ExecutablePath;
+
+    public ToolWorkerLauncher(ToolWorkerOptions options)
     {
-        WorkerExecutablePath = workerExecutablePath ?? throw new ArgumentNullException(nameof(workerExecutablePath));
+        _options = options ?? throw new ArgumentNullException(nameof(options));
+    }
+
+    public ToolWorkerLauncher(string executablePath)
+    {
+        if (executablePath is null)
+            throw new ArgumentNullException(nameof(executablePath));
+        _options = new ToolWorkerOptions(executablePath);
     }
 
     public async Task<ToolExecutionResult> ExecuteAsync(
@@ -29,13 +37,13 @@ public sealed class ToolWorkerLauncher : IDisposable
     {
         var sw = Stopwatch.StartNew();
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        cts.CancelAfter(DefaultTimeout);
+        cts.CancelAfter(_options.DefaultTimeout);
 
         var process = new Process
         {
             StartInfo = new ProcessStartInfo
             {
-                FileName = WorkerExecutablePath,
+                FileName = _options.ExecutablePath,
                 RedirectStandardInput = true,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
@@ -78,7 +86,7 @@ public sealed class ToolWorkerLauncher : IDisposable
                 return ToolExecutionResult.Successful(response.ResultJson, sw.Elapsed);
 
             return ToolExecutionResult.Failed(
-                response.ErrorMessage ?? "Tool execution failed.",
+                "Worker execution failed.",
                 $"WORKER_ERROR_{response.ErrorCode}",
                 sw.Elapsed);
         }
@@ -92,11 +100,17 @@ public sealed class ToolWorkerLauncher : IDisposable
 
             return ToolExecutionResult.Failed("Tool execution timed out.", "TIMEOUT", sw.Elapsed);
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (Exception) when (cancellationToken.IsCancellationRequested)
         {
             sw.Stop();
             KillProcess(process);
-            return ToolExecutionResult.Failed($"Worker process error: {ex.Message}", "WORKER_ERROR", sw.Elapsed);
+            return ToolExecutionResult.Failed("Tool execution was cancelled.", "CANCELLED", sw.Elapsed);
+        }
+        catch (Exception)
+        {
+            sw.Stop();
+            KillProcess(process);
+            return ToolExecutionResult.Failed("Worker process error.", "WORKER_ERROR", sw.Elapsed);
         }
     }
 

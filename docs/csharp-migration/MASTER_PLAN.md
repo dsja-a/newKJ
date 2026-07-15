@@ -5,7 +5,7 @@
 - Repository: `dsja-a/newKJ`
 - Branch: `rewrite/csharp-core`
 - Python reference: `main` at `aad0afab7181e529a53691a4f2801f295025a2c7`
-- Last accepted C# baseline: `1728b8a1c15591bbddd4f7e638174e1bcd4ac0ab`
+- Last accepted C# baseline: `cd00ef16088b80d23507f4fdc54aa2108de906ff`
 - Accepted solution test baseline: 1531
 - Target: .NET 10 / `net10.0`, ASP.NET Core as the only public API, Python as a controlled internal worker
 

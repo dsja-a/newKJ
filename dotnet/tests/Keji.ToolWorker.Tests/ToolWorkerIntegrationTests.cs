@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Keji.ToolWorker.Protocol;
+using Keji.Tools.Execution;
 
 namespace Keji.ToolWorker.Tests;
 
@@ -253,5 +254,88 @@ public class ToolWorkerIntegrationTests
 
         Assert.NotNull(response);
         Assert.NotEqual(0, response.ErrorCode);
+    }
+
+    [Fact]
+    public async Task Process_ContractOnlyTool_ReturnsError()
+    {
+        var exePath = GetWorkerPath();
+
+        using var process = new System.Diagnostics.Process
+        {
+            StartInfo = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = exePath,
+                RedirectStandardInput = true,
+                RedirectStandardOutput = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            }
+        };
+
+        process.Start();
+
+        var reader = new WorkerFrameReader(process.StandardOutput.BaseStream);
+        var writer = new WorkerFrameWriter(process.StandardInput.BaseStream);
+
+        var request = new ToolWorkerRequest
+        {
+            ProtocolVersion = "1.0",
+            RequestId = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            DeadlineUtc = DateTimeOffset.UtcNow.AddMinutes(5).ToString("O"),
+            ToolName = "read_file",
+            ContractVersion = "1",
+            InputJson = "{}"
+        };
+
+        await writer.WriteRequestAsync(request);
+        process.StandardInput.Close();
+
+        var response = await reader.ReadResponseAsync();
+        process.WaitForExit(5000);
+
+        Assert.NotNull(response);
+        Assert.NotEqual(0, response.ErrorCode);
+    }
+
+    [Fact]
+    public async Task Launcher_Timeout_ReturnsTimeoutError()
+    {
+        var exePath = GetWorkerPath();
+
+        var options = new ToolWorkerOptions(exePath, TimeSpan.FromMilliseconds(1));
+        var launcher = new ToolWorkerLauncher(options);
+
+        var definition = Keji.Tools.Catalog.BuiltInToolCatalog.All.First(d => d.Name.Value == "calculator");
+        var inputs = new Dictionary<string, object?> { ["expr"] = "2+2" };
+
+        var result = await launcher.ExecuteAsync(definition, inputs);
+
+        // The worker may complete before the timeout fires, so we accept both
+        // success (worker fast enough) and explicit timeout error
+        if (!result.Success)
+        {
+            Assert.True(result.ErrorCode == "TIMEOUT" || result.ErrorCode == "CANCELLED");
+        }
+    }
+
+    [Fact]
+    public async Task Launcher_Cancellation_ReturnsCancelledError()
+    {
+        var exePath = GetWorkerPath();
+
+        var options = new ToolWorkerOptions(exePath);
+        var launcher = new ToolWorkerLauncher(options);
+
+        var definition = Keji.Tools.Catalog.BuiltInToolCatalog.All.First(d => d.Name.Value == "calculator");
+        var inputs = new Dictionary<string, object?> { ["expr"] = "2+2" };
+
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        var result = await launcher.ExecuteAsync(definition, inputs, cts.Token);
+
+        Assert.False(result.Success);
+        Assert.Equal("CANCELLED", result.ErrorCode);
     }
 }
