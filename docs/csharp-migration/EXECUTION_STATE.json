@@ -15,8 +15,8 @@
   "task008_final_commit_sha": "c027ab34a7a30655f11ff035af191b31cae57bd1",
   "task008_accepted_sha": "c027ab34a7a30655f11ff035af191b31cae57bd1",
   "current_task": "TASK-011",
-  "status": "accepted",
-  "csharp_completion_percent": 45,
+  "status": "repair_in_progress",
+  "csharp_completion_percent": 40,
   "completed_tasks": [
     "TASK-000",
     "TASK-001",
@@ -28,15 +28,14 @@
     "TASK-007",
     "TASK-008",
     "TASK-009",
-    "TASK-010",
-    "TASK-011"
+    "TASK-010"
   ],
   "task009_initial_commit_sha": "1a113ba21f68dfb3eccca31f53772b7bb6c71286",
   "task009_first_repair_commit_sha": "7dca227c239268591433f84758781ff88549f7b1",
   "task009_collision_fix_commit_sha": "b4bb697086153da6fd6cd9e5937b61dec9605d21",
   "task009_final_commit_sha": "8d507c7ec1f0f7a81e79470b22a421d767fa4cef",
   "task009_accepted_sha": "8d507c7ec1f0f7a81e79470b22a421d767fa4cef",
-  "next_task": "TASK-012",
+  "next_task": "TASK-011",
   "task007": {
     "base_sha": "33c849a7eb1e9116b0fb0bb08a18c582714a4605",
     "phase": "P1-P4",
@@ -58,7 +57,6 @@
   },
   "task011": {
     "final_commit_sha": "1728b8abd3134c9ed02a4e70a0e738f63015e320",
-    "accepted_sha": "1728b8abd3134c9ed02a4e70a0e738f63015e320",
     "repair_sha_r1": "1470cf412c0620fb669f97ae94f1bcf8150c7d03"
   },
   "test_results": {
@@ -71,10 +69,10 @@
     "Keji.Integration.Tests": "148/148",
     "Keji.Agent.Tests": "1/1",
     "Keji.FileSystem.Tests": "289/289",
-    "Keji.Tools.Tests": "271/271",
+    "Keji.Tools.Tests": "272/272",
     "Keji.Auditing.Tests": "102/102",
-    "Keji.ToolWorker.Tests": "54/54",
-    "solution_total": "1577/1577",
+    "Keji.ToolWorker.Tests": "57/57",
+    "solution_total": "1581/1581",
     "failed": 0,
     "skipped": 0,
     "build_warnings": 0,
@@ -86,13 +84,13 @@
     "Handle-bound directory enumeration is bounded but is not an atomic snapshot; every later operation resolves and inspects its own path again.",
     "Cancellation or process failure during an existing-file in-place write can leave partial content; failed new-file writes use best-effort handle-based cleanup.",
     "Operating-system ACL changes or filesystem mutation by a more privileged process remain outside the application authorization boundary.",
-    "TASK-011 (ToolWorker) implements Host execution coordinator + isolated worker process with binary length-prefixed IPC protocol. calculator and get_time are executable via ToolWorker. 45 tools remain ContractOnly.",
+    "TASK-011 (ToolWorker) R1 repair in progress: unifying execution path (Coordinator + Client only), true process-per-request, Windows Job Object with KILL_ON_JOB_CLOSE + memory limits, identity boundary (null user rejected), input validation enforcement, response correlation, deterministic tests, no rawInputJson leak, no ex.Message leak, no empty audit catch.",
     "TASK-012 (Model Providers and SSE) not yet started.",
     "Host-targeted tool executors not yet implemented (deferred to future tasks).",
     "PythonWorker bridge not yet implemented (deferred to TASK-016).",
-    "ToolWorker process-per-request IPC uses binary length-prefixed frames over stdin/stdout. Windows Job Object provides process isolation. Safe expression parser replaces DataTable.Compute."
+    "ToolWorker IPC uses binary length-prefixed frames over stdin/stdout. Windows Job Object provides process isolation (KILL_ON_JOB_CLOSE + 256 MiB process/job memory limit, ActiveProcess=1). Safe expression parser replaces DataTable.Compute."
   ],
   "forbidden_changes_confirmed": true,
   "git_diff_check": "passed with empty stdout and stderr",
-  "updated_at_utc": "2026-07-15T00:02:00.0000000Z"
+  "updated_at_utc": "2026-07-15T12:00:00.0000000Z"
 }

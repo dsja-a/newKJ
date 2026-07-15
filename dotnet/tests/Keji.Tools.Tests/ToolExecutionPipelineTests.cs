@@ -120,11 +120,22 @@ public class ToolExecutionPipelineTests
     public async Task ExecuteAsync_CreatesPipelineForRealWorker()
     {
         var launcher = CreateValidLauncher();
-        var pipeline = CreatePipeline(launcher, testUser: null, authorized: true);
+        var pipeline = CreatePipeline(launcher, testUser: TestUser, authorized: true);
 
         var result = await pipeline.ExecuteAsync("calculator", new Dictionary<string, object?> { ["expr"] = "2+2" });
 
         Assert.True(result.Success);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_NullUser_Rejected()
+    {
+        var launcher = CreateValidLauncher();
+        var pipeline = CreatePipeline(launcher, testUser: null, authorized: true);
+
+        var result = await pipeline.ExecuteAsync("calculator", new Dictionary<string, object?> { ["expr"] = "2+2" });
+
+        Assert.False(result.Success);
     }
 
     private static ToolExecutionPipeline CreatePipeline(ToolWorkerLauncher launcher, CurrentUser? testUser, bool authorized)

@@ -37,17 +37,19 @@ public class CoordinatorTests
         }
     }
 
-    private sealed class FakeWorkerClient(ToolWorkerResponse? response) : IToolWorkerClient
+    private sealed class FakeWorkerClient(ToolWorkerResponse? cannedResponse) : IToolWorkerClient
     {
         public Task<ToolWorkerResponse> ExecuteAsync(ToolWorkerRequest request, CancellationToken ct = default)
         {
-            return Task.FromResult(response ?? new ToolWorkerResponse
+            var resp = cannedResponse ?? new ToolWorkerResponse
             {
                 ProtocolVersion = "1.0",
                 RequestId = request.RequestId,
                 ErrorCode = (int)ToolWorkerErrorCode.ExecutionFailed,
                 ErrorMessage = "Mock error"
-            });
+            };
+            // Always echo back the request's RequestId and ProtocolVersion for correlation validation
+            return Task.FromResult(resp with { RequestId = request.RequestId, ProtocolVersion = "1.0" });
         }
     }
 
@@ -70,7 +72,7 @@ public class CoordinatorTests
             new FakeAuthService(true),
             new FakeAuditService());
 
-        var result = await coord.ExecuteAsync("nonexistent_tool", null, null);
+        var result = await coord.ExecuteAsync("nonexistent_tool", null);
 
         Assert.False(result.Success);
     }
@@ -85,7 +87,7 @@ public class CoordinatorTests
             new FakeAuthService(true),
             new FakeAuditService());
 
-        var result = await coord.ExecuteAsync("read_file", null, null);
+        var result = await coord.ExecuteAsync("read_file", null);
 
         Assert.False(result.Success);
     }
@@ -97,7 +99,7 @@ public class CoordinatorTests
             new FakeWorkerClient(new ToolWorkerResponse
             {
                 ProtocolVersion = "1.0",
-                RequestId = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                RequestId = "",
                 ErrorCode = 0,
                 ResultJson = "{\"result\":4.0}"
             }),
@@ -106,7 +108,7 @@ public class CoordinatorTests
             new FakeAuthService(true),
             new FakeAuditService());
 
-        var result = await coord.ExecuteAsync("calculator", new Dictionary<string, object?> { ["expr"] = "2+2" }, "{\"expr\":\"2+2\"}");
+        var result = await coord.ExecuteAsync("calculator", new Dictionary<string, object?> { ["expr"] = "2+2" });
 
         Assert.True(result.Success);
     }
@@ -122,7 +124,7 @@ public class CoordinatorTests
             new FakeAuthService(false),
             audit);
 
-        var result = await coord.ExecuteAsync("calculator", new Dictionary<string, object?> { ["expr"] = "2+2" }, "{\"expr\":\"2+2\"}");
+        var result = await coord.ExecuteAsync("calculator", new Dictionary<string, object?> { ["expr"] = "2+2" });
 
         Assert.False(result.Success);
         Assert.Contains("Denied", audit.Events[0].Outcome.ToString());
@@ -136,7 +138,7 @@ public class CoordinatorTests
             new FakeWorkerClient(new ToolWorkerResponse
             {
                 ProtocolVersion = "1.0",
-                RequestId = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                RequestId = "",
                 ErrorCode = (int)ToolWorkerErrorCode.ExecutionFailed,
                 ErrorMessage = "Something went wrong"
             }),
@@ -145,7 +147,7 @@ public class CoordinatorTests
             new FakeAuthService(true),
             audit);
 
-        var result = await coord.ExecuteAsync("calculator", new Dictionary<string, object?> { ["expr"] = "2+2" }, "{\"expr\":\"2+2\"}");
+        var result = await coord.ExecuteAsync("calculator", new Dictionary<string, object?> { ["expr"] = "2+2" });
 
         Assert.False(result.Success);
         var failureEvents = audit.Events.Where(e => e.Outcome == KejiAuditOutcome.Failure).ToList();
@@ -153,13 +155,13 @@ public class CoordinatorTests
     }
 
     [Fact]
-    public async Task ExecuteAsync_NoUser_StillAuthorizes()
+    public async Task ExecuteAsync_NullUser_Rejected()
     {
         var coord = new ToolExecutionCoordinator(
             new FakeWorkerClient(new ToolWorkerResponse
             {
                 ProtocolVersion = "1.0",
-                RequestId = "cccccccccccccccccccccccccccccccc",
+                RequestId = "",
                 ErrorCode = 0,
                 ResultJson = "{\"result\":4.0}"
             }),
@@ -168,9 +170,9 @@ public class CoordinatorTests
             new FakeAuthService(true),
             new FakeAuditService());
 
-        var result = await coord.ExecuteAsync("calculator", new Dictionary<string, object?> { ["expr"] = "2+2" }, "{\"expr\":\"2+2\"}");
+        var result = await coord.ExecuteAsync("calculator", new Dictionary<string, object?> { ["expr"] = "2+2" });
 
-        Assert.True(result.Success);
+        Assert.False(result.Success);
     }
 
     [Fact]
@@ -183,7 +185,7 @@ public class CoordinatorTests
             new FakeAuthService(true),
             new FakeAuditService());
 
-        var result = await coord.ExecuteAsync("", null, null);
+        var result = await coord.ExecuteAsync("", null);
 
         Assert.False(result.Success);
     }
@@ -195,7 +197,7 @@ public class CoordinatorTests
             new FakeWorkerClient(new ToolWorkerResponse
             {
                 ProtocolVersion = "1.0",
-                RequestId = "dddddddddddddddddddddddddddddddd",
+                RequestId = "",
                 ErrorCode = 0,
                 ResultJson = "{\"utc_iso8601\":\"2026-01-01T00:00:00Z\"}"
             }),
@@ -204,8 +206,55 @@ public class CoordinatorTests
             new FakeAuthService(true),
             new FakeAuditService());
 
-        var result = await coord.ExecuteAsync("get_time", null, "{}");
+        var result = await coord.ExecuteAsync("get_time", null);
 
         Assert.True(result.Success);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_InvalidInput_ReturnsError()
+    {
+        var coord = new ToolExecutionCoordinator(
+            new FakeWorkerClient(null),
+            new FakeUserAccessor(TestUser),
+            Registry,
+            new FakeAuthService(true),
+            new FakeAuditService());
+
+        // calculator expects string "expr", passing integer instead
+        var result = await coord.ExecuteAsync("calculator", new Dictionary<string, object?> { ["expr"] = 42 });
+
+        Assert.False(result.Success);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_CorrelationMismatch_ReturnsError()
+    {
+        var badClient = new CorruptedWorkerClient();
+        var coord = new ToolExecutionCoordinator(
+            badClient,
+            new FakeUserAccessor(TestUser),
+            Registry,
+            new FakeAuthService(true),
+            new FakeAuditService());
+
+        var result = await coord.ExecuteAsync("calculator", new Dictionary<string, object?> { ["expr"] = "2+2" });
+
+        Assert.False(result.Success);
+    }
+
+    private sealed class CorruptedWorkerClient : IToolWorkerClient
+    {
+        public Task<ToolWorkerResponse> ExecuteAsync(ToolWorkerRequest request, CancellationToken ct = default)
+        {
+            // Return wrong ProtocolVersion to trigger correlation check
+            return Task.FromResult(new ToolWorkerResponse
+            {
+                ProtocolVersion = "0.0",
+                RequestId = request.RequestId,
+                ErrorCode = 0,
+                ResultJson = "{}"
+            });
+        }
     }
 }

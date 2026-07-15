@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Keji.Auditing.Abstractions;
 using Keji.Auditing.Models;
 using Keji.Security.Auth;
@@ -7,6 +8,7 @@ using Keji.Tools.Definitions;
 using Keji.Tools.Execution;
 using Keji.Tools.Names;
 using Keji.Tools.Registry;
+using Keji.Tools.Validation;
 
 namespace Keji.ToolWorker.Client;
 
@@ -15,12 +17,17 @@ public interface IToolExecutionCoordinator
     Task<ToolExecutionResult> ExecuteAsync(
         string toolName,
         IReadOnlyDictionary<string, object?>? inputs,
-        string? rawInputJson,
         CancellationToken ct = default);
 }
 
 public sealed class ToolExecutionCoordinator : IToolExecutionCoordinator
 {
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        WriteIndented = false
+    };
+
     private readonly IToolWorkerClient _workerClient;
     private readonly ICurrentUserAccessor _userAccessor;
     private readonly IKejiToolRegistry _registry;
@@ -44,10 +51,12 @@ public sealed class ToolExecutionCoordinator : IToolExecutionCoordinator
     public async Task<ToolExecutionResult> ExecuteAsync(
         string toolName,
         IReadOnlyDictionary<string, object?>? inputs,
-        string? rawInputJson,
         CancellationToken ct = default)
     {
         var user = _userAccessor.CurrentUser;
+
+        if (user is null)
+            return await FailAsync(null, null, "Authentication required");
 
         if (!KejiToolName.TryCreate(toolName, out var name))
             return await FailAsync(null, user, $"Invalid tool name: '{toolName}'");
@@ -64,6 +73,10 @@ public sealed class ToolExecutionCoordinator : IToolExecutionCoordinator
         if (def.ExecutionTarget != KejiToolExecutionTarget.ToolWorker)
             return await FailAsync(def, user, "Tool target mismatch");
 
+        var validation = KejiToolInputValidator.Validate(_registry, toolName, inputs);
+        if (!validation.IsValid)
+            return await FailAsync(def, user, validation.ErrorMessage ?? "Invalid inputs");
+
         var auth = _authService.Authorize(user, def.RequiredPermission);
         if (!auth.IsAllowed)
         {
@@ -73,6 +86,7 @@ public sealed class ToolExecutionCoordinator : IToolExecutionCoordinator
 
         var requestId = Guid.NewGuid().ToString("N");
         var deadline = DateTimeOffset.UtcNow.AddSeconds(30);
+        var inputJson = inputs is not null ? JsonSerializer.Serialize(inputs, JsonOptions) : "{}";
 
         var request = new ToolWorkerRequest
         {
@@ -81,7 +95,7 @@ public sealed class ToolExecutionCoordinator : IToolExecutionCoordinator
             DeadlineUtc = deadline.ToString("O"),
             ToolName = toolName,
             ContractVersion = def.ContractVersion.ToString(),
-            InputJson = rawInputJson ?? "{}"
+            InputJson = inputJson
         };
 
         ToolWorkerResponse workerResponse;
@@ -89,10 +103,22 @@ public sealed class ToolExecutionCoordinator : IToolExecutionCoordinator
         {
             workerResponse = await _workerClient.ExecuteAsync(request, ct).ConfigureAwait(false);
         }
-        catch (Exception ex)
+        catch (Exception)
         {
             await AuditAsync(def, user, KejiAuditOutcome.Error);
-            return ToolExecutionResult.Failed($"Worker execution failed: {ex.Message}", "WORKER_ERROR");
+            return ToolExecutionResult.Failed("Worker execution failed", "WORKER_ERROR");
+        }
+
+        if (workerResponse.ProtocolVersion != Protocol.ProtocolVersion.String)
+        {
+            await AuditAsync(def, user, KejiAuditOutcome.Error);
+            return ToolExecutionResult.Failed("Worker protocol version mismatch", "PROTOCOL_MISMATCH");
+        }
+
+        if (workerResponse.RequestId != requestId)
+        {
+            await AuditAsync(def, user, KejiAuditOutcome.Error);
+            return ToolExecutionResult.Failed("Worker request ID mismatch", "CORRELATION_MISMATCH");
         }
 
         var success = workerResponse.ErrorCode == 0;
@@ -105,12 +131,12 @@ public sealed class ToolExecutionCoordinator : IToolExecutionCoordinator
 
     private async Task<ToolExecutionResult> FailAsync(KejiToolDefinition? def, CurrentUser? user, string error)
     {
-        if (def is not null)
+        if (def is not null && user is not null)
             await AuditAsync(def, user, KejiAuditOutcome.Error);
         return ToolExecutionResult.Failed(error);
     }
 
-    private async Task AuditAsync(KejiToolDefinition def, CurrentUser? user, KejiAuditOutcome outcome)
+    private async Task AuditAsync(KejiToolDefinition def, CurrentUser user, KejiAuditOutcome outcome)
     {
         try
         {
@@ -123,8 +149,9 @@ public sealed class ToolExecutionCoordinator : IToolExecutionCoordinator
                 targetId: def.Name.Value,
                 cancellationToken: default);
         }
-        catch
+        catch (Exception ex)
         {
+            await Console.Error.WriteLineAsync($"Audit write failed: {ex.Message}");
         }
     }
 }

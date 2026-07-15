@@ -5,6 +5,9 @@ namespace Keji.ToolWorker.Client;
 
 public sealed class WorkerJobObject : IDisposable
 {
+    private const long DefaultProcessMemoryBytes = 256L * 1024 * 1024;
+    private const int DefaultActiveProcessLimit = 1;
+
     private readonly nint _jobHandle;
     private bool _disposed;
 
@@ -30,36 +33,33 @@ public sealed class WorkerJobObject : IDisposable
         {
             BasicLimitInformation = new JOBOBJECT_BASIC_LIMIT_INFORMATION
             {
-                LimitFlags = 0
+                LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
             }
         };
 
-        if (maxProcessMemoryBytes.HasValue)
-        {
-            info.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_JOB_MEMORY;
-            info.JobMemoryLimit = new UIntPtr((ulong)maxProcessMemoryBytes.Value);
-        }
+        var procMem = maxProcessMemoryBytes ?? DefaultProcessMemoryBytes;
+        info.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_PROCESS_MEMORY;
+        info.ProcessMemoryLimit = new UIntPtr((ulong)procMem);
 
-        if (maxActiveProcesses.HasValue)
-        {
-            info.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_ACTIVE_PROCESS;
-            info.BasicLimitInformation.ActiveProcessLimit = maxActiveProcesses.Value;
-        }
+        var jobMem = maxProcessMemoryBytes ?? DefaultProcessMemoryBytes;
+        info.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_JOB_MEMORY;
+        info.JobMemoryLimit = new UIntPtr((ulong)jobMem);
 
-        if (info.BasicLimitInformation.LimitFlags != 0)
+        var activeProc = maxActiveProcesses ?? DefaultActiveProcessLimit;
+        info.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_ACTIVE_PROCESS;
+        info.BasicLimitInformation.ActiveProcessLimit = activeProc;
+
+        int size = Marshal.SizeOf<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>();
+        var ptr = Marshal.AllocHGlobal(size);
+        try
         {
-            int size = Marshal.SizeOf<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>();
-            var ptr = Marshal.AllocHGlobal(size);
-            try
-            {
-                Marshal.StructureToPtr(info, ptr, false);
-                if (!SetInformationJobObject(_jobHandle, JobObjectInfoType.JobObjectExtendedLimitInformation, ptr, (uint)size))
-                    throw new Win32Exception(Marshal.GetLastWin32Error(), "Failed to set Job Object limits");
-            }
-            finally
-            {
-                Marshal.FreeHGlobal(ptr);
-            }
+            Marshal.StructureToPtr(info, ptr, false);
+            if (!SetInformationJobObject(_jobHandle, JobObjectInfoType.JobObjectExtendedLimitInformation, ptr, (uint)size))
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "Failed to set Job Object limits");
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(ptr);
         }
     }
 
@@ -82,7 +82,9 @@ public sealed class WorkerJobObject : IDisposable
         }
     }
 
+    private const int JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000;
     private const int JOB_OBJECT_LIMIT_ACTIVE_PROCESS = 0x00000008;
+    private const int JOB_OBJECT_LIMIT_PROCESS_MEMORY = 0x00000100;
     private const int JOB_OBJECT_LIMIT_JOB_MEMORY = 0x00000200;
 
     private enum JobObjectInfoType

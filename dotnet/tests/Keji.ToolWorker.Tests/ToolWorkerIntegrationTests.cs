@@ -311,12 +311,9 @@ public class ToolWorkerIntegrationTests
 
         var result = await launcher.ExecuteAsync(definition, inputs);
 
-        // The worker may complete before the timeout fires, so we accept both
-        // success (worker fast enough) and explicit timeout error
-        if (!result.Success)
-        {
-            Assert.True(result.ErrorCode == "TIMEOUT" || result.ErrorCode == "CANCELLED");
-        }
+        // 1ms timeout is too short for process startup + IPC round-trip; always times out
+        Assert.False(result.Success);
+        Assert.Equal("TIMEOUT", result.ErrorCode);
     }
 
     [Fact]
@@ -337,5 +334,55 @@ public class ToolWorkerIntegrationTests
 
         Assert.False(result.Success);
         Assert.Equal("CANCELLED", result.ErrorCode);
+    }
+
+    [Fact]
+    public async Task Process_PerRequest_UniquePids()
+    {
+        var exePath = GetWorkerPath();
+
+        var pid1 = await ExecuteAndGetPidAsync(exePath, "calculator", "{\"expr\":\"2+2\"}");
+        var pid2 = await ExecuteAndGetPidAsync(exePath, "calculator", "{\"expr\":\"3+3\"}");
+
+        Assert.NotEqual(pid1, pid2);
+    }
+
+    private static async Task<int> ExecuteAndGetPidAsync(string exePath, string toolName, string inputJson)
+    {
+        using var process = new System.Diagnostics.Process
+        {
+            StartInfo = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = exePath,
+                RedirectStandardInput = true,
+                RedirectStandardOutput = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            }
+        };
+
+        process.Start();
+        var pid = process.Id;
+
+        var reader = new WorkerFrameReader(process.StandardOutput.BaseStream);
+        var writer = new WorkerFrameWriter(process.StandardInput.BaseStream);
+
+        var request = new ToolWorkerRequest
+        {
+            ProtocolVersion = "1.0",
+            RequestId = Guid.NewGuid().ToString("N"),
+            DeadlineUtc = DateTimeOffset.UtcNow.AddMinutes(5).ToString("O"),
+            ToolName = toolName,
+            ContractVersion = "1",
+            InputJson = inputJson
+        };
+
+        await writer.WriteRequestAsync(request);
+        process.StandardInput.Close();
+
+        await reader.ReadResponseAsync();
+        process.WaitForExit(5000);
+
+        return pid;
     }
 }

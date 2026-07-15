@@ -46,8 +46,11 @@ public sealed class ToolExecutionPipeline : IToolExecutionPipeline
         if (resolution.Status != KejiToolResolutionStatus.Found || resolution.Definition is null)
             return await FailAsync(null, null, "Tool is not registered.", "NOT_FOUND");
 
-        var def = resolution.Definition;
         var user = _userAccessor.CurrentUser;
+        if (user is null)
+            return await FailAsync(null, null, "Authentication required.", "AUTH_REQUIRED");
+
+        var def = resolution.Definition;
 
         if (def.Availability != KejiToolAvailability.Executable)
             return await FailAsync(def, user, "Tool is not executable.", "NOT_EXECUTABLE");
@@ -105,8 +108,9 @@ public sealed class ToolExecutionPipeline : IToolExecutionPipeline
                 targetId: def.Name.Value,
                 metadata: metadata);
         }
-        catch
+        catch (Exception ex)
         {
+            await Console.Error.WriteLineAsync($"Audit write failed: {ex.Message}");
         }
     }
 }
