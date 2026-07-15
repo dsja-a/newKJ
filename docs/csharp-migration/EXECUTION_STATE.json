@@ -2,7 +2,7 @@
   "repository": "dsja-a/newKJ",
   "branch": "rewrite/csharp-core",
   "python_baseline": "aad0afab7181e529a53691a4f2801f295025a2c7",
-  "last_accepted_sha": "d9a42de3e9daf99bd1f1f52a85b2488d8c1533b5",
+  "last_accepted_sha": "fd56256e54d4dd4e3d2099f3a015bd09a0f58b32",
   "task006_main_commit_sha": "2bbdce42494d1e0a7eaaa8bd2905785bc4b6941f",
   "task006_edge_fix_commit_sha": "f6a2dc201d5fb4dafdf04988375751b051743f46",
   "task006_test_handoff_commit_sha": "88a6f8ff7b9e87302ad5233c9914914a572a57ec",
@@ -14,9 +14,9 @@
   "task008_repair_commit_sha": "aaa126e15a2f4ea130a540b13643be13ed879ad4",
   "task008_final_commit_sha": "c027ab34a7a30655f11ff035af191b31cae57bd1",
   "task008_accepted_sha": "c027ab34a7a30655f11ff035af191b31cae57bd1",
-  "current_task": "TASK-011",
-  "status": "accepted",
-  "csharp_completion_percent": 44,
+  "current_task": "TASK-013",
+  "status": "not_started",
+  "csharp_completion_percent": 48,
   "completed_tasks": [
     "TASK-000",
     "TASK-001",
@@ -36,7 +36,7 @@
   "task009_collision_fix_commit_sha": "b4bb697086153da6fd6cd9e5937b61dec9605d21",
   "task009_final_commit_sha": "8d507c7ec1f0f7a81e79470b22a421d767fa4cef",
   "task009_accepted_sha": "8d507c7ec1f0f7a81e79470b22a421d767fa4cef",
-  "next_task": "TASK-012",
+  "next_task": "TASK-013",
   "task007": {
     "base_sha": "33c849a7eb1e9116b0fb0bb08a18c582714a4605",
     "phase": "P1-P4",
@@ -77,7 +77,9 @@
     "Keji.Tools.Tests": "273/273",
     "Keji.Auditing.Tests": "102/102",
     "Keji.ToolWorker.Tests": "75/75",
-    "solution_total": "1600/1600",
+    "Keji.Providers.Tests": "100/100",
+    "Keji.Streaming.Tests": "33/33",
+    "solution_total": "1733/1733",
     "failed": 0,
     "skipped": 0,
     "build_warnings": 0,
@@ -90,8 +92,8 @@
     "Cancellation or process failure during an existing-file in-place write can leave partial content; failed new-file writes use best-effort handle-based cleanup.",
     "Operating-system ACL changes or filesystem mutation by a more privileged process remain outside the application authorization boundary.",
     "TASK-011 (ToolWorker) R1 accepted: unified execution path (Coordinator + Client only), true process-per-request, Windows Job Object with KILL_ON_JOB_CLOSE + memory limits, identity boundary (null user rejected), input validation enforcement, response correlation, deterministic tests, no rawInputJson leak, no ex.Message leak, no empty audit catch.",
-    "TASK-012 (Model Providers and SSE) not started.",
-    "Host-targeted tool executors not yet implemented (deferred to future tasks).",
+    "TASK-012 (Model Providers and SSE) accepted: ProviderBase streaming rewrite (multi-choice, per-choice tool state, finish_reason before delta), SSE phase reset after tool calls, early cancellation yields empty SSE, all Provider and Streaming tests 0 failed/0 skipped.",
+    "TASK-013 (Model Provider implementations) not started.",
     "PythonWorker bridge not yet implemented (deferred to TASK-016).",
     "ToolWorker IPC uses binary length-prefixed frames over stdin/stdout. Windows Job Object provides process isolation (KILL_ON_JOB_CLOSE + 256 MiB process/job memory limit, ActiveProcess=1). Safe expression parser replaces DataTable.Compute."
   ],
@@ -99,6 +101,7 @@
   "git_diff_check": "passed - only LF/CRLF normalisation warnings, no whitespace errors",
   "updated_at_utc": "2026-07-15T13:10:00.0000000Z",
   "task012": {
-    "status": "not_started"
+    "status": "accepted",
+    "final_commit_sha": "fd56256e54d4dd4e3d2099f3a015bd09a0f58b32"
   }
 }
