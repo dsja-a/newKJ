@@ -6,5 +6,6 @@ public enum KejiAuditCategory
     Authorization,
     WorkspaceSecurity,
     Configuration,
-    DataAccess
+    DataAccess,
+    ToolExecution
 }

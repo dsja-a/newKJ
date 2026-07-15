@@ -448,13 +448,15 @@ public static class BuiltInToolCatalog
 
     private static KejiToolDefinition GetTime() => new(
         KejiToolName.Create("get_time"), 1, "Get the current time.",
-        KejiToolCategory.Utility, KejiToolRiskLevel.ReadOnly, KejiToolExecutionTarget.Host,
-        KejiPermission.ToolCatalogRead);
+        KejiToolCategory.Utility, KejiToolRiskLevel.ReadOnly, KejiToolExecutionTarget.ToolWorker,
+        KejiPermission.ToolCatalogRead,
+        availability: KejiToolAvailability.Executable);
 
     private static KejiToolDefinition Calculator() => new(
         KejiToolName.Create("calculator"), 1, "Evaluate a mathematical expression.",
-        KejiToolCategory.Utility, KejiToolRiskLevel.ReadOnly, KejiToolExecutionTarget.Host,
+        KejiToolCategory.Utility, KejiToolRiskLevel.ReadOnly, KejiToolExecutionTarget.ToolWorker,
         KejiPermission.ToolCatalogRead,
+        availability: KejiToolAvailability.Executable,
         inputSchema: new KejiToolInputSchema(new List<KejiToolParameterDefinition>
         {
             P("expr", KejiToolParameterType.String, true, "Mathematical expression.", maxLength: 2000),

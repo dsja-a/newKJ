@@ -114,11 +114,14 @@ public class BuiltInToolCatalogTests
     }
 
     [Fact]
-    public void Catalog_AllTools_AvailabilityIsContractOnly()
+    public void Catalog_AllTools_ContractOnly_ExceptCalculatorAndGetTime()
     {
         foreach (var def in BuiltInToolCatalog.All)
         {
-            Assert.Equal(Definitions.KejiToolAvailability.ContractOnly, def.Availability);
+            if (def.Name.Value is "calculator" or "get_time")
+                Assert.Equal(Definitions.KejiToolAvailability.Executable, def.Availability);
+            else
+                Assert.Equal(Definitions.KejiToolAvailability.ContractOnly, def.Availability);
         }
     }
 
@@ -202,12 +205,16 @@ public class BuiltInToolCatalogTests
     }
 
     [Fact]
-    public void Catalog_AllTools_HaveNoExecutableCode()
+    public void Catalog_TwoExecutableTools_Present()
     {
-        foreach (var def in BuiltInToolCatalog.All)
-        {
-            Assert.Equal(Definitions.KejiToolAvailability.ContractOnly, def.Availability);
-        }
+        var executableTools = BuiltInToolCatalog.All
+            .Where(d => d.Availability == Definitions.KejiToolAvailability.Executable)
+            .Select(d => d.Name.Value)
+            .OrderBy(n => n)
+            .ToList();
+        Assert.Equal(2, executableTools.Count);
+        Assert.Equal("calculator", executableTools[0]);
+        Assert.Equal("get_time", executableTools[1]);
     }
 
     public static IEnumerable<object[]> Expected47Tools()
@@ -283,11 +290,14 @@ public class BuiltInToolCatalogTests
     }
 
     [Fact]
-    public void Registry_AllTools_ContainOnly()
+    public void Registry_AllToolsContractOnly_ExceptExecutable()
     {
         foreach (var def in BuiltInToolCatalog.All)
         {
-            Assert.Equal(Definitions.KejiToolAvailability.ContractOnly, def.Availability);
+            if (def.Name.Value is "calculator" or "get_time")
+                Assert.Equal(Definitions.KejiToolAvailability.Executable, def.Availability);
+            else
+                Assert.Equal(Definitions.KejiToolAvailability.ContractOnly, def.Availability);
         }
     }
 

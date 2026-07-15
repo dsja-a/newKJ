@@ -20,6 +20,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Keji.Tools\Keji.Tools.csproj" />
+    <ProjectReference Include="..\..\src\Keji.ToolWorker\Keji.ToolWorker.csproj" />
   </ItemGroup>
 
 </Project>
