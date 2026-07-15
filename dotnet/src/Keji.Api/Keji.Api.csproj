@@ -20,6 +20,7 @@
     <ProjectReference Include="..\Keji.Auditing\Keji.Auditing.csproj" />
     <ProjectReference Include="..\Keji.Agent\Keji.Agent.csproj" />
     <ProjectReference Include="..\Keji.Tools\Keji.Tools.csproj" />
+    <ProjectReference Include="..\Keji.ToolWorker.Client\Keji.ToolWorker.Client.csproj" />
     <ProjectReference Include="..\Keji.SmartQuery\Keji.SmartQuery.csproj" />
     <ProjectReference Include="..\Keji.Licensing\Keji.Licensing.csproj" />
   </ItemGroup>

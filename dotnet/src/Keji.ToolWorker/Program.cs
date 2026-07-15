@@ -71,14 +71,14 @@ if (!DateTimeOffset.TryParse(request.DeadlineUtc, out var deadline) || deadline 
 var toolName = request.ToolName;
 if (string.IsNullOrEmpty(toolName) || !KejiToolName.TryCreate(toolName, out var name))
 {
-    await writer.WriteResponseAsync(MakeError(requestId, ToolWorkerErrorCode.UnknownTool, $"Invalid tool name: {toolName}"));
+    await writer.WriteResponseAsync(MakeError(requestId, ToolWorkerErrorCode.UnknownTool, $"Invalid tool name: {toolName}", toolName, request.ContractVersion));
     return 1;
 }
 
 var resolution = toolRegistry.Resolve(name);
 if (resolution.Status != KejiToolResolutionStatus.Found || resolution.Definition is null)
 {
-    await writer.WriteResponseAsync(MakeError(requestId, ToolWorkerErrorCode.UnknownTool, $"Unknown tool: {toolName}"));
+    await writer.WriteResponseAsync(MakeError(requestId, ToolWorkerErrorCode.UnknownTool, $"Unknown tool: {toolName}", toolName, request.ContractVersion));
     return 1;
 }
 
@@ -86,19 +86,19 @@ var def = resolution.Definition;
 
 if (def.ContractVersion.ToString() != request.ContractVersion)
 {
-    await writer.WriteResponseAsync(MakeError(requestId, ToolWorkerErrorCode.ContractMismatch, $"Contract version mismatch: expected {def.ContractVersion}, got {request.ContractVersion}"));
+    await writer.WriteResponseAsync(MakeError(requestId, ToolWorkerErrorCode.ContractMismatch, $"Contract version mismatch: expected {def.ContractVersion}, got {request.ContractVersion}", toolName, request.ContractVersion));
     return 1;
 }
 
 if (def.Availability != KejiToolAvailability.Executable)
 {
-    await writer.WriteResponseAsync(MakeError(requestId, ToolWorkerErrorCode.InvalidRequest, $"Tool {toolName} is not executable"));
+    await writer.WriteResponseAsync(MakeError(requestId, ToolWorkerErrorCode.InvalidRequest, $"Tool {toolName} is not executable", toolName, request.ContractVersion));
     return 1;
 }
 
 if (def.ExecutionTarget != KejiToolExecutionTarget.ToolWorker)
 {
-    await writer.WriteResponseAsync(MakeError(requestId, ToolWorkerErrorCode.InvalidRequest, $"Tool {toolName} is not targeted for Worker execution"));
+    await writer.WriteResponseAsync(MakeError(requestId, ToolWorkerErrorCode.InvalidRequest, $"Tool {toolName} is not targeted for Worker execution", toolName, request.ContractVersion));
     return 1;
 }
 
@@ -107,14 +107,14 @@ var inputs = DeserializeInputs(request.InputJson);
 var validation = KejiToolInputValidator.Validate(toolRegistry, toolName, inputs);
 if (!validation.IsValid)
 {
-    await writer.WriteResponseAsync(MakeError(requestId, ToolWorkerErrorCode.InvalidRequest, validation.ErrorMessage ?? "Input validation failed"));
+    await writer.WriteResponseAsync(MakeError(requestId, ToolWorkerErrorCode.InvalidRequest, validation.ErrorMessage ?? "Input validation failed", toolName, request.ContractVersion));
     return 1;
 }
 
 var executor = executors.Get(toolName);
 if (executor is null)
 {
-    await writer.WriteResponseAsync(MakeError(requestId, ToolWorkerErrorCode.UnknownTool, $"No executor registered for {toolName}"));
+    await writer.WriteResponseAsync(MakeError(requestId, ToolWorkerErrorCode.UnknownTool, $"No executor registered for {toolName}", toolName, request.ContractVersion));
     return 1;
 }
 
@@ -127,6 +127,8 @@ try
     {
         ProtocolVersion = ProtocolVersion.String,
         RequestId = requestId,
+        ToolName = toolName,
+        ContractVersion = request.ContractVersion,
         ErrorCode = (int)ToolWorkerErrorCode.None,
         ResultJson = resultJson
     });
@@ -137,6 +139,8 @@ catch (Exception)
     {
         ProtocolVersion = ProtocolVersion.String,
         RequestId = requestId,
+        ToolName = toolName,
+        ContractVersion = request.ContractVersion,
         ErrorCode = (int)ToolWorkerErrorCode.ExecutionFailed,
         ErrorMessage = "Execution failed"
     });
@@ -184,10 +188,12 @@ static IKejiToolRegistry BuildToolRegistry()
     return builder.Build();
 }
 
-static ToolWorkerResponse MakeError(string requestId, ToolWorkerErrorCode code, string message) => new()
+static ToolWorkerResponse MakeError(string requestId, ToolWorkerErrorCode code, string message, string? toolName = null, string? contractVersion = null) => new()
 {
     ProtocolVersion = ProtocolVersion.String,
     RequestId = requestId,
+    ToolName = toolName ?? "",
+    ContractVersion = contractVersion ?? "",
     ErrorCode = (int)code,
     ErrorMessage = message
 };

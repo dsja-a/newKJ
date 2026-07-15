@@ -1,6 +1,6 @@
 using System.Text.Json;
+using Keji.ToolWorker.Client;
 using Keji.ToolWorker.Protocol;
-using Keji.Tools.Execution;
 
 namespace Keji.ToolWorker.Tests;
 
@@ -34,6 +34,19 @@ public class ToolWorkerIntegrationTests
         }
 
         throw new FileNotFoundException("Keji.ToolWorker.exe not found. Build the ToolWorker project first.");
+    }
+
+    private static ToolWorkerRequest MakeRequest(string toolName, string inputJson)
+    {
+        return new ToolWorkerRequest
+        {
+            ProtocolVersion = "1.0",
+            RequestId = Guid.NewGuid().ToString("N"),
+            DeadlineUtc = DateTimeOffset.UtcNow.AddSeconds(10).ToString("O"),
+            ToolName = toolName,
+            ContractVersion = "1",
+            InputJson = inputJson
+        };
     }
 
     [Fact]
@@ -76,6 +89,8 @@ public class ToolWorkerIntegrationTests
 
         Assert.NotNull(response);
         Assert.Equal(0, response.ErrorCode);
+        Assert.Equal("calculator", response.ToolName);
+        Assert.Equal("1", response.ContractVersion);
         Assert.NotNull(response.ResultJson);
 
         using var doc = JsonDocument.Parse(response.ResultJson);
@@ -197,7 +212,7 @@ public class ToolWorkerIntegrationTests
         var request = new ToolWorkerRequest
         {
             ProtocolVersion = "1.0",
-            RequestId = "short", 
+            RequestId = "short",
             DeadlineUtc = DateTimeOffset.UtcNow.AddMinutes(5).ToString("O"),
             ToolName = "calculator",
             ContractVersion = "1",
@@ -299,45 +314,123 @@ public class ToolWorkerIntegrationTests
     }
 
     [Fact]
-    public async Task Launcher_Timeout_ReturnsTimeoutError()
+    public async Task Client_Calculator_Success()
     {
         var exePath = GetWorkerPath();
+        var options = new WorkerProcessOptions
+        {
+            ExecutablePath = exePath,
+            Timeout = TimeSpan.FromSeconds(10)
+        };
 
-        var options = new ToolWorkerOptions(exePath, TimeSpan.FromMilliseconds(1));
-        var launcher = new ToolWorkerLauncher(options);
+        using var client = new ToolWorkerClient(options);
+        var request = MakeRequest("calculator", "{\"expr\":\"2+2\"}");
 
-        var definition = Keji.Tools.Catalog.BuiltInToolCatalog.All.First(d => d.Name.Value == "calculator");
-        var inputs = new Dictionary<string, object?> { ["expr"] = "2+2" };
+        var response = await client.ExecuteAsync(request);
 
-        var result = await launcher.ExecuteAsync(definition, inputs);
-
-        // 1ms timeout is too short for process startup + IPC round-trip; always times out
-        Assert.False(result.Success);
-        Assert.Equal("TIMEOUT", result.ErrorCode);
+        Assert.Equal(0, response.ErrorCode);
+        Assert.Equal("1.0", response.ProtocolVersion);
+        Assert.Equal(request.RequestId, response.RequestId);
+        Assert.Equal("calculator", response.ToolName);
+        Assert.Equal("1", response.ContractVersion);
+        Assert.NotNull(response.ResultJson);
     }
 
     [Fact]
-    public async Task Launcher_Cancellation_ReturnsCancelledError()
+    public async Task Client_Timeout_ReturnsTimeout()
     {
         var exePath = GetWorkerPath();
+        var options = new WorkerProcessOptions
+        {
+            ExecutablePath = exePath,
+            Timeout = TimeSpan.FromMilliseconds(1)
+        };
 
-        var options = new ToolWorkerOptions(exePath);
-        var launcher = new ToolWorkerLauncher(options);
+        using var client = new ToolWorkerClient(options);
+        var request = MakeRequest("calculator", "{\"expr\":\"2+2\"}");
 
-        var definition = Keji.Tools.Catalog.BuiltInToolCatalog.All.First(d => d.Name.Value == "calculator");
-        var inputs = new Dictionary<string, object?> { ["expr"] = "2+2" };
+        var response = await client.ExecuteAsync(request);
+
+        Assert.Equal((int)ToolWorkerErrorCode.Timeout, response.ErrorCode);
+        Assert.Equal(request.RequestId, response.RequestId);
+    }
+
+    [Fact]
+    public async Task Client_Cancellation_ReturnsCancelled()
+    {
+        var exePath = GetWorkerPath();
+        var options = new WorkerProcessOptions
+        {
+            ExecutablePath = exePath,
+            Timeout = TimeSpan.FromSeconds(10)
+        };
+
+        using var client = new ToolWorkerClient(options);
+        var request = MakeRequest("calculator", "{\"expr\":\"2+2\"}");
+
+        using var cts = new CancellationTokenSource();
+
+        var task = client.ExecuteAsync(request, cts.Token);
+
+        // Wait briefly for the process to start
+        await Task.Delay(100);
+        cts.Cancel();
+
+        var response = await task;
+
+        Assert.Equal((int)ToolWorkerErrorCode.Cancelled, response.ErrorCode);
+        Assert.Equal(request.RequestId, response.RequestId);
+    }
+
+    [Fact]
+    public async Task Client_Cancellation_PreCancelled_ReturnsCancelled()
+    {
+        var exePath = GetWorkerPath();
+        var options = new WorkerProcessOptions
+        {
+            ExecutablePath = exePath,
+            Timeout = TimeSpan.FromSeconds(10)
+        };
+
+        using var client = new ToolWorkerClient(options);
+        var request = MakeRequest("calculator", "{\"expr\":\"2+2\"}");
 
         using var cts = new CancellationTokenSource();
         cts.Cancel();
 
-        var result = await launcher.ExecuteAsync(definition, inputs, cts.Token);
+        var response = await client.ExecuteAsync(request, cts.Token);
 
-        Assert.False(result.Success);
-        Assert.Equal("CANCELLED", result.ErrorCode);
+        Assert.Equal((int)ToolWorkerErrorCode.Cancelled, response.ErrorCode);
     }
 
     [Fact]
-    public async Task Process_PerRequest_UniquePids()
+    public async Task Client_ConsecutiveCalls_BothSucceed()
+    {
+        var exePath = GetWorkerPath();
+        var options = new WorkerProcessOptions
+        {
+            ExecutablePath = exePath,
+            Timeout = TimeSpan.FromSeconds(10)
+        };
+
+        using var client = new ToolWorkerClient(options);
+
+        // First call - creates new process
+        var resp1 = await client.ExecuteAsync(MakeRequest("calculator", "{\"expr\":\"2+2\"}"));
+        Assert.Equal(0, resp1.ErrorCode);
+        Assert.Equal("calculator", resp1.ToolName);
+
+        // Second call - creates a different process (worker exited after first request)
+        var resp2 = await client.ExecuteAsync(MakeRequest("calculator", "{\"expr\":\"3+3\"}"));
+        Assert.Equal(0, resp2.ErrorCode);
+        Assert.Equal("calculator", resp2.ToolName);
+
+        // Different RequestIds prove separate requests
+        Assert.NotEqual(resp1.RequestId, resp2.RequestId);
+    }
+
+    [Fact]
+    public async Task Process_Client_PerRequest_UniquePids()
     {
         var exePath = GetWorkerPath();
 
@@ -345,6 +438,63 @@ public class ToolWorkerIntegrationTests
         var pid2 = await ExecuteAndGetPidAsync(exePath, "calculator", "{\"expr\":\"3+3\"}");
 
         Assert.NotEqual(pid1, pid2);
+    }
+
+    [Fact]
+    public async Task Client_InvalidRequestId_Rejected()
+    {
+        var exePath = GetWorkerPath();
+        var options = new WorkerProcessOptions
+        {
+            ExecutablePath = exePath,
+            Timeout = TimeSpan.FromSeconds(10)
+        };
+
+        using var client = new ToolWorkerClient(options);
+        var request = MakeRequest("calculator", "{\"expr\":\"2+2\"}") with { RequestId = "short" };
+
+        var response = await client.ExecuteAsync(request);
+
+        Assert.NotEqual(0, response.ErrorCode);
+    }
+
+    [Fact]
+    public async Task Client_ExpiredDeadline_Rejected()
+    {
+        var exePath = GetWorkerPath();
+        var options = new WorkerProcessOptions
+        {
+            ExecutablePath = exePath,
+            Timeout = TimeSpan.FromSeconds(10)
+        };
+
+        using var client = new ToolWorkerClient(options);
+        var request = MakeRequest("calculator", "{\"expr\":\"2+2\"}") with
+        {
+            DeadlineUtc = DateTimeOffset.UtcNow.AddMinutes(-5).ToString("O")
+        };
+
+        var response = await client.ExecuteAsync(request);
+
+        Assert.NotEqual(0, response.ErrorCode);
+    }
+
+    [Fact]
+    public async Task Client_UnknownTool_Rejected()
+    {
+        var exePath = GetWorkerPath();
+        var options = new WorkerProcessOptions
+        {
+            ExecutablePath = exePath,
+            Timeout = TimeSpan.FromSeconds(10)
+        };
+
+        using var client = new ToolWorkerClient(options);
+        var request = MakeRequest("nonexistent_tool", "{}");
+
+        var response = await client.ExecuteAsync(request);
+
+        Assert.NotEqual(0, response.ErrorCode);
     }
 
     private static async Task<int> ExecuteAndGetPidAsync(string exePath, string toolName, string inputJson)

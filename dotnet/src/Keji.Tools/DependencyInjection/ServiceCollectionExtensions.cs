@@ -14,9 +14,8 @@ public static class KejiToolsServiceCollectionExtensions
         return services;
     }
 
-    public static IServiceCollection AddKejiToolExecutionPipeline(this IServiceCollection services, string workerExecutablePath)
+    public static IServiceCollection AddKejiToolPipelineForwarder(this IServiceCollection services)
     {
-        services.AddSingleton(new ToolWorkerLauncher(workerExecutablePath));
         services.AddSingleton<IToolExecutionPipeline, ToolExecutionPipeline>();
         return services;
     }

@@ -45,11 +45,19 @@ public class CoordinatorTests
             {
                 ProtocolVersion = "1.0",
                 RequestId = request.RequestId,
+                ToolName = request.ToolName,
+                ContractVersion = request.ContractVersion,
                 ErrorCode = (int)ToolWorkerErrorCode.ExecutionFailed,
                 ErrorMessage = "Mock error"
             };
-            // Always echo back the request's RequestId and ProtocolVersion for correlation validation
-            return Task.FromResult(resp with { RequestId = request.RequestId, ProtocolVersion = "1.0" });
+            // Echo back request fields for correlation validation
+            return Task.FromResult(resp with
+            {
+                RequestId = request.RequestId,
+                ProtocolVersion = "1.0",
+                ToolName = request.ToolName,
+                ContractVersion = request.ContractVersion
+            });
         }
     }
 

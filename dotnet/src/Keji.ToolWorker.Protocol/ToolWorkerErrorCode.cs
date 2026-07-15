@@ -10,5 +10,9 @@ public enum ToolWorkerErrorCode
     InternalError = 5,
     ContractMismatch = 6,
     RequestTooLarge = 7,
-    ProtocolError = 8
+    ProtocolError = 8,
+    InvalidInput = 9,
+    Cancelled = 10,
+    WorkerUnavailable = 11,
+    OutputTooLarge = 12
 }
