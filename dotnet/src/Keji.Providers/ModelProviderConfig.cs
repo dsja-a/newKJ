@@ -12,7 +12,6 @@ public sealed partial class ModelProviderConfig
     private const int MaxModelLength = 256;
 
     public string ProviderType { get; }
-    internal string ApiKey { get; }
     public Uri EndpointUri { get; }
     public string Endpoint => EndpointUri.AbsoluteUri;
     public string DefaultModel { get; }
@@ -23,7 +22,6 @@ public sealed partial class ModelProviderConfig
 
     private ModelProviderConfig(
         string providerType,
-        string apiKey,
         Uri endpointUri,
         string defaultModel,
         TimeSpan timeout,
@@ -32,7 +30,6 @@ public sealed partial class ModelProviderConfig
         KejiProviderSecretReference? secretReference)
     {
         ProviderType = providerType;
-        ApiKey = apiKey;
         EndpointUri = endpointUri;
         DefaultModel = defaultModel;
         Timeout = timeout;
@@ -52,29 +49,31 @@ public sealed partial class ModelProviderConfig
         var validatedModel = ValidateModel(defaultModel);
 
         KejiProviderSecretReference? secretRef = null;
-        string resolvedKey;
-
         if (string.IsNullOrWhiteSpace(apiKeyOrReference))
         {
-            resolvedKey = string.Empty;
+            if (normalizedProvider is "openai" or "deepseek")
+                throw new ArgumentException("Provider secret reference is required", nameof(apiKeyOrReference));
         }
         else if (apiKeyOrReference.StartsWith("env:", StringComparison.Ordinal))
         {
             var envName = apiKeyOrReference[4..];
             secretRef = new KejiProviderSecretReference(envName);
-            resolvedKey = Environment.GetEnvironmentVariable(envName) ?? string.Empty;
-
-            if (normalizedProvider is "openai" or "deepseek" && string.IsNullOrWhiteSpace(resolvedKey))
-                throw new ArgumentException($"Environment variable {envName} is not set or empty", nameof(apiKeyOrReference));
+            var requiredName = normalizedProvider switch
+            {
+                "openai" => "OPENAI_API_KEY",
+                "deepseek" => "DEEPSEEK_API_KEY",
+                _ => null,
+            };
+            if (requiredName is not null && !string.Equals(envName, requiredName, StringComparison.Ordinal))
+                throw new ArgumentException($"{normalizedProvider} requires env:{requiredName}", nameof(apiKeyOrReference));
         }
         else
         {
-            resolvedKey = ValidateSecret(apiKeyOrReference, normalizedProvider);
+            throw new ArgumentException("Provider secret must be an environment reference", nameof(apiKeyOrReference));
         }
 
         return new ModelProviderConfig(
             normalizedProvider,
-            resolvedKey,
             validatedEndpoint,
             validatedModel,
             TimeSpan.FromSeconds(30),
@@ -133,25 +132,17 @@ public sealed partial class ModelProviderConfig
         return Copy(maxTokens: maxTokens);
     }
 
-    public ModelProviderConfig WithResolvedSecret(string resolvedApiKey)
-    {
-        ArgumentNullException.ThrowIfNull(resolvedApiKey);
-        return Copy(resolvedKey: resolvedApiKey);
-    }
-
     public override string ToString() =>
         $"ModelProviderConfig {{ ProviderType = {ProviderType}, Endpoint = {Endpoint}, " +
-        $"DefaultModel = {DefaultModel}, HasSecret = {SecretReference is not null || !string.IsNullOrEmpty(ApiKey)}, " +
+        $"DefaultModel = {DefaultModel}, HasSecretReference = {SecretReference is not null}, " +
         $"Timeout = {Timeout}, MaxRetries = {MaxRetries}, MaxTokens = {MaxTokens} }}";
 
     private ModelProviderConfig Copy(
         TimeSpan? timeout = null,
         int? maxRetries = null,
-        int? maxTokens = null,
-        string? resolvedKey = null) =>
+        int? maxTokens = null) =>
         new(
             ProviderType,
-            resolvedKey ?? ApiKey,
             EndpointUri,
             DefaultModel,
             timeout ?? Timeout,
@@ -168,26 +159,6 @@ public sealed partial class ModelProviderConfig
             throw new ArgumentException("Provider type contains invalid characters", nameof(providerType));
 
         return providerType;
-    }
-
-    private static string ValidateSecret(string apiKey, string providerType)
-    {
-        if (apiKey.Length > 16 * 1024)
-            throw new ArgumentException("Provider API key exceeds the maximum length", nameof(apiKey));
-
-        if (apiKey.Any(char.IsControl))
-            throw new ArgumentException("Provider API key contains control characters", nameof(apiKey));
-
-        if (UnresolvedEnvironmentReferencePattern().IsMatch(apiKey))
-            throw new ArgumentException("Provider API key must be resolved by the configuration foundation", nameof(apiKey));
-
-        if (providerType is "openai" or "deepseek" && string.IsNullOrWhiteSpace(apiKey))
-            throw new ArgumentException("Provider API key is required", nameof(apiKey));
-
-        if (providerType is "openai" or "deepseek" && !BearerTokenPattern().IsMatch(apiKey))
-            throw new ArgumentException("Provider API key is not a valid bearer token", nameof(apiKey));
-
-        return apiKey;
     }
 
     private static Uri ValidateEndpoint(string endpoint, string providerType)
@@ -295,9 +266,4 @@ public sealed partial class ModelProviderConfig
     [GeneratedRegex("^[a-z][a-z0-9_]{0,31}$", RegexOptions.CultureInvariant)]
     private static partial Regex ProviderTypePattern();
 
-    [GeneratedRegex("^\\$\\{[A-Za-z_][A-Za-z0-9_]*\\}$", RegexOptions.CultureInvariant)]
-    private static partial Regex UnresolvedEnvironmentReferencePattern();
-
-    [GeneratedRegex("^[A-Za-z0-9._~+/\\-]+={0,}$", RegexOptions.CultureInvariant)]
-    private static partial Regex BearerTokenPattern();
 }

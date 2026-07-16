@@ -434,7 +434,7 @@ public sealed class ProviderBaseNonStreamingTests
     public void Config_HttpsRequired_RejectsPlainHttp()
     {
         Assert.Throws<ArgumentException>(() =>
-            ModelProviderConfig.Create("openai", "key", "http://api.example.com", "model"));
+            ModelProviderConfig.Create("openai", "env:OPENAI_API_KEY", "http://api.example.com", "model"));
     }
 
     [Fact]

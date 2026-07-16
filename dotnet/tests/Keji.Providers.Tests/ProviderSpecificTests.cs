@@ -9,7 +9,7 @@ public class ProviderSpecificTests
     public void OpenAIProvider_ProviderName_IsOpenAI()
     {
         var factory = new MockHttpClientFactory(new HttpClient());
-        var config = ModelProviderConfig.Create("openai", "sk-test", "https://api.openai.com", "gpt-4o");
+        var config = ModelProviderConfig.Create("openai", "env:OPENAI_API_KEY", "https://api.openai.com", "gpt-4o");
         var provider = new OpenAIProvider(factory, config);
         Assert.Equal("openai", provider.ProviderName);
     }
@@ -18,7 +18,7 @@ public class ProviderSpecificTests
     public void DeepSeekProvider_ProviderName_IsDeepSeek()
     {
         var factory = new MockHttpClientFactory(new HttpClient());
-        var config = ModelProviderConfig.Create("deepseek", "sk-test", "https://api.deepseek.com", "deepseek-chat");
+        var config = ModelProviderConfig.Create("deepseek", "env:DEEPSEEK_API_KEY", "https://api.deepseek.com", "deepseek-chat");
         var provider = new DeepSeekProvider(factory, config);
         Assert.Equal("deepseek", provider.ProviderName);
     }
@@ -35,7 +35,7 @@ public class ProviderSpecificTests
     [Fact]
     public void Config_ObjectInit_CannotBypassValidation()
     {
-        var cfg = ModelProviderConfig.Create("openai", "key", "https://localhost", "model");
+        var cfg = ModelProviderConfig.Create("openai", "env:OPENAI_API_KEY", "https://localhost", "model");
 
         var ex = Assert.Throws<ArgumentOutOfRangeException>(() => cfg.WithTimeout(TimeSpan.FromSeconds(121)));
         Assert.Contains("Timeout", ex.Message);
@@ -50,8 +50,8 @@ public class ProviderSpecificTests
         });
         var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) };
         var factory = new MockHttpClientFactory(client);
-        var config = ModelProviderConfig.Create("openai", "sk-test-key", "https://api.openai.com", "gpt-4o");
-        var provider = new OpenAIProvider(factory, config);
+        var config = ModelProviderConfig.Create("openai", "env:OPENAI_API_KEY", "https://api.openai.com", "gpt-4o");
+        var provider = new OpenAIProvider(factory, config, new FixedSecretResolver("sk-test-key"));
 
         var result = await provider.CompleteAsync(new ChatCompletionRequest
         {
@@ -87,6 +87,11 @@ public class ProviderSpecificTests
     public void Provider_Constructor_RequiresNonNullFactory()
     {
         Assert.Throws<ArgumentNullException>(() => new OpenAIProvider(null!,
-            ModelProviderConfig.Create("openai", "key", "https://localhost", "gpt-4o")));
+            ModelProviderConfig.Create("openai", "env:OPENAI_API_KEY", "https://localhost", "gpt-4o")));
+    }
+
+    private sealed class FixedSecretResolver(string secret) : IKejiProviderSecretResolver
+    {
+        public string? Resolve(KejiProviderSecretReference secretReference) => secret;
     }
 }

@@ -175,27 +175,27 @@ public class ProviderModelTests
     [Fact]
     public void ModelProviderConfig_Create_ThrowsOnEmptyModel()
     {
-        Assert.Throws<ArgumentException>(() => ModelProviderConfig.Create("openai", "", "https://localhost", ""));
+        Assert.Throws<ArgumentException>(() => ModelProviderConfig.Create("openai", "env:OPENAI_API_KEY", "https://localhost", ""));
     }
 
     [Fact]
     public void ModelProviderConfig_WithTimeout_ThrowsOnZero()
     {
-        var cfg = ModelProviderConfig.Create("openai", "key", "https://localhost", "model");
+        var cfg = ModelProviderConfig.Create("openai", "env:OPENAI_API_KEY", "https://localhost", "model");
         Assert.Throws<ArgumentOutOfRangeException>(() => cfg.WithTimeout(TimeSpan.Zero));
     }
 
     [Fact]
     public void ModelProviderConfig_WithTimeout_ThrowsOnOver120()
     {
-        var cfg = ModelProviderConfig.Create("openai", "key", "https://localhost", "model");
+        var cfg = ModelProviderConfig.Create("openai", "env:OPENAI_API_KEY", "https://localhost", "model");
         Assert.Throws<ArgumentOutOfRangeException>(() => cfg.WithTimeout(TimeSpan.FromSeconds(121)));
     }
 
     [Fact]
     public void ModelProviderConfig_WithTimeout_Valid()
     {
-        var cfg = ModelProviderConfig.Create("openai", "key", "https://localhost", "model");
+        var cfg = ModelProviderConfig.Create("openai", "env:OPENAI_API_KEY", "https://localhost", "model");
         var result = cfg.WithTimeout(TimeSpan.FromSeconds(30));
         Assert.Equal(30, result.Timeout.TotalSeconds);
     }
@@ -203,21 +203,21 @@ public class ProviderModelTests
     [Fact]
     public void ModelProviderConfig_WithMaxRetries_Negative_Throws()
     {
-        var cfg = ModelProviderConfig.Create("openai", "key", "https://localhost", "model");
+        var cfg = ModelProviderConfig.Create("openai", "env:OPENAI_API_KEY", "https://localhost", "model");
         Assert.Throws<ArgumentOutOfRangeException>(() => cfg.WithMaxRetries(-1));
     }
 
     [Fact]
     public void ModelProviderConfig_WithMaxRetries_Over5_Throws()
     {
-        var cfg = ModelProviderConfig.Create("openai", "key", "https://localhost", "model");
+        var cfg = ModelProviderConfig.Create("openai", "env:OPENAI_API_KEY", "https://localhost", "model");
         Assert.Throws<ArgumentOutOfRangeException>(() => cfg.WithMaxRetries(6));
     }
 
     [Fact]
     public void ModelProviderConfig_WithMaxRetries_Valid()
     {
-        var cfg = ModelProviderConfig.Create("openai", "key", "https://localhost", "model");
+        var cfg = ModelProviderConfig.Create("openai", "env:OPENAI_API_KEY", "https://localhost", "model");
         var result = cfg.WithMaxRetries(3);
         Assert.Equal(3, result.MaxRetries);
     }
@@ -225,21 +225,21 @@ public class ProviderModelTests
     [Fact]
     public void ModelProviderConfig_WithMaxTokens_Zero_Throws()
     {
-        var cfg = ModelProviderConfig.Create("openai", "key", "https://localhost", "model");
+        var cfg = ModelProviderConfig.Create("openai", "env:OPENAI_API_KEY", "https://localhost", "model");
         Assert.Throws<ArgumentOutOfRangeException>(() => cfg.WithMaxTokens(0));
     }
 
     [Fact]
     public void ModelProviderConfig_WithMaxTokens_Over131072_Throws()
     {
-        var cfg = ModelProviderConfig.Create("openai", "key", "https://localhost", "model");
+        var cfg = ModelProviderConfig.Create("openai", "env:OPENAI_API_KEY", "https://localhost", "model");
         Assert.Throws<ArgumentOutOfRangeException>(() => cfg.WithMaxTokens(200000));
     }
 
     [Fact]
     public void ModelProviderConfig_WithMaxTokens_Valid()
     {
-        var cfg = ModelProviderConfig.Create("openai", "key", "https://localhost", "model");
+        var cfg = ModelProviderConfig.Create("openai", "env:OPENAI_API_KEY", "https://localhost", "model");
         var result = cfg.WithMaxTokens(8192);
         Assert.Equal(8192, result.MaxTokens);
     }
@@ -247,21 +247,21 @@ public class ProviderModelTests
     [Fact]
     public void ModelProviderConfig_EndpointNormalized_TrailingSlash()
     {
-        var cfg = ModelProviderConfig.Create("openai", "key", "https://localhost:11434", "model");
+        var cfg = ModelProviderConfig.Create("openai", "env:OPENAI_API_KEY", "https://localhost:11434", "model");
         Assert.EndsWith("/", cfg.Endpoint);
     }
 
     [Fact]
     public void ModelProviderConfig_DefaultTimeoutIs30Seconds()
     {
-        var cfg = ModelProviderConfig.Create("openai", "key", "https://localhost", "model");
+        var cfg = ModelProviderConfig.Create("openai", "env:OPENAI_API_KEY", "https://localhost", "model");
         Assert.Equal(30, cfg.Timeout.TotalSeconds);
     }
 
     [Fact]
     public void ModelProviderConfig_DefaultMaxRetriesIs2()
     {
-        var cfg = ModelProviderConfig.Create("openai", "key", "https://localhost", "model");
+        var cfg = ModelProviderConfig.Create("openai", "env:OPENAI_API_KEY", "https://localhost", "model");
         Assert.Equal(2, cfg.MaxRetries);
     }
 }

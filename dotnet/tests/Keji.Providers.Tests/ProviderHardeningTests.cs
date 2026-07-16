@@ -11,13 +11,16 @@ namespace Keji.Providers.Tests;
 
 public sealed class ProviderHardeningTests
 {
+    private static readonly IKejiProviderSecretResolver SecretResolver =
+        new FixedSecretResolver("provider-key");
+
     [Fact]
     public void Config_FromTrustedDocumentBindsAllProviderSettings()
     {
         var document = ConfigurationDocument(
             provider: "openai",
             endpoint: "https://gateway.example.test/openai/v1",
-            apiKey: "resolved-secret",
+            apiKey: "env:OPENAI_API_KEY",
             model: "gpt-test",
             timeout: "17",
             retries: "4",
@@ -37,14 +40,82 @@ public sealed class ProviderHardeningTests
     public void Config_SecretIsExcludedFromSerializationAndDiagnostics()
     {
         const string secret = "secret-that-must-never-be-serialized";
-        var config = ModelProviderConfig.Create("openai", secret, "https://api.example.test/v1", "model");
+        var config = ModelProviderConfig.Create(
+            "openai", "env:OPENAI_API_KEY", "https://api.example.test/v1", "model");
 
         var json = JsonSerializer.Serialize(config);
         var diagnostic = config.ToString();
 
         Assert.DoesNotContain(secret, json, StringComparison.Ordinal);
         Assert.DoesNotContain(secret, diagnostic, StringComparison.Ordinal);
-        Assert.Contains("HasSecret = True", diagnostic, StringComparison.Ordinal);
+        Assert.Contains("HasSecretReference = True", diagnostic, StringComparison.Ordinal);
+        Assert.DoesNotContain("ApiKey", json, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("openai", null)]
+    [InlineData("openai", "plain-text-secret")]
+    [InlineData("openai", "env:DEEPSEEK_API_KEY")]
+    [InlineData("deepseek", null)]
+    [InlineData("deepseek", "plain-text-secret")]
+    [InlineData("deepseek", "env:OPENAI_API_KEY")]
+    public void Config_RequiresProviderSpecificEnvironmentReference(string provider, string? secret)
+    {
+        Assert.Throws<ArgumentException>(() =>
+            ModelProviderConfig.Create(provider, secret, "https://api.example.test", "model"));
+    }
+
+    [Fact]
+    public void Config_DoesNotExposeOrStoreResolvedApiKey()
+    {
+        var config = ModelProviderConfig.Create(
+            "openai", "env:OPENAI_API_KEY", "https://api.example.test", "model");
+        var members = typeof(ModelProviderConfig)
+            .GetMembers(System.Reflection.BindingFlags.Instance |
+                        System.Reflection.BindingFlags.Public |
+                        System.Reflection.BindingFlags.NonPublic)
+            .Select(static member => member.Name);
+
+        Assert.DoesNotContain("ApiKey", members);
+        Assert.Equal("OPENAI_API_KEY", config.SecretReference!.EnvironmentVariableName);
+    }
+
+    [Fact]
+    public async Task OpenAiProvider_ResolvesSecretForEachRequestWithoutCaching()
+    {
+        var authorizations = new List<string?>();
+        var handler = new CapturingHandler((request, _) =>
+        {
+            authorizations.Add(request.Headers.Authorization?.Parameter);
+            return Task.FromResult(SuccessfulResponse());
+        });
+        var resolver = new SequenceSecretResolver("first-secret", "second-secret");
+        var config = ModelProviderConfig.Create(
+            "openai", "env:OPENAI_API_KEY", "https://api.example.test", "model");
+        var provider = new OpenAIProvider(Factory(handler), config, resolver);
+
+        Assert.True((await provider.CompleteAsync(Request())).Success);
+        Assert.True((await provider.CompleteAsync(Request())).Success);
+
+        Assert.Equal(new[] { "first-secret", "second-secret" }, authorizations);
+        Assert.Equal(2, resolver.CallCount);
+    }
+
+    [Fact]
+    public async Task OpenAiProvider_MissingSecretFailsBeforeNetworkWithoutLeak()
+    {
+        const string secretName = "OPENAI_API_KEY";
+        var handler = new CapturingHandler((_, _) => Task.FromResult(SuccessfulResponse()));
+        var config = ModelProviderConfig.Create(
+            "openai", $"env:{secretName}", "https://api.example.test", "model");
+        var provider = new OpenAIProvider(Factory(handler), config, new NullSecretResolver());
+
+        var response = await provider.CompleteAsync(Request());
+
+        Assert.False(response.Success);
+        Assert.Equal(KejiProviderErrorCode.ProviderError, response.ErrorCode);
+        Assert.DoesNotContain(secretName, response.ErrorMessage, StringComparison.Ordinal);
+        Assert.Equal(0, handler.CallCount);
     }
 
     [Theory]
@@ -56,7 +127,7 @@ public sealed class ProviderHardeningTests
     public void Config_UntrustedEndpointFormsAreRejected(string endpoint)
     {
         Assert.Throws<ArgumentException>(() =>
-            ModelProviderConfig.Create("openai", "key", endpoint, "model"));
+            ModelProviderConfig.Create("openai", "env:OPENAI_API_KEY", endpoint, "model"));
     }
 
     [Fact]
@@ -84,9 +155,9 @@ public sealed class ProviderHardeningTests
             return SuccessfulResponse();
         });
         var config = ModelProviderConfig.Create(
-                "openai", "provider-key", "https://gateway.example.test/custom/v1", "configured-model")
+                "openai", "env:OPENAI_API_KEY", "https://gateway.example.test/custom/v1", "configured-model")
             .WithMaxTokens(3210);
-        var provider = new OpenAIProvider(Factory(handler), config);
+        var provider = new OpenAIProvider(Factory(handler), config, SecretResolver);
 
         var result = await provider.CompleteAsync(Request(model: string.Empty));
 
@@ -126,7 +197,7 @@ public sealed class ProviderHardeningTests
     public void ProviderConstructorsRejectMismatchedConfigurationTypes()
     {
         var factory = Factory(new CapturingHandler((_, _) => Task.FromResult(SuccessfulResponse())));
-        var openAi = ModelProviderConfig.Create("openai", "key", "https://api.example.test", "model");
+        var openAi = ModelProviderConfig.Create("openai", "env:OPENAI_API_KEY", "https://api.example.test", "model");
         var ollama = ModelProviderConfig.Create("ollama", null, "http://localhost:11434", "model");
 
         Assert.Throws<ArgumentException>(() => new DeepSeekProvider(factory, openAi));
@@ -140,7 +211,7 @@ public sealed class ProviderHardeningTests
         var handler = new CapturingHandler((_, _) => Task.FromResult(SuccessfulResponse()));
         var provider = new OpenAIProvider(
             Factory(handler),
-            ModelProviderConfig.Create("openai", "key", "https://api.example.test", "model"));
+            ModelProviderConfig.Create("openai", "env:OPENAI_API_KEY", "https://api.example.test", "model"));
         var request = new ChatCompletionRequest
         {
             Model = "model\r\nInjected",
@@ -198,8 +269,8 @@ public sealed class ProviderHardeningTests
     [Fact]
     public void DependencyInjectionBuilderFreezesAfterConfigurationAndRejectsDuplicates()
     {
-        var openAi = ModelProviderConfig.Create("openai", "key", "https://api.example.test", "model");
-        var deepSeek = ModelProviderConfig.Create("deepseek", "key", "https://api.example.test", "model");
+        var openAi = ModelProviderConfig.Create("openai", "env:OPENAI_API_KEY", "https://api.example.test", "model");
+        var deepSeek = ModelProviderConfig.Create("deepseek", "env:DEEPSEEK_API_KEY", "https://api.example.test", "model");
         IModelProviderRegistryBuilder? captured = null;
         var services = new ServiceCollection();
 
@@ -258,7 +329,8 @@ public sealed class ProviderHardeningTests
         });
         var provider = new OpenAIProvider(
             Factory(new CapturingHandler((_, _) => Task.FromResult(JsonResponse(json)))),
-            ModelProviderConfig.Create("openai", "key", "https://api.example.test", "model"));
+            ModelProviderConfig.Create("openai", "env:OPENAI_API_KEY", "https://api.example.test", "model"),
+            SecretResolver);
 
         var response = await provider.CompleteAsync(Request());
 
@@ -290,7 +362,8 @@ public sealed class ProviderHardeningTests
         });
         var provider = new OpenAIProvider(
             Factory(handler),
-            ModelProviderConfig.Create("openai", "key", "https://api.example.test", "model"));
+            ModelProviderConfig.Create("openai", "env:OPENAI_API_KEY", "https://api.example.test", "model"),
+            SecretResolver);
         var request = new ChatCompletionRequest
         {
             Model = "model",
@@ -346,14 +419,16 @@ public sealed class ProviderHardeningTests
                 openAiBody = await request.Content!.ReadAsStringAsync();
                 return SuccessfulResponse();
             })),
-            ModelProviderConfig.Create("openai", "key", "https://api.example.test", "model"));
+            ModelProviderConfig.Create("openai", "env:OPENAI_API_KEY", "https://api.example.test", "model"),
+            SecretResolver);
         var deepSeek = new DeepSeekProvider(
             Factory(new CapturingHandler(async (request, _) =>
             {
                 deepSeekBody = await request.Content!.ReadAsStringAsync();
                 return SuccessfulResponse();
             })),
-            ModelProviderConfig.Create("deepseek", "key", "https://api.example.test", "model"));
+            ModelProviderConfig.Create("deepseek", "env:DEEPSEEK_API_KEY", "https://api.example.test", "model"),
+            SecretResolver);
         var request = new ChatCompletionRequest
         {
             Model = "model",
@@ -376,7 +451,8 @@ public sealed class ProviderHardeningTests
         var handler = new CapturingHandler((_, _) => Task.FromResult(SuccessfulResponse()));
         var provider = new OpenAIProvider(
             Factory(handler),
-            ModelProviderConfig.Create("openai", "key", "https://api.example.test", "model"));
+            ModelProviderConfig.Create("openai", "env:OPENAI_API_KEY", "https://api.example.test", "model"),
+            SecretResolver);
         var toolCall = new ChatToolCall
         {
             Id = "call_1",
@@ -415,7 +491,8 @@ public sealed class ProviderHardeningTests
     {
         var provider = new OpenAIProvider(
             Factory(new CapturingHandler((_, _) => Task.FromResult(JsonResponse(json)))),
-            ModelProviderConfig.Create("openai", "key", "https://api.example.test", "model"));
+            ModelProviderConfig.Create("openai", "env:OPENAI_API_KEY", "https://api.example.test", "model"),
+            SecretResolver);
 
         var response = await provider.CompleteAsync(Request());
 
@@ -435,10 +512,10 @@ public sealed class ProviderHardeningTests
             return Task.FromResult(StreamJsonResponse(s));
         });
         var config = ModelProviderConfig.Create(
-                "openai", "key", "https://api.example.test", "model")
+                "openai", "env:OPENAI_API_KEY", "https://api.example.test", "model")
             .WithTimeout(TimeSpan.FromMilliseconds(50))
             .WithMaxRetries(0);
-        var provider = new OpenAIProvider(Factory(handler), config);
+        var provider = new OpenAIProvider(Factory(handler), config, SecretResolver);
         var completionTask = provider.CompleteAsync(Request());
 
         try
@@ -470,10 +547,10 @@ public sealed class ProviderHardeningTests
         var handler = new CapturingHandler((_, _) =>
             Task.FromResult(StreamJsonResponse(stream)));
         var config = ModelProviderConfig.Create(
-                "openai", "key", "https://api.example.test", "model")
+                "openai", "env:OPENAI_API_KEY", "https://api.example.test", "model")
             .WithTimeout(TimeSpan.FromSeconds(5))
             .WithMaxRetries(0);
-        var provider = new OpenAIProvider(Factory(handler), config);
+        var provider = new OpenAIProvider(Factory(handler), config, SecretResolver);
         using var cts = new CancellationTokenSource();
         var completionTask = provider.CompleteAsync(Request(), cts.Token);
 
@@ -561,6 +638,23 @@ public sealed class ProviderHardeningTests
         await foreach (var item in source)
             result.Add(item);
         return result;
+    }
+
+    private sealed class FixedSecretResolver(string secret) : IKejiProviderSecretResolver
+    {
+        public string? Resolve(KejiProviderSecretReference secretReference) => secret;
+    }
+
+    private sealed class NullSecretResolver : IKejiProviderSecretResolver
+    {
+        public string? Resolve(KejiProviderSecretReference secretReference) => null;
+    }
+
+    private sealed class SequenceSecretResolver(params string[] secrets) : IKejiProviderSecretResolver
+    {
+        public int CallCount { get; private set; }
+
+        public string? Resolve(KejiProviderSecretReference secretReference) => secrets[CallCount++];
     }
 
     private sealed class CapturingHandler : HttpMessageHandler
@@ -741,7 +835,7 @@ public sealed class ProviderHardeningTests
     }
 
     [Fact]
-    public void EnvironmentSecretResolver_TabCharacter_IsAllowed()
+    public void EnvironmentSecretResolver_TabCharacter_IsRejected()
     {
         const string envVar = "TEMP_SECRET_RESOLVER_TAB_TEST";
         try
@@ -750,7 +844,7 @@ public sealed class ProviderHardeningTests
             Environment.SetEnvironmentVariable(envVar, withTab);
             var resolver = new EnvironmentKejiProviderSecretResolver();
             var reference = new KejiProviderSecretReference(envVar);
-            Assert.Equal(withTab, resolver.Resolve(reference));
+            Assert.Throws<InvalidOperationException>(() => resolver.Resolve(reference));
         }
         finally
         {

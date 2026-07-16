@@ -5,6 +5,11 @@ public interface IKejiProviderSecretResolver
     string? Resolve(KejiProviderSecretReference secretReference);
 }
 
+internal sealed class KejiProviderSecretResolutionException : Exception
+{
+    public KejiProviderSecretResolutionException() : base("Provider secret is unavailable") { }
+}
+
 public sealed class KejiProviderSecretReference
 {
     private const int MaxEnvironmentVariableNameLength = 128;
@@ -44,7 +49,7 @@ public sealed class EnvironmentKejiProviderSecretResolver : IKejiProviderSecretR
         if (value.Length > MaxSecretValueLength)
             throw new InvalidOperationException("Resolved secret exceeds the maximum length");
 
-        if (value.Any(c => char.IsControl(c) && c != '\t'))
+        if (value.Any(char.IsControl))
             throw new InvalidOperationException("Resolved secret contains control characters");
 
         return value;

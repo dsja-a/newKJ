@@ -76,10 +76,10 @@ public class ProviderSecurityTests
     [Fact]
     public void ProviderConfig_DoesNotExposeApiKeyInToString()
     {
-        var cfg = ModelProviderConfig.Create("openai", "sk-secret-key-12345", "https://api.openai.com", "gpt-4o");
+        var cfg = ModelProviderConfig.Create("openai", "env:OPENAI_API_KEY", "https://api.openai.com", "gpt-4o");
         var str = cfg.ToString();
 
-        Assert.DoesNotContain("sk-secret-key-12345", str);
+        Assert.DoesNotContain("ApiKey", str, StringComparison.Ordinal);
     }
 
     [Fact]

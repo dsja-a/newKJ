@@ -4,12 +4,16 @@ namespace Keji.Providers;
 
 public sealed class DeepSeekProvider : ProviderBase
 {
-    private readonly string _apiKey;
+    private readonly IKejiProviderSecretResolver _secretResolver;
+    private readonly KejiProviderSecretReference _secretReference;
     private readonly Uri _endpointUri;
     private readonly string _defaultModel;
     private readonly int _maxTokens;
 
-    public DeepSeekProvider(IHttpClientFactory httpClientFactory, ModelProviderConfig config)
+    public DeepSeekProvider(
+        IHttpClientFactory httpClientFactory,
+        ModelProviderConfig config,
+        IKejiProviderSecretResolver? secretResolver = null)
         : base(
             httpClientFactory,
             (config ?? throw new ArgumentNullException(nameof(config))).Timeout,
@@ -17,7 +21,9 @@ public sealed class DeepSeekProvider : ProviderBase
     {
         if (!string.Equals(config.ProviderType, "deepseek", StringComparison.Ordinal))
             throw new ArgumentException("DeepSeekProvider requires a deepseek configuration", nameof(config));
-        _apiKey = config.ApiKey;
+        _secretReference = config.SecretReference
+            ?? throw new ArgumentException("DeepSeekProvider requires a secret reference", nameof(config));
+        _secretResolver = secretResolver ?? new EnvironmentKejiProviderSecretResolver();
         _endpointUri = config.EndpointUri;
         _defaultModel = config.DefaultModel;
         _maxTokens = config.MaxTokens;
@@ -29,5 +35,21 @@ public sealed class DeepSeekProvider : ProviderBase
     protected override int DefaultMaxTokens => _maxTokens;
     protected override bool BackfillAssistantReasoningContent => true;
     protected override AuthenticationHeaderValue? AuthHeader =>
-        string.IsNullOrEmpty(_apiKey) ? null : new("Bearer", _apiKey);
+        new("Bearer", ResolveSecret());
+
+    private string ResolveSecret()
+    {
+        string? secret;
+        try
+        {
+            secret = _secretResolver.Resolve(_secretReference);
+        }
+        catch (InvalidOperationException)
+        {
+            throw new KejiProviderSecretResolutionException();
+        }
+        if (string.IsNullOrWhiteSpace(secret))
+            throw new KejiProviderSecretResolutionException();
+        return secret;
+    }
 }

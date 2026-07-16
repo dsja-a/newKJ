@@ -175,6 +175,10 @@ public abstract partial class ProviderBase : IModelProvider
             {
                 return ChatCompletionResponse.Failed(KejiProviderErrorCode.InvalidResponse, "Provider returned an invalid response");
             }
+            catch (KejiProviderSecretResolutionException)
+            {
+                return ChatCompletionResponse.Failed(KejiProviderErrorCode.ProviderError, "Provider secret is unavailable");
+            }
             catch (HttpRequestException exception)
             {
                 if (attempt < MaxAttempts && IsRetryableException(exception))
@@ -447,6 +451,12 @@ public abstract partial class ProviderBase : IModelProvider
                     await output.WriteAsync(ChatCompletionStreamEvent.Error(
                         KejiProviderErrorCode.StreamProtocolError,
                         "Provider stream violated the protocol")).ConfigureAwait(false);
+                }
+                catch (KejiProviderSecretResolutionException)
+                {
+                    await output.WriteAsync(ChatCompletionStreamEvent.Error(
+                        KejiProviderErrorCode.ProviderError,
+                        "Provider secret is unavailable")).ConfigureAwait(false);
                 }
                 finally
                 {
@@ -743,8 +753,9 @@ public abstract partial class ProviderBase : IModelProvider
         httpRequest.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue(
             stream ? "text/event-stream" : "application/json"));
 
-        if (AuthHeader is not null)
-            httpRequest.Headers.Authorization = AuthHeader;
+        var authHeader = AuthHeader;
+        if (authHeader is not null)
+            httpRequest.Headers.Authorization = authHeader;
 
         return httpRequest;
     }
