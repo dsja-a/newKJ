@@ -5,8 +5,8 @@
 - Repository: `dsja-a/newKJ`
 - Branch: `rewrite/csharp-core`
 - Python reference: `main` at `aad0afab7181e529a53691a4f2801f295025a2c7`
-- Last accepted C# baseline: `7e2c4d31243f292b8d4ce0ab6abcf6ffbf57e1d5`
-- Accepted solution test baseline: 1983
+- Last accepted C# baseline: `a048c1df11e9c12caa085f92bc860ab6d0386c7b`
+- Accepted solution test baseline: 2110
 - Target: .NET 10 / `net10.0`, ASP.NET Core as the only public API, Python as a controlled internal worker
 
 ## Remaining quality gates
@@ -34,4 +34,4 @@ Python and the web frontend remain unchanged until their explicitly assigned tas
 
 ## Current gate
 
-TASK-013 is accepted at `7e2c4d31243f292b8d4ce0ab6abcf6ffbf57e1d5`. The C# Agent Loop is bounded, validates model and tool-call output, rechecks conversation ownership before side effects, and executes eligible tools sequentially only through `IToolExecutionPipeline`. Agent tests pass 26/26, Providers tests pass 202/202, Streaming tests pass 156/156, and the full solution passes 1983/1983 with zero failures, skips, build warnings, build errors, or known NuGet vulnerabilities across 27 projects. Formal C# completion is 60%. The next gate is TASK-014, which is `not_started`.
+TASK-013 R1 is accepted at `a048c1df11e9c12caa085f92bc860ab6d0386c7b`. The production Agent Loop is StreamAsync-only and exposes a strongly typed bounded event stream plus Agent SSE adapter. It enforces a per-user/conversation concurrency gate, run timeout, cumulative usage, run transcript and UTC timing, bounded empty/Length recovery, explicit context-limit failures, safe Agent auditing, source-specific error mapping, repeated ownership checks, and sequential tool execution only through `IToolExecutionPipeline`. Agent tests pass 141/141, Integration tests pass 160/160, Providers tests pass 202/202, Streaming tests pass 156/156, and the full solution passes 2110/2110 with zero failures, skips, build warnings, build errors, or known NuGet vulnerabilities across 27 projects. Formal C# completion remains 60%. The next gate is TASK-014, which is `not_started`.

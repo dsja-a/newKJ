@@ -4,7 +4,7 @@
 
 - Repository: `dsja-a/newKJ`
 - Branch: `rewrite/csharp-core`
-- Last accepted baseline: `7e2c4d31243f292b8d4ce0ab6abcf6ffbf57e1d5`
+- Last accepted baseline: `a048c1df11e9c12caa085f92bc860ab6d0386c7b`
 - Current task: TASK-013
 - Current status: accepted (final)
 - Formal C# completion: 60%
@@ -203,17 +203,21 @@ Host process                          ToolWorker.Client            ToolWorker pr
 
 ## TASK-013 (Accepted): C# Agent Loop
 
-TASK-013 is accepted (final) at `7e2c4d31243f292b8d4ce0ab6abcf6ffbf57e1d5`.
+TASK-013 R1 is accepted (final) at `a048c1df11e9c12caa085f92bc860ab6d0386c7b`.
 
 ### TASK-013 acceptance summary
 
-- Added a scoped, strongly typed C# Agent Loop with hard limits on iterations, context size, tool-call count, individual tool results, and aggregate tool results.
+- Production execution uses Provider `StreamAsync` only and exposes `IKejiAgentLoop.RunStreamAsync` with strongly typed, ordered Agent events and a bounded Agent SSE adapter.
+- Added a per-user/conversation concurrency Gate, bounded event Channel, RunTimeout, cumulative Usage, RunId, transcript, and UTC start/completion timestamps.
+- Added bounded empty-answer and `Length` recovery. Context that cannot be represented in full now fails explicitly instead of silently dropping history.
+- Added safe Agent audit events containing only run ID and result code; exception and Provider error text is never forwarded.
+- Retained hard limits on iterations, context size, tool-call count, individual tool results, and aggregate tool results.
 - Treats provider output as untrusted: validates assistant content, tool names, IDs, JSON shape, argument types, duplicate calls, and all configured limits.
 - Advertises only `Executable` tools and executes them serially only through `IToolExecutionPipeline`; no direct executor, shell, web, Host tool, MCP, Python worker, or command path was added.
 - Requires an authenticated user and owned conversation, and rechecks both before provider calls, tool execution, and message persistence.
 - Persists user and final assistant messages only. Tool arguments/results remain bounded in-memory context and are not logged or persisted.
 - Cancellation remains distinct; operational failures expose only bounded status/error codes without raw exception messages or stacks.
-- Verification: Agent 26/26, Providers 202/202, Streaming 156/156, full solution 1983/1983; 0 failed, 0 skipped, 0 build warnings, 0 build errors, 0 known NuGet vulnerabilities.
+- Verification: Agent 141/141, Integration 160/160, Providers 202/202, Streaming 156/156, full solution 2110/2110; 0 failed, 0 skipped, 0 build warnings, 0 build errors, 0 known NuGet vulnerabilities.
 - Python and Web are unchanged. TASK-014 is `not_started`.
 
 ## Next action
