@@ -1,5 +1,7 @@
 using System.Collections.Immutable;
 using System.Text.Json;
+using Keji.Auditing.Abstractions;
+using Keji.Auditing.Models;
 using Keji.Persistence.Models;
 using Keji.Persistence.Repositories;
 using Keji.Providers;
@@ -23,7 +25,7 @@ public sealed class AgentLoopTests
 
         var result = await fixture.Loop.RunAsync(Request());
 
-        Assert.True(result.Success);
+        Assert.True(result.Success, result.Status.ToString());
         Assert.Equal("final answer", result.Content);
         Assert.Equal(1, result.Iterations);
         Assert.Equal(new[] { "user", "assistant" }, fixture.Messages.Writes.Select(static item => item.Role));
@@ -31,18 +33,17 @@ public sealed class AgentLoopTests
     }
 
     [Fact]
-    public async Task RunAsync_IncludesBoundedOwnedHistoryAndCurrentMessage()
+    public async Task RunAsync_RejectsUnsupportedHistoryWithoutSilentlyDroppingIt()
     {
         var fixture = Fixture(ChatCompletionResponse.Succeeded("ok"));
         fixture.Messages.History.Add(new MessageRecord { Role = "user", Content = "old user" });
         fixture.Messages.History.Add(new MessageRecord { Role = "tool", Content = "must not replay" });
         fixture.Messages.History.Add(new MessageRecord { Role = "assistant", Content = "old assistant" });
 
-        await fixture.Loop.RunAsync(Request());
+        var result = await fixture.Loop.RunAsync(Request());
 
-        var sent = Assert.Single(fixture.Provider.Requests).Messages;
-        Assert.Equal(3, sent.Length);
-        Assert.Equal(new[] { "old user", "old assistant", "hello" }, sent.Select(static message => message.Content));
+        Assert.Equal(AgentRunStatus.LimitExceeded, result.Status);
+        Assert.Empty(fixture.Provider.Requests);
     }
 
     [Fact]
@@ -293,7 +294,7 @@ public sealed class AgentLoopTests
 
         var result = await fixture.Loop.RunAsync(Request());
 
-        Assert.Equal(AgentRunStatus.ProviderFailed, result.Status);
+        Assert.Equal(AgentRunStatus.ToolFailed, result.Status);
         Assert.DoesNotContain(secret, result.Content, StringComparison.Ordinal);
     }
 
@@ -333,10 +334,152 @@ public sealed class AgentLoopTests
         Assert.Equal(ServiceLifetime.Singleton, options.Lifetime);
     }
 
+    [Fact]
+    public async Task RunStreamAsync_EmitsOrderedRunTranscriptAndUtcTimes()
+    {
+        var fixture = Fixture(ChatCompletionResponse.Succeeded("hello stream", new TokenUsage { PromptTokens = 3, CompletionTokens = 2 }));
+
+        var events = await CollectAsync(fixture.Loop.RunStreamAsync(StreamRequest()));
+
+        Assert.Equal(Enumerable.Range(1, events.Count).Select(static value => (long)value), events.Select(static item => item.Sequence));
+        Assert.Single(events.Select(static item => item.RunId).Distinct());
+        Assert.All(events, static item => Assert.Equal(TimeSpan.Zero, item.TimestampUtc.Offset));
+        Assert.Contains(events, static item => item.Type == KejiAgentEventType.AssistantDelta && item.ContentDelta == "hello stream");
+        var done = Assert.Single(events, static item => item.Type == KejiAgentEventType.RunCompleted);
+        Assert.Equal("hello stream", done.Transcript!.AssistantContent);
+        Assert.True(done.Transcript.CompletedAtUtc >= done.Transcript.StartedAtUtc);
+    }
+
+    [Fact]
+    public async Task RunStreamAsync_AccumulatesUsageAcrossLengthRecovery()
+    {
+        var fixture = Fixture(
+            ChatCompletionResponse.Succeeded("part ", new TokenUsage { PromptTokens = 5, CompletionTokens = 2, CachedTokens = 1 }, finishReason: KejiFinishReason.Length),
+            ChatCompletionResponse.Succeeded("two", new TokenUsage { PromptTokens = 7, CompletionTokens = 3, CachedTokens = 2 }, finishReason: KejiFinishReason.Stop));
+
+        var done = Assert.Single(await CollectAsync(fixture.Loop.RunStreamAsync(StreamRequest())), static item => item.Type == KejiAgentEventType.RunCompleted);
+
+        Assert.Equal("part two", done.Transcript!.AssistantContent);
+        Assert.Equal(new KejiAgentUsage(12, 5, 3), done.Transcript.Usage);
+        Assert.Equal(2, done.Transcript.Iterations);
+    }
+
+    [Fact]
+    public async Task RunStreamAsync_RecoversFromEmptyAnswerOnce()
+    {
+        var fixture = Fixture(
+            ChatCompletionResponse.Succeeded("", finishReason: KejiFinishReason.Stop),
+            ChatCompletionResponse.Succeeded("recovered", finishReason: KejiFinishReason.Stop));
+
+        var done = Assert.Single(await CollectAsync(fixture.Loop.RunStreamAsync(StreamRequest())), static item => item.Type == KejiAgentEventType.RunCompleted);
+
+        Assert.Equal("recovered", done.Transcript!.AssistantContent);
+        Assert.Equal(2, fixture.Provider.Requests.Count);
+    }
+
+    [Fact]
+    public async Task RunStreamAsync_ReportsLengthWhenRecoveryIsExhausted()
+    {
+        var fixture = Fixture(new AgentLoopOptions(maxRecoveryAttempts: 0),
+            ChatCompletionResponse.Succeeded("partial", finishReason: KejiFinishReason.Length));
+
+        var error = Assert.Single(await CollectAsync(fixture.Loop.RunStreamAsync(StreamRequest())), static item => item.Type == KejiAgentEventType.Error);
+
+        Assert.Equal(KejiAgentErrorCode.LimitExceeded, error.ErrorCode);
+        Assert.DoesNotContain(fixture.Messages.Writes, static item => item.Role == "assistant");
+    }
+
+    [Theory]
+    [InlineData(KejiProviderErrorCode.Timeout, KejiAgentErrorCode.ProviderTimeout)]
+    [InlineData(KejiProviderErrorCode.AuthFailed, KejiAgentErrorCode.ProviderRejected)]
+    [InlineData(KejiProviderErrorCode.QuotaExceeded, KejiAgentErrorCode.ProviderRejected)]
+    [InlineData(KejiProviderErrorCode.ServiceUnavailable, KejiAgentErrorCode.ProviderUnavailable)]
+    [InlineData(KejiProviderErrorCode.StreamProtocolError, KejiAgentErrorCode.ProviderProtocolError)]
+    public async Task RunStreamAsync_MapsProviderErrorsWithoutRawMessage(KejiProviderErrorCode providerCode, KejiAgentErrorCode expected)
+    {
+        const string secret = "provider raw secret";
+        var fixture = Fixture(ChatCompletionResponse.Failed(providerCode, secret));
+
+        var events = await CollectAsync(fixture.Loop.RunStreamAsync(StreamRequest()));
+        var error = Assert.Single(events, static item => item.Type == KejiAgentEventType.Error);
+
+        Assert.Equal(expected, error.ErrorCode);
+        Assert.DoesNotContain(secret, JsonSerializer.Serialize(events), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task RunStreamAsync_UsesStreamProviderWithoutCompleteAsync()
+    {
+        var fixture = Fixture(ChatCompletionResponse.Succeeded("unused"));
+        fixture.Provider.Handler = (_, _) => throw new InvalidOperationException("CompleteAsync must not run");
+        fixture.Provider.StreamHandler = (_, ct) => ProviderEvents(ct,
+            ChatCompletionStreamEvent.Token("stream only"),
+            ChatCompletionStreamEvent.ChoiceFinished(KejiFinishReason.Stop, false),
+            ChatCompletionStreamEvent.Done());
+
+        var done = Assert.Single(await CollectAsync(fixture.Loop.RunStreamAsync(StreamRequest())), static item => item.Type == KejiAgentEventType.RunCompleted);
+
+        Assert.Equal("stream only", done.Transcript!.AssistantContent);
+    }
+
+    [Fact]
+    public async Task RunStreamAsync_RejectsConcurrentSameSessionAndReleasesGate()
+    {
+        var gate = new KejiAgentSessionGate();
+        var first = Fixture(new AgentLoopOptions(), gate, ChatCompletionResponse.Succeeded("unused"));
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        first.Provider.StreamHandler = (_, ct) => DelayedProviderEvents(release.Task, ct);
+        await using var enumerator = first.Loop.RunStreamAsync(StreamRequest()).GetAsyncEnumerator();
+        Assert.True(await enumerator.MoveNextAsync());
+        var second = Fixture(new AgentLoopOptions(), gate, ChatCompletionResponse.Succeeded("second"));
+
+        var busy = Assert.Single(await CollectAsync(second.Loop.RunStreamAsync(StreamRequest())), static item => item.Type == KejiAgentEventType.Error);
+        Assert.Equal(KejiAgentErrorCode.SessionBusy, busy.ErrorCode);
+
+        release.SetResult();
+        while (await enumerator.MoveNextAsync()) { }
+        var third = Fixture(new AgentLoopOptions(), gate, ChatCompletionResponse.Succeeded("third"));
+        Assert.Contains(await CollectAsync(third.Loop.RunStreamAsync(StreamRequest())), static item => item.Type == KejiAgentEventType.RunCompleted);
+    }
+
+    [Fact]
+    public async Task RunStreamAsync_RunTimeoutProducesTypedTimeout()
+    {
+        var fixture = Fixture(new AgentLoopOptions(runTimeout: TimeSpan.FromSeconds(1)), ChatCompletionResponse.Succeeded("unused"));
+        fixture.Provider.StreamHandler = (_, ct) => NeverCompletingProvider(ct);
+
+        var error = Assert.Single(await CollectAsync(fixture.Loop.RunStreamAsync(StreamRequest())), static item => item.Type == KejiAgentEventType.Error);
+
+        Assert.Equal(KejiAgentErrorCode.RunTimedOut, error.ErrorCode);
+        Assert.Equal(KejiAgentStopReason.TimedOut, error.StopReason);
+    }
+
+    [Fact]
+    public async Task RunStreamAsync_WritesSafeAgentAudit()
+    {
+        var fixture = Fixture(ChatCompletionResponse.Succeeded("audited"));
+
+        await CollectAsync(fixture.Loop.RunStreamAsync(StreamRequest()));
+
+        var audit = Assert.Single(fixture.Audit.Calls);
+        Assert.Equal("agent_run", audit.Action);
+        Assert.Equal(KejiAuditOutcome.Success, audit.Outcome);
+        Assert.Equal("completed", audit.Metadata["result_code"]);
+        Assert.DoesNotContain("audited", JsonSerializer.Serialize(audit), StringComparison.Ordinal);
+    }
+
     private static AgentRunRequest Request(string provider = "openai") => new()
     {
         ConversationId = "conv_1",
         ProviderName = provider,
+        Model = "model",
+        UserMessage = "hello",
+    };
+
+    private static KejiAgentRunRequest StreamRequest() => new()
+    {
+        ConversationId = "conv_1",
+        ProviderName = "openai",
         Model = "model",
         UserMessage = "hello",
     };
@@ -361,7 +504,10 @@ public sealed class AgentLoopTests
     private static TestFixture Fixture(params ChatCompletionResponse[] responses) =>
         Fixture(new AgentLoopOptions(), responses);
 
-    private static TestFixture Fixture(AgentLoopOptions options, params ChatCompletionResponse[] responses)
+    private static TestFixture Fixture(AgentLoopOptions options, params ChatCompletionResponse[] responses) =>
+        Fixture(options, new KejiAgentSessionGate(), responses);
+
+    private static TestFixture Fixture(AgentLoopOptions options, IKejiAgentSessionGate gate, params ChatCompletionResponse[] responses)
     {
         var user = new MutableUserAccessor
         {
@@ -376,8 +522,9 @@ public sealed class AgentLoopTests
         });
         var tools = ToolRegistry();
         var pipeline = new FakeToolPipeline();
-        var loop = new AgentLoop(user, conversations, messages, registry, tools, pipeline, options);
-        return new TestFixture(loop, user, conversations, messages, provider, pipeline);
+        var audit = new FakeAuditService();
+        var loop = new AgentLoop(user, conversations, messages, registry, tools, pipeline, options, audit, gate);
+        return new TestFixture(loop, user, conversations, messages, provider, pipeline, audit);
     }
 
     private static IKejiToolRegistry ToolRegistry()
@@ -409,7 +556,8 @@ public sealed class AgentLoopTests
         FakeConversationRepository Conversations,
         FakeMessageRepository Messages,
         ScriptedProvider Provider,
-        FakeToolPipeline Pipeline);
+        FakeToolPipeline Pipeline,
+        FakeAuditService Audit);
 
     private sealed class MutableUserAccessor : ICurrentUserAccessor
     {
@@ -465,6 +613,7 @@ public sealed class AgentLoopTests
         public string ProviderName => "openai";
         public List<ChatCompletionRequest> Requests { get; } = new();
         public Func<ChatCompletionRequest, CancellationToken, Task<ChatCompletionResponse>>? Handler { get; set; }
+        public Func<ChatCompletionRequest, CancellationToken, IAsyncEnumerable<ChatCompletionStreamEvent>>? StreamHandler { get; set; }
 
         public ScriptedProvider(IEnumerable<ChatCompletionResponse> responses) =>
             _responses = new Queue<ChatCompletionResponse>(responses);
@@ -480,9 +629,87 @@ public sealed class AgentLoopTests
 
         public async IAsyncEnumerable<ChatCompletionStreamEvent> StreamAsync(ChatCompletionRequest request, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
         {
-            await Task.CompletedTask;
-            yield break;
+            if (StreamHandler is not null)
+            {
+                Requests.Add(request);
+                await foreach (var item in StreamHandler(request, ct).WithCancellation(ct))
+                    yield return item;
+                yield break;
+            }
+            var response = await CompleteAsync(request, ct);
+            if (!response.Success)
+            {
+                yield return ChatCompletionStreamEvent.Error(response.ErrorCode, response.ErrorMessage ?? "failed");
+                yield return ChatCompletionStreamEvent.Done();
+                yield break;
+            }
+            if (!string.IsNullOrEmpty(response.Content))
+                yield return ChatCompletionStreamEvent.Token(response.Content);
+            for (var index = 0; !response.ToolCalls.IsDefault && index < response.ToolCalls.Length; index++)
+            {
+                var call = response.ToolCalls[index];
+                yield return ChatCompletionStreamEvent.ToolCallBegin(call.Id, call.FunctionName, index);
+                yield return ChatCompletionStreamEvent.ToolCallDelta(call.FunctionArguments.GetRawText(), index, toolCallId: call.Id);
+                yield return ChatCompletionStreamEvent.ToolCallEnd(call.Id, index);
+            }
+            yield return ChatCompletionStreamEvent.ChoiceFinished(
+                response.FinishReason == KejiFinishReason.Invalid ? KejiFinishReason.Stop : response.FinishReason,
+                response.HasToolCalls);
+            if (response.Usage is not null)
+                yield return ChatCompletionStreamEvent.UsageEvent(response.Usage);
+            yield return ChatCompletionStreamEvent.Done();
         }
+    }
+
+    private sealed class FakeAuditService : IKejiAuditService
+    {
+        public List<AuditCall> Calls { get; } = new();
+
+        public Task<KejiAuditResult> WriteAsync(KejiAuditCategory category, string action, KejiAuditOutcome outcome,
+            KejiAuditSeverity severity, string targetType, string? targetId = null,
+            IReadOnlyDictionary<string, string>? metadata = null, CancellationToken cancellationToken = default)
+        {
+            Calls.Add(new AuditCall(action, outcome, metadata ?? new Dictionary<string, string>()));
+            return Task.FromResult(KejiAuditResult.Written);
+        }
+    }
+
+    private sealed record AuditCall(string Action, KejiAuditOutcome Outcome, IReadOnlyDictionary<string, string> Metadata);
+
+    private static async IAsyncEnumerable<ChatCompletionStreamEvent> ProviderEvents(
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken,
+        params ChatCompletionStreamEvent[] events)
+    {
+        foreach (var item in events)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            yield return item;
+        }
+        await Task.CompletedTask;
+    }
+
+    private static async IAsyncEnumerable<ChatCompletionStreamEvent> DelayedProviderEvents(
+        Task release,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        await release.WaitAsync(cancellationToken);
+        yield return ChatCompletionStreamEvent.Token("done");
+        yield return ChatCompletionStreamEvent.ChoiceFinished(KejiFinishReason.Stop, false);
+        yield return ChatCompletionStreamEvent.Done();
+    }
+
+    private static async IAsyncEnumerable<ChatCompletionStreamEvent> NeverCompletingProvider(
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+        yield break;
+    }
+
+    private static async Task<List<T>> CollectAsync<T>(IAsyncEnumerable<T> source)
+    {
+        var result = new List<T>();
+        await foreach (var item in source) result.Add(item);
+        return result;
     }
 
     private sealed class FakeToolPipeline : IToolExecutionPipeline
