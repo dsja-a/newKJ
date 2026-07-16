@@ -107,6 +107,17 @@ public static class KejiSseAdapter
                 errorMessage: "Provider stream violated the protocol");
         }
 
+        KejiSseEvent CreateDoneEvent()
+        {
+            doneEmitted = true;
+            return CreateEvent(KejiSseEventType.Done, KejiSsePhase.Done);
+        }
+
+        KejiSseEvent[] ErrorAndDone(KejiSseEvent errorEvent)
+        {
+            return [errorEvent, CreateDoneEvent()];
+        }
+
         IAsyncEnumerator<ChatCompletionStreamEvent>? enumerator = null;
         Exception? acquisitionException = null;
         try
@@ -124,11 +135,14 @@ public static class KejiSseAdapter
 
         if (acquisitionException is not null || enumerator is null)
         {
-            yield return CreateEvent(
+            foreach (var e in ErrorAndDone(CreateEvent(
                 KejiSseEventType.Error,
                 KejiSsePhase.Error,
                 errorCode: KejiProviderErrorCode.ProviderError,
-                errorMessage: "Model provider request failed");
+                errorMessage: "Model provider request failed")))
+            {
+                yield return e;
+            }
             yield break;
         }
 
@@ -156,11 +170,14 @@ public static class KejiSseAdapter
 
                 if (upstreamException is not null)
                 {
-                    yield return CreateEvent(
+                    foreach (var e in ErrorAndDone(CreateEvent(
                         KejiSseEventType.Error,
                         KejiSsePhase.Error,
                         errorCode: KejiProviderErrorCode.ProviderError,
-                        errorMessage: "Model provider request failed");
+                        errorMessage: "Model provider request failed")))
+                    {
+                        yield return e;
+                    }
                     yield break;
                 }
 
@@ -169,7 +186,7 @@ public static class KejiSseAdapter
 
                 if (doneEmitted)
                 {
-                    yield return CreateProtocolError();
+                    foreach (var e in ErrorAndDone(CreateProtocolError())) yield return e;
                     yield break;
                 }
 
@@ -178,14 +195,14 @@ public static class KejiSseAdapter
                 var providerEvent = enumerator.Current;
                 if (++providerEventCount > MaxProviderEvents || providerEvent is null)
                 {
-                    yield return CreateProtocolError();
+                    foreach (var e in ErrorAndDone(CreateProtocolError())) yield return e;
                     yield break;
                 }
 
                 if (usageSeen && providerEvent.Type is not
                     (KejiProviderStreamEventKind.Done or KejiProviderStreamEventKind.Error))
                 {
-                    yield return CreateProtocolError();
+                    foreach (var e in ErrorAndDone(CreateProtocolError())) yield return e;
                     yield break;
                 }
 
@@ -203,7 +220,7 @@ public static class KejiSseAdapter
                             reasoningState.Phase == KejiSsePhase.Answering &&
                             !reasoningState.MayResumeThinking)
                         {
-                            yield return CreateProtocolError();
+                            foreach (var e in ErrorAndDone(CreateProtocolError())) yield return e;
                             yield break;
                         }
 
@@ -234,7 +251,7 @@ public static class KejiSseAdapter
                                 MaxContentBytesPerChoice,
                                 ref answerState.ContentBytes))
                         {
-                            yield return CreateProtocolError();
+                            foreach (var e in ErrorAndDone(CreateProtocolError())) yield return e;
                             yield break;
                         }
 
@@ -265,7 +282,7 @@ public static class KejiSseAdapter
                             !toolState.ToolCallIds.Add(providerEvent.ToolCallId!) ||
                             !activeToolCalls.TryAdd(toolKey, providerEvent.ToolCallId!))
                         {
-                            yield return CreateProtocolError();
+                            foreach (var e in ErrorAndDone(CreateProtocolError())) yield return e;
                             yield break;
                         }
 
@@ -295,7 +312,7 @@ public static class KejiSseAdapter
                                 toolArgumentState,
                                 deltaState))
                         {
-                            yield return CreateProtocolError();
+                            foreach (var e in ErrorAndDone(CreateProtocolError())) yield return e;
                             yield break;
                         }
 
@@ -313,7 +330,7 @@ public static class KejiSseAdapter
                              !string.Equals(activeEndId, endId, StringComparison.Ordinal)) ||
                             !IsValidToolArguments(endedArguments.Arguments.ToString()))
                         {
-                            yield return CreateProtocolError();
+                            foreach (var e in ErrorAndDone(CreateProtocolError())) yield return e;
                             yield break;
                         }
 
@@ -334,7 +351,7 @@ public static class KejiSseAdapter
                             providerEvent.HasToolCalls != (finishedState.ToolCallCount > 0) ||
                             activeToolCalls.Keys.Any(key => key.ChoiceIndex == providerEvent.ChoiceIndex))
                         {
-                            yield return CreateProtocolError();
+                            foreach (var e in ErrorAndDone(CreateProtocolError())) yield return e;
                             yield break;
                         }
 
@@ -347,7 +364,7 @@ public static class KejiSseAdapter
                             choiceStates.Count == 0 ||
                             choiceStates.Values.Any(static state => !state.Finished))
                         {
-                            yield return CreateProtocolError();
+                            foreach (var e in ErrorAndDone(CreateProtocolError())) yield return e;
                             yield break;
                         }
 
@@ -370,7 +387,7 @@ public static class KejiSseAdapter
                         if (activeToolCalls.Count != 0 || choiceStates.Count == 0 ||
                             choiceStates.Values.Any(static state => !state.Finished))
                         {
-                            yield return CreateProtocolError();
+                            foreach (var e in ErrorAndDone(CreateProtocolError())) yield return e;
                             yield break;
                         }
 
@@ -421,7 +438,7 @@ public static class KejiSseAdapter
                         yield break;
 
                     default:
-                        yield return CreateProtocolError();
+                        foreach (var e in ErrorAndDone(CreateProtocolError())) yield return e;
                         yield break;
                 }
             }

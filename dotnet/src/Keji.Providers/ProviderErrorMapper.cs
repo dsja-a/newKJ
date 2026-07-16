@@ -120,6 +120,13 @@ public static class ProviderErrorMapper
             return value.GetString();
         }
 
+        if (root.ValueKind == JsonValueKind.Object &&
+            root.TryGetProperty(fieldName, out var topValue) &&
+            topValue.ValueKind == JsonValueKind.String)
+        {
+            return topValue.GetString();
+        }
+
         return null;
     }
 }

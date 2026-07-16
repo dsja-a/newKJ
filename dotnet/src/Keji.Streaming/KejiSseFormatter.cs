@@ -130,7 +130,7 @@ public static class KejiSseFormatter
 
     private static void ValidateEnvelope(KejiSseEvent streamEvent)
     {
-        if (streamEvent.Sequence < 0)
+        if (streamEvent.Sequence <= 0)
             throw new ArgumentOutOfRangeException(nameof(streamEvent), "SSE sequence must be non-negative");
         if (string.IsNullOrEmpty(streamEvent.EventId) || streamEvent.EventId.Length != 32 ||
             streamEvent.EventId.Any(c => c is < '0' or > '9' and < 'a' or > 'f'))

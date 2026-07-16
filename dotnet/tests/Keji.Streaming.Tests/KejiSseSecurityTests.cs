@@ -48,13 +48,16 @@ public sealed class KejiSseSecurityTests
     {
         const string secret = "token-value-from-exception";
 
-        var result = Assert.Single(await KejiSseAdapter.ToSseEvents(ThrowWithSecret(secret)).ToListAsync());
+        var results = await KejiSseAdapter.ToSseEvents(ThrowWithSecret(secret)).ToListAsync();
+        var result = results[0];
         var wire = KejiSseFormatter.FormatEvent(result);
 
         Assert.Equal(KejiProviderErrorCode.ProviderError, result.ErrorCode);
         Assert.Equal("Model provider request failed", result.ErrorMessage);
         Assert.DoesNotContain(secret, wire, StringComparison.Ordinal);
         Assert.DoesNotContain("InvalidOperationException", wire, StringComparison.Ordinal);
+        Assert.Equal(2, results.Count);
+        Assert.Equal(KejiSseEventType.Done, results[1].EventType);
     }
 
     [Fact]
@@ -120,7 +123,7 @@ public sealed class KejiSseSecurityTests
         {
             EventType = KejiSseEventType.Done,
             Phase = KejiSsePhase.Done,
-            Sequence = 0,
+            Sequence = 1,
             EventId = eventId,
             TimestampUtc = FixedTimestamp,
         };
@@ -141,7 +144,7 @@ public sealed class KejiSseSecurityTests
             ToolCallId = toolCallId,
             ToolCallIndex = 0,
             ChoiceIndex = 0,
-            Sequence = 0,
+            Sequence = 1,
             EventId = "00000000000000000000000000000000",
             TimestampUtc = FixedTimestamp,
         };

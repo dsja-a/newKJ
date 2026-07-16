@@ -365,6 +365,14 @@ public sealed class KejiSseFormatterTests
     }
 
     [Fact]
+    public void Sequence_Zero_IsRejected()
+    {
+        var streamEvent = CreateValidEvent(KejiSseEventType.Done) with { Sequence = 0 };
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => KejiSseFormatter.FormatEvent(streamEvent));
+    }
+
+    [Fact]
     public void ThinkingPhaseHelper_UsesProvidedClockAndSequence()
     {
         var expectedTime = new DateTimeOffset(2026, 7, 15, 1, 2, 3, TimeSpan.Zero);

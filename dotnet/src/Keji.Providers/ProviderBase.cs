@@ -94,16 +94,15 @@ public abstract partial class ProviderBase : IModelProvider
 
                 if (!response.IsSuccessStatusCode)
                 {
-                    var (retryable, delay) = await ShouldRetryAsync(response, attempt, ct).ConfigureAwait(false);
-                    if (retryable)
+                    var result = await ClassifyErrorAsync(response, attempt, ct).ConfigureAwait(false);
+                    if (result.Retryable)
                     {
                         TryDisposeResponse(response);
+                        await DelayBeforeRetryAsync(result.RetryDelay, ct).ConfigureAwait(false);
                         continue;
                     }
 
-                    var body = await ReadErrorBodyAsync(response.Content, ct).ConfigureAwait(false);
-                    var mapped = ProviderErrorMapper.Map(response.StatusCode, body);
-                    return ChatCompletionResponse.Failed(mapped.Code, mapped.Message);
+                    return ChatCompletionResponse.Failed(result.Code, result.SafeMessage);
                 }
 
                 var json = await DeserializeBoundedAsync<OpenAiChatCompletionResponse>(
@@ -286,16 +285,14 @@ public abstract partial class ProviderBase : IModelProvider
 
                     if (!httpResponse.IsSuccessStatusCode)
                     {
-                        var (retryable, retryDelayForAttempt) = await ShouldRetryAsync(httpResponse, attempt, ct).ConfigureAwait(false);
-                        if (!output.HasEmitted && retryable)
+                        var result = await ClassifyErrorAsync(httpResponse, attempt, ct).ConfigureAwait(false);
+                        if (!output.HasEmitted && result.Retryable)
                         {
-                            retryDelay = retryDelayForAttempt;
+                            retryDelay = result.RetryDelay;
                         }
                         else
                         {
-                            var body = await ReadErrorBodyAsync(httpResponse.Content, ct).ConfigureAwait(false);
-                            var mapped = ProviderErrorMapper.Map(httpResponse.StatusCode, body);
-                            await output.WriteAsync(ChatCompletionStreamEvent.Error(mapped.Code, mapped.Message)).ConfigureAwait(false);
+                            await output.WriteAsync(ChatCompletionStreamEvent.Error(result.Code, result.SafeMessage)).ConfigureAwait(false);
                         }
                     }
                     else if (!HasEventStreamContentType(httpResponse))
@@ -1253,20 +1250,43 @@ public abstract partial class ProviderBase : IModelProvider
 
     private const int MaxErrorBodyBytes = 64 * 1024;
 
-    private static async Task<(bool Retryable, TimeSpan? Delay)> ShouldRetryAsync(
+    internal readonly struct ProviderHttpErrorResult
+    {
+        public KejiProviderErrorCode Code { get; }
+        public string SafeMessage { get; }
+        public bool Retryable { get; }
+        public TimeSpan RetryDelay { get; }
+
+        public ProviderHttpErrorResult(KejiProviderErrorCode code, string safeMessage, bool retryable, TimeSpan retryDelay)
+        {
+            Code = code;
+            SafeMessage = safeMessage;
+            Retryable = retryable;
+            RetryDelay = retryDelay;
+        }
+    }
+
+    private static async Task<ProviderHttpErrorResult> ClassifyErrorAsync(
         HttpResponseMessage response, int attempt, CancellationToken ct)
     {
+        var body = await ReadErrorBodyAsync(response.Content, ct).ConfigureAwait(false);
+        var (code, message) = ProviderErrorMapper.Map(response.StatusCode, body);
+
         if (attempt >= MaxAttempts)
-            return (false, null);
+            return new ProviderHttpErrorResult(code, message, false, TimeSpan.Zero);
 
         var statusCode = (int)response.StatusCode;
+
+        if (statusCode == 429 && code != KejiProviderErrorCode.RateLimited)
+            return new ProviderHttpErrorResult(code, message, false, TimeSpan.Zero);
+
         if (statusCode is 408 or 409 or 429 || statusCode >= 500)
         {
             var delay = GetRetryDelay(response, attempt);
-            return (true, delay);
+            return new ProviderHttpErrorResult(code, message, true, delay);
         }
 
-        return (false, null);
+        return new ProviderHttpErrorResult(code, message, false, TimeSpan.Zero);
     }
 
     private static bool IsValidMessageRole(string? role) =>

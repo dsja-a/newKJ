@@ -364,6 +364,73 @@ public sealed class ProviderBaseNonStreamingTests
     }
 
     [Fact]
+    public async Task CompleteAsync_429RateLimited_RetriesThenFails()
+    {
+        var body = JsonSerializer.Serialize(new { error = new { type = "rate_limit_exceeded" } });
+        var handler = new MockHttpMessageHandler(
+            new HttpResponseMessage(HttpStatusCode.TooManyRequests) { Content = new StringContent(body) },
+            new HttpResponseMessage(HttpStatusCode.TooManyRequests) { Content = new StringContent(body) },
+            new HttpResponseMessage(HttpStatusCode.TooManyRequests) { Content = new StringContent(body) });
+        var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) };
+        var factory = new MockHttpClientFactory(client);
+        var provider = new MockProvider(factory, TimeSpan.FromSeconds(10), maxRetries: 2);
+
+        var result = await provider.CompleteAsync(MakeRequest());
+
+        Assert.False(result.Success);
+        Assert.Equal(KejiProviderErrorCode.RateLimited, result.ErrorCode);
+        Assert.Equal(3, handler.CallCount);
+    }
+
+    [Fact]
+    public async Task CompleteAsync_429RateLimited_SucceedsOnRetry()
+    {
+        var body = JsonSerializer.Serialize(new { error = new { type = "rate_limit_exceeded" } });
+        var handler = new MockHttpMessageHandler(
+            new HttpResponseMessage(HttpStatusCode.TooManyRequests) { Content = new StringContent(body) },
+            new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(JsonSerializer.Serialize(new
+                {
+                    choices = new[] { new { index = 0, message = new { role = "assistant", content = "OK" }, finish_reason = "stop" } }
+                }, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower }))
+            });
+        var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) };
+        var factory = new MockHttpClientFactory(client);
+        var provider = new MockProvider(factory, TimeSpan.FromSeconds(10), maxRetries: 2);
+
+        var result = await provider.CompleteAsync(MakeRequest());
+
+        Assert.True(result.Success);
+        Assert.Equal("OK", result.Content);
+        Assert.Equal(2, handler.CallCount);
+    }
+
+    [Fact]
+    public async Task CompleteAsync_429QuotaExceeded_ReturnsImmediately()
+    {
+        var body = JsonSerializer.Serialize(new { error = new { type = "insufficient_quota" } });
+        var handler = new MockHttpMessageHandler(
+            new HttpResponseMessage(HttpStatusCode.TooManyRequests) { Content = new StringContent(body) },
+            new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(JsonSerializer.Serialize(new
+                {
+                    choices = new[] { new { index = 0, message = new { role = "assistant", content = "OK" }, finish_reason = "stop" } }
+                }, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower }))
+            });
+        var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) };
+        var factory = new MockHttpClientFactory(client);
+        var provider = new MockProvider(factory, TimeSpan.FromSeconds(10), maxRetries: 2);
+
+        var result = await provider.CompleteAsync(MakeRequest());
+
+        Assert.False(result.Success);
+        Assert.Equal(KejiProviderErrorCode.QuotaExceeded, result.ErrorCode);
+        Assert.Equal(1, handler.CallCount);
+    }
+
+    [Fact]
     public void Config_HttpsRequired_RejectsPlainHttp()
     {
         Assert.Throws<ArgumentException>(() =>
@@ -395,6 +462,17 @@ public sealed class ProviderBaseNonStreamingTests
     {
         Assert.Throws<ArgumentException>(() =>
             ModelProviderConfig.Create("openai", "${OPENAI_API_KEY}", "http://localhost", "model"));
+    }
+
+    [Theory]
+    [InlineData("${/absolute/path/secret}")]
+    [InlineData("${./relative/path}")]
+    [InlineData("${}")]
+    [InlineData("${   }")]
+    public void Config_InvalidSecretReferenceFormat_IsRejected(string apiKey)
+    {
+        Assert.Throws<ArgumentException>(() =>
+            ModelProviderConfig.Create("openai", apiKey, "http://localhost", "model"));
     }
 
     private sealed class SimpleMockProvider : IModelProvider

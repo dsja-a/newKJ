@@ -598,6 +598,165 @@ public sealed class ProviderHardeningTests
         }
     }
 
+    [Fact]
+    public void SecretReference_NullOrWhitespace_IsRejected()
+    {
+        Assert.Throws<ArgumentException>(() => new KejiProviderSecretReference(null!));
+        Assert.Throws<ArgumentException>(() => new KejiProviderSecretReference(""));
+        Assert.Throws<ArgumentException>(() => new KejiProviderSecretReference("   "));
+    }
+
+    [Fact]
+    public void SecretReference_ExceedsMaxLength_IsRejected()
+    {
+        var longName = new string('A', 129);
+        Assert.Throws<ArgumentException>(() => new KejiProviderSecretReference(longName));
+    }
+
+    [Fact]
+    public void SecretReference_AtMaxLength_IsAccepted()
+    {
+        var maxLengthName = new string('A', 128);
+        var reference = new KejiProviderSecretReference(maxLengthName);
+        Assert.Equal(maxLengthName, reference.EnvironmentVariableName);
+    }
+
+    [Theory]
+    [InlineData("OPENAI_API_KEY")]
+    [InlineData("A")]
+    [InlineData("A1")]
+    [InlineData("A_B_C")]
+    public void SecretReference_ValidNames_AreAccepted(string name)
+    {
+        var reference = new KejiProviderSecretReference(name);
+        Assert.Equal(name, reference.EnvironmentVariableName);
+    }
+
+    [Theory]
+    [InlineData("lowercase")]
+    [InlineData("1STARTS_WITH_DIGIT")]
+    [InlineData("HAS spaces")]
+    [InlineData("HAS-SPECIAL")]
+    [InlineData("")]
+    public void SecretReference_InvalidNamePatterns_AreRejected(string name)
+    {
+        Assert.Throws<ArgumentException>(() => new KejiProviderSecretReference(name));
+    }
+
+    [Fact]
+    public void SecretReference_ToString_ReturnsEnvPrefix()
+    {
+        var reference = new KejiProviderSecretReference("MY_KEY");
+        Assert.Equal("env:MY_KEY", reference.ToString());
+    }
+
+    [Fact]
+    public void EnvironmentSecretResolver_NullReference_IsRejected()
+    {
+        var resolver = new EnvironmentKejiProviderSecretResolver();
+        Assert.Throws<ArgumentNullException>(() => resolver.Resolve(null!));
+    }
+
+    [Fact]
+    public void EnvironmentSecretResolver_NonExistentVariable_ReturnsNull()
+    {
+        var resolver = new EnvironmentKejiProviderSecretResolver();
+        var reference = new KejiProviderSecretReference("SOME_NONEXISTENT_VARIABLE_X7K9M2");
+        Assert.Null(resolver.Resolve(reference));
+    }
+
+    [Theory]
+    [InlineData("sk-test-key-12345")]
+    [InlineData("{\"json\":\"value\"}")]
+    public void EnvironmentSecretResolver_ValidValues_AreResolved(string value)
+    {
+        const string envVar = "TEMP_SECRET_RESOLVER_VALID_TEST";
+        try
+        {
+            Environment.SetEnvironmentVariable(envVar, value);
+            var resolver = new EnvironmentKejiProviderSecretResolver();
+            var reference = new KejiProviderSecretReference(envVar);
+            Assert.Equal(value, resolver.Resolve(reference));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(envVar, null);
+        }
+    }
+
+    [Fact]
+    public void EnvironmentSecretResolver_Newline_IsRejectedWithoutLeakingSecret()
+    {
+        const string envVar = "TEMP_SECRET_RESOLVER_CTRL_TEST";
+        const string secret = "secret-value\nsecond-line";
+        try
+        {
+            Environment.SetEnvironmentVariable(envVar, secret);
+            var resolver = new EnvironmentKejiProviderSecretResolver();
+            var reference = new KejiProviderSecretReference(envVar);
+            var exception = Assert.Throws<InvalidOperationException>(() => resolver.Resolve(reference));
+            Assert.DoesNotContain(secret, exception.ToString(), StringComparison.Ordinal);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(envVar, null);
+        }
+    }
+
+    [Fact]
+    public void EnvironmentSecretResolver_AtMaxLength_IsAccepted()
+    {
+        const string envVar = "TEMP_SECRET_RESOLVER_MAX_TEST";
+        var secret = new string('s', 16 * 1024);
+        try
+        {
+            Environment.SetEnvironmentVariable(envVar, secret);
+            var resolver = new EnvironmentKejiProviderSecretResolver();
+            var reference = new KejiProviderSecretReference(envVar);
+            Assert.Equal(secret, resolver.Resolve(reference));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(envVar, null);
+        }
+    }
+
+    [Fact]
+    public void EnvironmentSecretResolver_ExceedsMaxLength_IsRejectedWithoutLeakingSecret()
+    {
+        const string envVar = "TEMP_SECRET_RESOLVER_OVERSIZE_TEST";
+        var secret = new string('s', 16 * 1024 + 1);
+        try
+        {
+            Environment.SetEnvironmentVariable(envVar, secret);
+            var resolver = new EnvironmentKejiProviderSecretResolver();
+            var reference = new KejiProviderSecretReference(envVar);
+            var exception = Assert.Throws<InvalidOperationException>(() => resolver.Resolve(reference));
+            Assert.DoesNotContain(secret, exception.ToString(), StringComparison.Ordinal);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(envVar, null);
+        }
+    }
+
+    [Fact]
+    public void EnvironmentSecretResolver_TabCharacter_IsAllowed()
+    {
+        const string envVar = "TEMP_SECRET_RESOLVER_TAB_TEST";
+        try
+        {
+            var withTab = "secret\twith\ttab";
+            Environment.SetEnvironmentVariable(envVar, withTab);
+            var resolver = new EnvironmentKejiProviderSecretResolver();
+            var reference = new KejiProviderSecretReference(envVar);
+            Assert.Equal(withTab, resolver.Resolve(reference));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(envVar, null);
+        }
+    }
     private sealed class DisposeOnlyUnblocksStream : Stream
     {
         private readonly TaskCompletionSource _released = new(TaskCreationOptions.RunContinuationsAsynchronously);
