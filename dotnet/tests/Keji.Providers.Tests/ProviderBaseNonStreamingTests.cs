@@ -291,6 +291,123 @@ public sealed class ProviderBaseNonStreamingTests
         Assert.False(result.Success);
         Assert.Equal(1, handler.CallCount);
     }
+
+    [Fact]
+    public async Task CompleteAsync_RetryOn408ThenSucceeds()
+    {
+        var handler = new MockHttpMessageHandler(
+            new HttpResponseMessage((HttpStatusCode)408),
+            new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(JsonSerializer.Serialize(new
+                {
+                    choices = new[] { new { index = 0, message = new { role = "assistant", content = "OK" }, finish_reason = "stop" } }
+                }, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower }))
+            });
+        var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) };
+        var factory = new MockHttpClientFactory(client);
+        var provider = new MockProvider(factory, TimeSpan.FromSeconds(10), maxRetries: 1);
+
+        var result = await provider.CompleteAsync(MakeRequest());
+        Assert.True(result.Success);
+        Assert.Equal(2, handler.CallCount);
+    }
+
+    [Fact]
+    public async Task CompleteAsync_RetryOn409ThenSucceeds()
+    {
+        var handler = new MockHttpMessageHandler(
+            new HttpResponseMessage((HttpStatusCode)409),
+            new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(JsonSerializer.Serialize(new
+                {
+                    choices = new[] { new { index = 0, message = new { role = "assistant", content = "OK" }, finish_reason = "stop" } }
+                }, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower }))
+            });
+        var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) };
+        var factory = new MockHttpClientFactory(client);
+        var provider = new MockProvider(factory, TimeSpan.FromSeconds(10), maxRetries: 2);
+
+        var result = await provider.CompleteAsync(MakeRequest());
+        Assert.True(result.Success);
+        Assert.Equal(2, handler.CallCount);
+    }
+
+    [Fact]
+    public async Task CompleteAsync_DoesNotRetryOn400()
+    {
+        var handler = new MockHttpMessageHandler(
+            new HttpResponseMessage(HttpStatusCode.BadRequest),
+            new HttpResponseMessage(HttpStatusCode.OK));
+        var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) };
+        var factory = new MockHttpClientFactory(client);
+        var provider = new MockProvider(factory, TimeSpan.FromSeconds(10), maxRetries: 3);
+
+        var result = await provider.CompleteAsync(MakeRequest());
+        Assert.False(result.Success);
+        Assert.Equal(1, handler.CallCount);
+    }
+
+    [Fact]
+    public async Task CompleteAsync_CancelDuringStream_ReturnsCancelled()
+    {
+        var factory = CreateFactory(new HttpResponseMessage(HttpStatusCode.OK));
+        var provider = new MockProvider(factory, TimeSpan.FromSeconds(10));
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        var result = await provider.CompleteAsync(MakeRequest(), cts.Token);
+        Assert.False(result.Success);
+        Assert.Equal("CANCELLED", result.ErrorCode);
+    }
+
+    [Fact]
+    public void Config_HttpsRequired_RejectsPlainHttp()
+    {
+        Assert.Throws<ArgumentException>(() =>
+            ModelProviderConfig.Create("openai", "key", "http://api.example.com", "model"));
+    }
+
+    [Fact]
+    public void Config_LoopbackHttp_Allowed()
+    {
+        var cfg = ModelProviderConfig.Create("ollama", "", "http://127.0.0.1:11434", "model");
+        Assert.NotNull(cfg);
+    }
+
+    [Fact]
+    public void Registry_ImmutableDictionary_Frozen()
+    {
+        var dict = new Dictionary<string, IModelProvider>
+        {
+            ["openai"] = new SimpleMockProvider("openai")
+        };
+        var registry = new ModelProviderRegistry(dict);
+        dict["openai"] = new SimpleMockProvider("hacked");
+        var provider = registry.GetProvider("openai");
+        Assert.Equal("openai", provider!.ProviderName);
+    }
+
+    [Fact]
+    public void Config_UnresolvedSecretReference_IsRejected()
+    {
+        Assert.Throws<ArgumentException>(() =>
+            ModelProviderConfig.Create("openai", "${OPENAI_API_KEY}", "http://localhost", "model"));
+    }
+
+    private sealed class SimpleMockProvider : IModelProvider
+    {
+        public string ProviderName { get; }
+        public SimpleMockProvider(string name) => ProviderName = name;
+        public Task<ChatCompletionResponse> CompleteAsync(ChatCompletionRequest request, CancellationToken ct = default)
+            => Task.FromResult(ChatCompletionResponse.Succeeded("mock"));
+        public async IAsyncEnumerable<ChatCompletionStreamEvent> StreamAsync(ChatCompletionRequest request, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
+        {
+            await Task.Yield();
+            yield return ChatCompletionStreamEvent.Done();
+        }
+    }
 }
 
 internal sealed class MockHttpMessageHandler : HttpMessageHandler

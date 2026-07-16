@@ -2,7 +2,7 @@ namespace Keji.Providers;
 
 public sealed class TokenUsage
 {
-    public int PromptTokens { get; init; }
-    public int CompletionTokens { get; init; }
-    public int TotalTokens => PromptTokens + CompletionTokens;
+    public long PromptTokens { get; init; }
+    public long CompletionTokens { get; init; }
+    public long TotalTokens => checked(PromptTokens + CompletionTokens);
 }

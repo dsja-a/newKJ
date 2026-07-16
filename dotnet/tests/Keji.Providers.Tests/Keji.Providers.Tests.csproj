@@ -15,6 +15,7 @@
     <Using Include="Xunit" />
   </ItemGroup>
   <ItemGroup>
+    <ProjectReference Include="..\..\src\Keji.Configuration\Keji.Configuration.csproj" />
     <ProjectReference Include="..\..\src\Keji.Providers\Keji.Providers.csproj" />
   </ItemGroup>
 </Project>

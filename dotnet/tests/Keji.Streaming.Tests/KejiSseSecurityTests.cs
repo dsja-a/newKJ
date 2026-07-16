@@ -1,117 +1,174 @@
+using System.Runtime.CompilerServices;
 using Keji.Providers;
 using Keji.Streaming;
 
 namespace Keji.Streaming.Tests;
 
-public class KejiSseSecurityTests
+public sealed class KejiSseSecurityTests
 {
+    private static readonly DateTime FixedTimestamp = new(2026, 7, 15, 0, 0, 0, DateTimeKind.Utc);
+
     [Fact]
-    public async Task Error_DoesNotLeakRawException()
+    public async Task ProviderError_RawMessageAndHeaderValueNeverReachEventOrWire()
     {
-        var providerEvents = AsyncEnumerable(new[]
-        {
-            ChatCompletionStreamEvent.Error("CONNECTION_ERROR", "Connection refused")
-        });
+        const string secret = "sk-live-super-secret";
+        var providerEvents = Source(
+            ChatCompletionStreamEvent.Error(
+                "AUTH_FAILED",
+                $"Authorization: Bearer {secret}\r\nInjected: true\r\nStackTrace"));
 
-        var results = await KejiSseAdapter.ToSseEvents(providerEvents).ToListAsync();
+        var result = Assert.Single(await KejiSseAdapter.ToSseEvents(providerEvents).ToListAsync());
+        var wire = KejiSseFormatter.FormatEvent(result);
 
-        Assert.Single(results);
-        Assert.Equal("Connection refused", results[0].ErrorMessage);
-        Assert.DoesNotContain("Exception", results[0].ErrorMessage);
-        Assert.DoesNotContain("StackTrace", results[0].ErrorMessage);
+        Assert.Equal("AUTH_FAILED", result.ErrorCode);
+        Assert.Equal("Provider authentication failed", result.ErrorMessage);
+        Assert.DoesNotContain(secret, wire, StringComparison.Ordinal);
+        Assert.DoesNotContain("Authorization", wire, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("Injected", wire, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("StackTrace", wire, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
-    public async Task ToolCall_DoesNotLeakParameters()
+    public async Task UnknownErrorCodeWithControlCharacters_BecomesGenericAllowlistedError()
     {
-        var providerEvents = AsyncEnumerable(new[]
-        {
-            ChatCompletionStreamEvent.ToolCallBegin("call_1", "execute"),
-            ChatCompletionStreamEvent.ToolCallDelta("{\"command\":\"rm -rf /\",\"password\":\"secret\"}"),
-            ChatCompletionStreamEvent.ToolCallEnd()
-        });
+        var providerEvents = Source(
+            ChatCompletionStreamEvent.Error("BOOM\r\nevent: answer", "database password=hunter2"));
+
+        var result = Assert.Single(await KejiSseAdapter.ToSseEvents(providerEvents).ToListAsync());
+        var wire = KejiSseFormatter.FormatEvent(result);
+
+        Assert.Equal("PROVIDER_ERROR", result.ErrorCode);
+        Assert.Equal("Model provider request failed", result.ErrorMessage);
+        Assert.Contains("\"error_code\":\"PROVIDER_ERROR\"", wire, StringComparison.Ordinal);
+        Assert.DoesNotContain("hunter2", wire, StringComparison.Ordinal);
+        Assert.DoesNotContain("event: answer", wire, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task UpstreamException_TextNeverReachesEventOrWire()
+    {
+        const string secret = "token-value-from-exception";
+
+        var result = Assert.Single(await KejiSseAdapter.ToSseEvents(ThrowWithSecret(secret)).ToListAsync());
+        var wire = KejiSseFormatter.FormatEvent(result);
+
+        Assert.Equal("PROVIDER_ERROR", result.ErrorCode);
+        Assert.Equal("Model provider request failed", result.ErrorMessage);
+        Assert.DoesNotContain(secret, wire, StringComparison.Ordinal);
+        Assert.DoesNotContain("InvalidOperationException", wire, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ToolArguments_AreAbsentFromAdapterEventsAndEveryWireFrame()
+    {
+        const string secretArguments = "{\"command\":\"rm -rf /\",\"password\":\"hunter2\"}";
+        var providerEvents = Source(
+            ChatCompletionStreamEvent.ToolCallBegin("call_1", "execute", 0, 0),
+            ChatCompletionStreamEvent.ToolCallDelta(secretArguments, 0, 0, "call_1"),
+            ChatCompletionStreamEvent.ToolCallEnd("call_1", 0, 0),
+            ChatCompletionStreamEvent.ChoiceFinished("tool_calls", hasToolCalls: true),
+            ChatCompletionStreamEvent.Done());
 
         var results = await KejiSseAdapter.ToSseEvents(providerEvents).ToListAsync();
+        var wire = string.Concat(results.Select(KejiSseFormatter.FormatEvent));
 
-        var toolCall = results.FirstOrDefault(r => r.EventType == KejiSseEventType.ToolCall);
-        Assert.NotNull(toolCall);
+        var toolCall = Assert.Single(results, static item => item.EventType == KejiSseEventType.ToolCall);
         Assert.Equal("execute", toolCall.ToolName);
-        Assert.DoesNotContain("rm -rf", toolCall.ToolName);
+        Assert.Equal("call_1", toolCall.ToolCallId);
         Assert.Null(toolCall.Delta);
+        Assert.DoesNotContain("hunter2", wire, StringComparison.Ordinal);
+        Assert.DoesNotContain("rm -rf", wire, StringComparison.Ordinal);
+        Assert.DoesNotContain("arguments", wire, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
-    public async Task Usage_DoesNotLeakContent()
+    public void MarkerEvent_RejectsFieldSmugglingBySerializationWhitelist()
     {
-        var usage = new TokenUsage { PromptTokens = 100, CompletionTokens = 50 };
-        var providerEvents = AsyncEnumerable(new[] { ChatCompletionStreamEvent.UsageEvent(usage) });
-
-        var results = await KejiSseAdapter.ToSseEvents(providerEvents).ToListAsync();
-
-        var usageEvent = results.FirstOrDefault(r => r.EventType == KejiSseEventType.Usage);
-        Assert.NotNull(usageEvent);
-        Assert.Equal(100, usageEvent.Usage!.PromptTokens);
-        Assert.Equal(150, usageEvent.Usage.TotalTokens);
-    }
-
-    [Fact]
-    public async Task ErrorFormatter_DoesNotLeakStackTrace()
-    {
-        var evt = new KejiSseEvent
+        var streamEvent = new KejiSseEvent
         {
-            EventType = KejiSseEventType.Error,
-            Phase = KejiSsePhase.Error,
-            ErrorMessage = "Safe error message"
+            EventType = KejiSseEventType.Done,
+            Phase = KejiSsePhase.Done,
+            Delta = "sk-secret-delta",
+            ToolName = "secret_tool",
+            ToolCallId = "secret_call",
+            ToolCallIndex = 99,
+            ChoiceIndex = 88,
+            Usage = new TokenUsage { PromptTokens = 1, CompletionTokens = 2 },
+            ErrorCode = "AUTH_FAILED",
+            ErrorMessage = "password=hunter2",
+            Sequence = 1,
+            EventId = "evt_1",
+            TimestampUtc = FixedTimestamp,
         };
 
-        var result = KejiSseFormatter.FormatEvent(evt);
+        var wire = KejiSseFormatter.FormatEvent(streamEvent);
 
-        Assert.Contains("Safe error message", result);
-        Assert.DoesNotContain("Exception", result);
-        Assert.DoesNotContain("StackTrace", result);
-        Assert.DoesNotContain("api_key", result.ToLower());
-        Assert.DoesNotContain("secret", result.ToLower());
+        Assert.DoesNotContain("sk-secret-delta", wire, StringComparison.Ordinal);
+        Assert.DoesNotContain("secret_tool", wire, StringComparison.Ordinal);
+        Assert.DoesNotContain("secret_call", wire, StringComparison.Ordinal);
+        Assert.DoesNotContain("AUTH_FAILED", wire, StringComparison.Ordinal);
+        Assert.DoesNotContain("hunter2", wire, StringComparison.Ordinal);
+        Assert.DoesNotContain("usage", wire, StringComparison.OrdinalIgnoreCase);
     }
 
-    [Fact]
-    public async Task AnswerFormatter_DoesNotLeakKeys()
+    [Theory]
+    [InlineData("evt_0\r\nevent: answer")]
+    [InlineData("evt_0\ndata: {\"admin\":true}")]
+    [InlineData("evt_0\0suffix")]
+    public void EventIdInjection_IsRejectedBeforeWireFormatting(string eventId)
     {
-        var evt = new KejiSseEvent
+        var streamEvent = new KejiSseEvent
         {
-            EventType = KejiSseEventType.Answer,
+            EventType = KejiSseEventType.Done,
+            Phase = KejiSsePhase.Done,
+            Sequence = 0,
+            EventId = eventId,
+            TimestampUtc = FixedTimestamp,
+        };
+
+        Assert.Throws<ArgumentException>(() => KejiSseFormatter.FormatEvent(streamEvent));
+    }
+
+    [Theory]
+    [InlineData("tool\r\nevent: done", "call_1")]
+    [InlineData("safe_tool", "call_1\0suffix")]
+    public void ToolMetadataControlCharacters_AreRejected(string toolName, string toolCallId)
+    {
+        var streamEvent = new KejiSseEvent
+        {
+            EventType = KejiSseEventType.ToolCall,
             Phase = KejiSsePhase.Answering,
-            Delta = "Hello world"
+            ToolName = toolName,
+            ToolCallId = toolCallId,
+            ToolCallIndex = 0,
+            ChoiceIndex = 0,
+            Sequence = 0,
+            EventId = "evt_0",
+            TimestampUtc = FixedTimestamp,
         };
 
-        var result = KejiSseFormatter.FormatEvent(evt);
-
-        Assert.DoesNotContain("api", result.ToLower());
-        Assert.DoesNotContain("key", result.ToLower());
-        Assert.DoesNotContain("token", result.ToLower());
+        Assert.Throws<ArgumentException>(() => KejiSseFormatter.FormatEvent(streamEvent));
     }
 
-    [Fact]
-    public async Task ProviderError_StrippedByAdapter_NoLeak()
+    private static async IAsyncEnumerable<ChatCompletionStreamEvent> Source(
+        params ChatCompletionStreamEvent[] events)
     {
-        var providerEvents = AsyncEnumerable(new[]
-        {
-            ChatCompletionStreamEvent.Error("AUTH_FAILED", "API key sk-12345 rejected")
-        });
-
-        var results = await KejiSseAdapter.ToSseEvents(providerEvents).ToListAsync();
-
-        var error = results.FirstOrDefault(r => r.EventType == KejiSseEventType.Error);
-        Assert.NotNull(error);
-        Assert.Equal("API key sk-12345 rejected", error.ErrorMessage);
-        // The SSE adapter passes through the error message - the actual stripping happens at ProviderBase level
-    }
-
-    private static async IAsyncEnumerable<ChatCompletionStreamEvent> AsyncEnumerable(ChatCompletionStreamEvent[] events)
-    {
-        foreach (var e in events)
+        foreach (var streamEvent in events)
         {
             await Task.Yield();
-            yield return e;
+            yield return streamEvent;
         }
+    }
+
+    private static async IAsyncEnumerable<ChatCompletionStreamEvent> ThrowWithSecret(
+        string secret,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        await Task.Yield();
+        cancellationToken.ThrowIfCancellationRequested();
+        throw new InvalidOperationException($"InvalidOperationException Authorization: Bearer {secret}");
+#pragma warning disable CS0162
+        yield break;
+#pragma warning restore CS0162
     }
 }

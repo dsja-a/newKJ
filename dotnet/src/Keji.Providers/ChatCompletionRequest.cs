@@ -14,7 +14,10 @@ public sealed class ChatCompletionRequest
 public sealed class ChatMessage
 {
     public string Role { get; init; } = "";
-    public string Content { get; init; } = "";
+    public string? Content { get; init; } = "";
+    public string? Name { get; init; }
+    public string? ToolCallId { get; init; }
+    public string? ReasoningContent { get; init; }
     public IReadOnlyList<ChatToolCall>? ToolCalls { get; init; }
 }
 

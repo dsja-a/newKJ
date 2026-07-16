@@ -8,9 +8,12 @@ public static class KejiProvidersServiceCollectionExtensions
     public static IServiceCollection AddKejiProviders(this IServiceCollection services,
         Action<IModelProviderRegistryBuilder> configure)
     {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(configure);
+
         services.AddHttpClient("KejiProvider", client =>
         {
-            client.DefaultRequestHeaders.Add("Accept", "application/json");
+            client.Timeout = Timeout.InfiniteTimeSpan;
         }).ConfigurePrimaryHttpMessageHandler(() => new System.Net.Http.HttpClientHandler
         {
             AllowAutoRedirect = false,
@@ -35,7 +38,8 @@ public interface IModelProviderRegistryBuilder
 internal sealed class ModelProviderRegistryBuilder : IModelProviderRegistryBuilder
 {
     private readonly IServiceCollection _services;
-    private readonly Dictionary<string, ModelProviderConfig> _configs = new();
+    private readonly Dictionary<string, ModelProviderConfig> _configs = new(StringComparer.OrdinalIgnoreCase);
+    private bool _finalized;
 
     public ModelProviderRegistryBuilder(IServiceCollection services)
     {
@@ -44,30 +48,35 @@ internal sealed class ModelProviderRegistryBuilder : IModelProviderRegistryBuild
 
     public IModelProviderRegistryBuilder AddOpenAI(ModelProviderConfig config)
     {
-        _configs["openai"] = config ?? throw new ArgumentNullException(nameof(config));
-        return this;
+        return Add("openai", config);
     }
 
     public IModelProviderRegistryBuilder AddDeepSeek(ModelProviderConfig config)
     {
-        _configs["deepseek"] = config ?? throw new ArgumentNullException(nameof(config));
-        return this;
+        return Add("deepseek", config);
     }
 
     public IModelProviderRegistryBuilder AddOllama(ModelProviderConfig config)
     {
-        _configs["ollama"] = config ?? throw new ArgumentNullException(nameof(config));
-        return this;
+        return Add("ollama", config);
     }
 
     public void FinalizeRegistration()
     {
+        if (_finalized)
+            throw new InvalidOperationException("Provider registration has already been finalized");
+
+        _finalized = true;
+        var frozenConfigs = _configs
+            .OrderBy(static pair => pair.Key, StringComparer.Ordinal)
+            .ToArray();
+
         _services.AddSingleton<IModelProviderRegistry>(sp =>
         {
             var factory = sp.GetRequiredService<IHttpClientFactory>();
             var providers = new Dictionary<string, IModelProvider>();
 
-            foreach (var (name, config) in _configs)
+            foreach (var (name, config) in frozenConfigs)
             {
                 providers[name] = name switch
                 {
@@ -80,5 +89,18 @@ internal sealed class ModelProviderRegistryBuilder : IModelProviderRegistryBuild
 
             return new ModelProviderRegistry(providers);
         });
+    }
+
+    private IModelProviderRegistryBuilder Add(string providerName, ModelProviderConfig config)
+    {
+        if (_finalized)
+            throw new InvalidOperationException("Provider registration is frozen");
+        ArgumentNullException.ThrowIfNull(config);
+        if (!string.Equals(config.ProviderType, providerName, StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException("Provider configuration type does not match the registration", nameof(config));
+        if (!_configs.TryAdd(providerName, config))
+            throw new InvalidOperationException($"Provider '{providerName}' is already registered");
+
+        return this;
     }
 }
