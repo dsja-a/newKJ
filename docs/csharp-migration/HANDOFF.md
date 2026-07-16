@@ -4,7 +4,7 @@
 
 - Repository: `dsja-a/newKJ`
 - Branch: `rewrite/csharp-core`
-- Last accepted baseline: `a048c1df11e9c12caa085f92bc860ab6d0386c7b`
+- Last accepted baseline: `a048c1d42b94270f833fa71e335c2c21bd3e2c23`
 - Current task: TASK-013
 - Current status: accepted (final)
 - Formal C# completion: 60%
@@ -203,7 +203,7 @@ Host process                          ToolWorker.Client            ToolWorker pr
 
 ## TASK-013 (Accepted): C# Agent Loop
 
-TASK-013 R1 is accepted (final) at `a048c1df11e9c12caa085f92bc860ab6d0386c7b`.
+TASK-013 R1 is accepted (final) at `a048c1d42b94270f833fa71e335c2c21bd3e2c23`.
 
 ### TASK-013 acceptance summary
 
