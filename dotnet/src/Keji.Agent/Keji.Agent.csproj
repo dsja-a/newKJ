@@ -5,6 +5,8 @@
     <ProjectReference Include="..\Keji.Tools\Keji.Tools.csproj" />
     <ProjectReference Include="..\Keji.Security\Keji.Security.csproj" />
     <ProjectReference Include="..\Keji.Auditing\Keji.Auditing.csproj" />
+    <ProjectReference Include="..\Keji.Persistence\Keji.Persistence.csproj" />
+    <ProjectReference Include="..\Keji.Providers\Keji.Providers.csproj" />
   </ItemGroup>
 
   <PropertyGroup>
