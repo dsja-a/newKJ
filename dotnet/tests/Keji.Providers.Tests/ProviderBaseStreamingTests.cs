@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
+using System.Collections.Immutable;
 using Keji.Providers;
 
 namespace Keji.Providers.Tests;
@@ -21,18 +22,18 @@ public sealed class ProviderBaseStreamingTests
 
         Assert.Same(firstMove, await Task.WhenAny(firstMove, Task.Delay(TimeSpan.FromSeconds(2))));
         Assert.True(await firstMove);
-        Assert.Equal(ChatCompletionStreamEventType.Token, enumerator.Current.Type);
+        Assert.Equal(KejiProviderStreamEventKind.Token, enumerator.Current.Type);
         Assert.Equal("first", enumerator.Current.Content);
         Assert.True(stream.SecondReadStarted.Task.IsCompletedSuccessfully);
 
         stream.Release();
         Assert.True(await enumerator.MoveNextAsync());
-        Assert.Equal(ChatCompletionStreamEventType.ChoiceFinished, enumerator.Current.Type);
-        Assert.Equal("stop", enumerator.Current.FinishReason);
+        Assert.Equal(KejiProviderStreamEventKind.ChoiceFinished, enumerator.Current.Type);
+        Assert.Equal(KejiFinishReason.Stop, enumerator.Current.FinishReason);
         Assert.False(enumerator.Current.HasToolCalls);
         Assert.False(enumerator.Current.ShouldExecuteTools);
         Assert.True(await enumerator.MoveNextAsync());
-        Assert.Equal(ChatCompletionStreamEventType.Done, enumerator.Current.Type);
+        Assert.Equal(KejiProviderStreamEventKind.Done, enumerator.Current.Type);
         Assert.False(await enumerator.MoveNextAsync());
     }
 
@@ -45,7 +46,7 @@ public sealed class ProviderBaseStreamingTests
         await using (var enumerator = provider.StreamAsync(Request()).GetAsyncEnumerator())
         {
             Assert.True(await enumerator.MoveNextAsync());
-            Assert.Equal(ChatCompletionStreamEventType.Token, enumerator.Current.Type);
+            Assert.Equal(KejiProviderStreamEventKind.Token, enumerator.Current.Type);
         }
 
         Assert.Same(stream.CancellationObserved.Task,
@@ -66,8 +67,8 @@ public sealed class ProviderBaseStreamingTests
         var events = await CollectAsync(CreateProvider(Response(body)).StreamAsync(Request()));
 
         Assert.Equal(new[] { "crlf", "cr", "lf" },
-            events.Where(e => e.Type == ChatCompletionStreamEventType.Token).Select(e => e.Content));
-        Assert.True(events[^1].Type == ChatCompletionStreamEventType.Done,
+            events.Where(e => e.Type == KejiProviderStreamEventKind.Token).Select(e => e.Content));
+        Assert.True(events[^1].Type == KejiProviderStreamEventKind.Done,
             $"Unexpected terminal event: {events[^1].Type}/{events[^1].ErrorCode}");
     }
 
@@ -86,9 +87,9 @@ public sealed class ProviderBaseStreamingTests
 
         var events = await CollectAsync(CreateProvider(Response(body)).StreamAsync(Request()));
 
-        var token = Assert.Single(events, e => e.Type == ChatCompletionStreamEventType.Token);
+        var token = Assert.Single(events, e => e.Type == KejiProviderStreamEventKind.Token);
         Assert.Equal("joined", token.Content);
-        Assert.True(events[^1].Type == ChatCompletionStreamEventType.Done,
+        Assert.True(events[^1].Type == KejiProviderStreamEventKind.Done,
             $"Unexpected terminal event: {events[^1].Type}/{events[^1].ErrorCode}");
     }
 
@@ -106,13 +107,13 @@ public sealed class ProviderBaseStreamingTests
         Assert.Equal(
             new[]
             {
-                ChatCompletionStreamEventType.Token,
-                ChatCompletionStreamEventType.ChoiceFinished,
-                ChatCompletionStreamEventType.Usage,
-                ChatCompletionStreamEventType.Done
+                KejiProviderStreamEventKind.Token,
+                KejiProviderStreamEventKind.ChoiceFinished,
+                KejiProviderStreamEventKind.Usage,
+                KejiProviderStreamEventKind.Done
             },
             events.Select(e => e.Type));
-        Assert.Equal("stop", events[1].FinishReason);
+        Assert.Equal(KejiFinishReason.Stop, events[1].FinishReason);
         Assert.Equal(12, events[2].Usage!.PromptTokens);
         Assert.Equal(4, events[2].Usage!.CompletionTokens);
     }
@@ -144,8 +145,8 @@ public sealed class ProviderBaseStreamingTests
         var events = await CollectAsync(CreateProvider(Response(body)).StreamAsync(Request()));
 
         var error = Assert.Single(events);
-        Assert.Equal(ChatCompletionStreamEventType.Error, error.Type);
-        Assert.Equal("STREAM_TRUNCATED", error.ErrorCode);
+        Assert.Equal(KejiProviderStreamEventKind.Error, error.Type);
+        Assert.Equal(KejiProviderErrorCode.StreamTruncated, error.ErrorCode);
     }
 
     [Fact]
@@ -154,8 +155,8 @@ public sealed class ProviderBaseStreamingTests
         var events = await CollectAsync(CreateProvider(Response(Sse("[DONE]"))).StreamAsync(Request()));
 
         var error = Assert.Single(events);
-        Assert.Equal(ChatCompletionStreamEventType.Error, error.Type);
-        Assert.Equal("STREAM_TRUNCATED", error.ErrorCode);
+        Assert.Equal(KejiProviderStreamEventKind.Error, error.Type);
+        Assert.Equal(KejiProviderErrorCode.StreamTruncated, error.ErrorCode);
     }
 
     [Fact]
@@ -165,10 +166,10 @@ public sealed class ProviderBaseStreamingTests
 
         var events = await CollectAsync(CreateProvider(Response(body)).StreamAsync(Request()));
 
-        Assert.Equal(ChatCompletionStreamEventType.Token, events[0].Type);
-        Assert.Equal(ChatCompletionStreamEventType.ChoiceFinished, events[1].Type);
-        Assert.Equal("stop", events[1].FinishReason);
-        Assert.Equal(ChatCompletionStreamEventType.Done, events[2].Type);
+        Assert.Equal(KejiProviderStreamEventKind.Token, events[0].Type);
+        Assert.Equal(KejiProviderStreamEventKind.ChoiceFinished, events[1].Type);
+        Assert.Equal(KejiFinishReason.Stop, events[1].FinishReason);
+        Assert.Equal(KejiProviderStreamEventKind.Done, events[2].Type);
     }
 
     [Fact]
@@ -177,7 +178,7 @@ public sealed class ProviderBaseStreamingTests
         var events = await CollectAsync(CreateProvider(Response(Sse("not-json") + Sse("[DONE]"))).StreamAsync(Request()));
 
         var error = Assert.Single(events);
-        Assert.Equal("STREAM_PROTOCOL_ERROR", error.ErrorCode);
+        Assert.Equal(KejiProviderErrorCode.StreamProtocolError, error.ErrorCode);
     }
 
     [Fact]
@@ -187,7 +188,7 @@ public sealed class ProviderBaseStreamingTests
         var events = await CollectAsync(CreateProvider(StreamResponse(new MemoryStream(bytes))).StreamAsync(Request()));
 
         var error = Assert.Single(events);
-        Assert.Equal("STREAM_PROTOCOL_ERROR", error.ErrorCode);
+        Assert.Equal(KejiProviderErrorCode.StreamProtocolError, error.ErrorCode);
     }
 
     [Fact]
@@ -200,7 +201,7 @@ public sealed class ProviderBaseStreamingTests
 
         var error = Assert.Single(await CollectAsync(CreateProvider(response).StreamAsync(Request())));
 
-        Assert.Equal("INVALID_CONTENT_TYPE", error.ErrorCode);
+        Assert.Equal(KejiProviderErrorCode.InvalidContentType, error.ErrorCode);
     }
 
     [Fact]
@@ -208,12 +209,12 @@ public sealed class ProviderBaseStreamingTests
     {
         var oversizedLine = "data: " + new string('a', 64 * 1024) + "\n\n";
         var lineError = Assert.Single(await CollectAsync(CreateProvider(Response(oversizedLine)).StreamAsync(Request())));
-        Assert.Equal("STREAM_PROTOCOL_ERROR", lineError.ErrorCode);
+        Assert.Equal(KejiProviderErrorCode.StreamProtocolError, lineError.ErrorCode);
 
         var part = new string('a', 60_000);
         var oversizedEvent = string.Concat(Enumerable.Repeat($"data: {part}\n", 5)) + "\n";
         var eventError = Assert.Single(await CollectAsync(CreateProvider(Response(oversizedEvent)).StreamAsync(Request())));
-        Assert.Equal("STREAM_PROTOCOL_ERROR", eventError.ErrorCode);
+        Assert.Equal(KejiProviderErrorCode.StreamProtocolError, eventError.ErrorCode);
     }
 
     [Fact]
@@ -227,7 +228,7 @@ public sealed class ProviderBaseStreamingTests
         var events = await CollectAsync(provider.StreamAsync(Request()));
 
         var error = Assert.Single(events);
-        Assert.Equal("TIMEOUT", error.ErrorCode);
+        Assert.Equal(KejiProviderErrorCode.Timeout, error.ErrorCode);
         Assert.True(stream.Disposed);
     }
 
@@ -255,7 +256,7 @@ public sealed class ProviderBaseStreamingTests
 
         Assert.Equal(2, handler.CallCount);
         Assert.Equal(TimeSpan.FromSeconds(7), Assert.Single(provider.Delays));
-        Assert.Contains(events, e => e.Type == ChatCompletionStreamEventType.Token);
+        Assert.Contains(events, e => e.Type == KejiProviderStreamEventKind.Token);
     }
 
     [Fact]
@@ -269,7 +270,7 @@ public sealed class ProviderBaseStreamingTests
 
         await CollectAsync(provider.StreamAsync(Request()));
 
-        Assert.Equal(TimeSpan.FromSeconds(30), Assert.Single(provider.Delays));
+        Assert.Equal(TimeSpan.FromSeconds(60), Assert.Single(provider.Delays));
     }
 
     [Fact]
@@ -283,8 +284,8 @@ public sealed class ProviderBaseStreamingTests
         var events = await CollectAsync(provider.StreamAsync(Request()));
 
         Assert.Equal(2, handler.CallCount);
-        Assert.Equal(TimeSpan.FromMilliseconds(250), Assert.Single(provider.Delays));
-        Assert.Equal("after-retry", Assert.Single(events, e => e.Type == ChatCompletionStreamEventType.Token).Content);
+        Assert.Equal(TimeSpan.FromSeconds(1), Assert.Single(provider.Delays));
+        Assert.Equal("after-retry", Assert.Single(events, e => e.Type == KejiProviderStreamEventKind.Token).Content);
     }
 
     [Fact]
@@ -298,8 +299,8 @@ public sealed class ProviderBaseStreamingTests
 
         Assert.Equal(1, handler.CallCount);
         Assert.Empty(provider.Delays);
-        Assert.Equal("partial", Assert.Single(events, e => e.Type == ChatCompletionStreamEventType.Token).Content);
-        Assert.Equal("STREAM_INTERRUPTED", events[^1].ErrorCode);
+        Assert.Equal("partial", Assert.Single(events, e => e.Type == KejiProviderStreamEventKind.Token).Content);
+        Assert.Equal(KejiProviderErrorCode.StreamInterrupted, events[^1].ErrorCode);
     }
 
     [Fact]
@@ -315,13 +316,13 @@ public sealed class ProviderBaseStreamingTests
 
         var events = await CollectAsync(CreateProvider(Response(Sse(begin) + Sse(delta) + Sse(finish) + Sse("[DONE]"))).StreamAsync(Request()));
 
-        Assert.Equal(2, events.Count(e => e.Type == ChatCompletionStreamEventType.ToolCallBegin));
-        Assert.Equal(2, events.Count(e => e.Type == ChatCompletionStreamEventType.ToolCallDelta));
-        Assert.Equal(2, events.Count(e => e.Type == ChatCompletionStreamEventType.ToolCallEnd));
-        Assert.All(events.Where(e => e.Type is ChatCompletionStreamEventType.ToolCallBegin or ChatCompletionStreamEventType.ToolCallDelta or ChatCompletionStreamEventType.ToolCallEnd),
+        Assert.Equal(2, events.Count(e => e.Type == KejiProviderStreamEventKind.ToolCallBegin));
+        Assert.Equal(2, events.Count(e => e.Type == KejiProviderStreamEventKind.ToolCallDelta));
+        Assert.Equal(2, events.Count(e => e.Type == KejiProviderStreamEventKind.ToolCallEnd));
+        Assert.All(events.Where(e => e.Type is KejiProviderStreamEventKind.ToolCallBegin or KejiProviderStreamEventKind.ToolCallDelta or KejiProviderStreamEventKind.ToolCallEnd),
             e => Assert.Equal(2, e.ChoiceIndex));
-        Assert.Contains(events, e => e.Type == ChatCompletionStreamEventType.ToolCallDelta && e.ToolCallId == "call_a" && e.ToolCallIndex == 0);
-        Assert.Contains(events, e => e.Type == ChatCompletionStreamEventType.ToolCallEnd && e.ToolCallId == "call_b" && e.ToolCallIndex == 1);
+        Assert.Contains(events, e => e.Type == KejiProviderStreamEventKind.ToolCallDelta && e.ToolCallId == "call_a" && e.ToolCallIndex == 0);
+        Assert.Contains(events, e => e.Type == KejiProviderStreamEventKind.ToolCallEnd && e.ToolCallId == "call_b" && e.ToolCallIndex == 1);
     }
 
     [Fact]
@@ -331,7 +332,7 @@ public sealed class ProviderBaseStreamingTests
 
         var error = Assert.Single(await CollectAsync(CreateProvider(Response(Sse(chunk))).StreamAsync(Request())));
 
-        Assert.Equal("STREAM_PROTOCOL_ERROR", error.ErrorCode);
+        Assert.Equal(KejiProviderErrorCode.StreamProtocolError, error.ErrorCode);
     }
 
     [Fact]
@@ -343,8 +344,8 @@ public sealed class ProviderBaseStreamingTests
 
         var events = await CollectAsync(CreateProvider(Response(Sse(chunk))).StreamAsync(Request()));
 
-        Assert.Equal("STREAM_PROTOCOL_ERROR", events[^1].ErrorCode);
-        Assert.DoesNotContain(events, e => e.Type == ChatCompletionStreamEventType.Done);
+        Assert.Equal(KejiProviderErrorCode.StreamProtocolError, events[^1].ErrorCode);
+        Assert.DoesNotContain(events, e => e.Type == KejiProviderStreamEventKind.Done);
     }
 
     [Fact]
@@ -356,7 +357,7 @@ public sealed class ProviderBaseStreamingTests
 
         var events = await CollectAsync(CreateProvider(Response(body)).StreamAsync(Request()));
 
-        Assert.Equal("STREAM_PROTOCOL_ERROR", Assert.Single(events).ErrorCode);
+        Assert.Equal(KejiProviderErrorCode.StreamProtocolError, Assert.Single(events).ErrorCode);
     }
 
     [Fact]
@@ -373,36 +374,36 @@ public sealed class ProviderBaseStreamingTests
         Assert.Equal(
             new[]
             {
-                ChatCompletionStreamEventType.ChoiceFinished,
-                ChatCompletionStreamEventType.ChoiceFinished,
-                ChatCompletionStreamEventType.Usage,
-                ChatCompletionStreamEventType.Done
+                KejiProviderStreamEventKind.ChoiceFinished,
+                KejiProviderStreamEventKind.ChoiceFinished,
+                KejiProviderStreamEventKind.Usage,
+                KejiProviderStreamEventKind.Done
             },
             terminal.Select(item => item.Type));
         Assert.Equal(0, terminal[0].ChoiceIndex);
-        Assert.Equal("content_filter", terminal[0].FinishReason);
+        Assert.Equal(KejiFinishReason.ContentFilter, terminal[0].FinishReason);
         Assert.False(terminal[0].HasToolCalls);
         Assert.False(terminal[0].ShouldExecuteTools);
         Assert.Equal(1, terminal[1].ChoiceIndex);
-        Assert.Equal("tool_calls", terminal[1].FinishReason);
+        Assert.Equal(KejiFinishReason.ToolCalls, terminal[1].FinishReason);
         Assert.True(terminal[1].HasToolCalls);
         Assert.True(terminal[1].ShouldExecuteTools);
         Assert.Equal(11, terminal[2].Usage!.TotalTokens);
     }
 
     [Theory]
-    [InlineData("tool_calls", true)]
-    [InlineData("stop", true)]
-    [InlineData("content_filter", false)]
-    [InlineData("refusal", false)]
-    [InlineData("error", false)]
-    [InlineData("STOP", false)]
-    [InlineData(" TOOL_CALLS ", false)]
-    public void ChoiceFinishedToolAuthorizationRequiresExactReason(string finishReason, bool expected)
+    [InlineData(KejiFinishReason.ToolCalls, true)]
+    [InlineData(KejiFinishReason.Stop, true)]
+    [InlineData(KejiFinishReason.ContentFilter, false)]
+    [InlineData(KejiFinishReason.Invalid, false)]
+    [InlineData(KejiFinishReason.Error, false)]
+    [InlineData(KejiFinishReason.Length, false)]
+    [InlineData((KejiFinishReason)99, false)]
+    public void ChoiceFinishedToolAuthorizationRequiresExactReason(KejiFinishReason expectedReason, bool expected)
     {
-        var streamEvent = ChatCompletionStreamEvent.ChoiceFinished(finishReason, hasToolCalls: true);
+        var streamEvent = ChatCompletionStreamEvent.ChoiceFinished(expectedReason, hasToolCalls: true);
 
-        Assert.Equal(finishReason, streamEvent.FinishReason);
+        Assert.Equal(expectedReason, streamEvent.FinishReason);
         Assert.True(streamEvent.HasToolCalls);
         Assert.Equal(expected, streamEvent.ShouldExecuteTools);
     }
@@ -416,11 +417,11 @@ public sealed class ProviderBaseStreamingTests
 
         var events = await CollectAsync(CreateProvider(handler).StreamAsync(Request()));
 
-        Assert.Equal("partial", Assert.Single(events, item => item.Type == ChatCompletionStreamEventType.Token).Content);
-        Assert.Equal("STREAM_INTERRUPTED", events[^1].ErrorCode);
-        Assert.DoesNotContain(events, item => item.Type == ChatCompletionStreamEventType.ChoiceFinished);
-        Assert.DoesNotContain(events, item => item.Type == ChatCompletionStreamEventType.Usage);
-        Assert.DoesNotContain(events, item => item.Type == ChatCompletionStreamEventType.Done);
+        Assert.Equal("partial", Assert.Single(events, item => item.Type == KejiProviderStreamEventKind.Token).Content);
+        Assert.Equal(KejiProviderErrorCode.StreamInterrupted, events[^1].ErrorCode);
+        Assert.DoesNotContain(events, item => item.Type == KejiProviderStreamEventKind.ChoiceFinished);
+        Assert.DoesNotContain(events, item => item.Type == KejiProviderStreamEventKind.Usage);
+        Assert.DoesNotContain(events, item => item.Type == KejiProviderStreamEventKind.Done);
     }
 
     [Fact]
@@ -431,7 +432,7 @@ public sealed class ProviderBaseStreamingTests
 
         var error = Assert.Single(await CollectAsync(CreateProvider(response).StreamAsync(Request())));
 
-        Assert.Equal("INVALID_CONTENT_TYPE", error.ErrorCode);
+        Assert.Equal(KejiProviderErrorCode.InvalidContentType, error.ErrorCode);
     }
 
     [Fact]
@@ -441,14 +442,14 @@ public sealed class ProviderBaseStreamingTests
         var utf16Bytes = Encoding.Unicode.GetPreamble().Concat(Encoding.Unicode.GetBytes(text)).ToArray();
         var utf16Events = await CollectAsync(
             CreateProvider(StreamResponse(new MemoryStream(utf16Bytes))).StreamAsync(Request()));
-        Assert.Equal("STREAM_PROTOCOL_ERROR", Assert.Single(utf16Events).ErrorCode);
+        Assert.Equal(KejiProviderErrorCode.StreamProtocolError, Assert.Single(utf16Events).ErrorCode);
 
         var utf8Bytes = Encoding.UTF8.GetPreamble().Concat(Utf8(text)).ToArray();
         var utf8Events = await CollectAsync(
             CreateProvider(StreamResponse(new MemoryStream(utf8Bytes))).StreamAsync(Request()));
-        Assert.Equal("bom", Assert.Single(utf8Events, item => item.Type == ChatCompletionStreamEventType.Token).Content);
-        Assert.Contains(utf8Events, item => item.Type == ChatCompletionStreamEventType.ChoiceFinished);
-        Assert.Equal(ChatCompletionStreamEventType.Done, utf8Events[^1].Type);
+        Assert.Equal("bom", Assert.Single(utf8Events, item => item.Type == KejiProviderStreamEventKind.Token).Content);
+        Assert.Contains(utf8Events, item => item.Type == KejiProviderStreamEventKind.ChoiceFinished);
+        Assert.Equal(KejiProviderStreamEventKind.Done, utf8Events[^1].Type);
     }
 
     [Fact]
@@ -457,7 +458,7 @@ public sealed class ProviderBaseStreamingTests
         var events = await CollectAsync(CreateProvider(Response("data:\n\n")).StreamAsync(Request()));
 
         var error = Assert.Single(events);
-        Assert.Equal("STREAM_PROTOCOL_ERROR", error.ErrorCode);
+        Assert.Equal(KejiProviderErrorCode.StreamProtocolError, error.ErrorCode);
     }
 
     [Theory]
@@ -468,7 +469,7 @@ public sealed class ProviderBaseStreamingTests
         var events = await CollectAsync(CreateProvider(Response(Sse(chunk))).StreamAsync(Request()));
 
         var error = Assert.Single(events);
-        Assert.Equal("STREAM_PROTOCOL_ERROR", error.ErrorCode);
+        Assert.Equal(KejiProviderErrorCode.StreamProtocolError, error.ErrorCode);
     }
 
     [Fact]
@@ -482,9 +483,9 @@ public sealed class ProviderBaseStreamingTests
         var events = await CollectAsync(provider.StreamAsync(Request()));
 
         Assert.Equal(2, handler.CallCount);
-        Assert.Equal(TimeSpan.FromMilliseconds(250), Assert.Single(provider.Delays));
-        Assert.Equal("retry-success", Assert.Single(events, item => item.Type == ChatCompletionStreamEventType.Token).Content);
-        Assert.Equal(ChatCompletionStreamEventType.Done, events[^1].Type);
+        Assert.Equal(TimeSpan.FromSeconds(1), Assert.Single(provider.Delays));
+        Assert.Equal("retry-success", Assert.Single(events, item => item.Type == KejiProviderStreamEventKind.Token).Content);
+        Assert.Equal(KejiProviderStreamEventKind.Done, events[^1].Type);
     }
 
     [Fact]
@@ -500,9 +501,9 @@ public sealed class ProviderBaseStreamingTests
 
         Assert.Equal(1, handler.CallCount);
         Assert.Empty(provider.Delays);
-        Assert.Equal("partial", Assert.Single(events, item => item.Type == ChatCompletionStreamEventType.Token).Content);
-        Assert.Equal("TIMEOUT", events[^1].ErrorCode);
-        Assert.DoesNotContain(events, item => item.Type == ChatCompletionStreamEventType.ChoiceFinished);
+        Assert.Equal("partial", Assert.Single(events, item => item.Type == KejiProviderStreamEventKind.Token).Content);
+        Assert.Equal(KejiProviderErrorCode.Timeout, events[^1].ErrorCode);
+        Assert.DoesNotContain(events, item => item.Type == KejiProviderStreamEventKind.ChoiceFinished);
     }
 
     [Fact]
@@ -560,7 +561,7 @@ public sealed class ProviderBaseStreamingTests
     private static ChatCompletionRequest Request() => new()
     {
         Model = "test-model",
-        Messages = new[] { new ChatMessage { Role = "user", Content = "hello" } }
+        Messages = new[] { new ChatMessage { Role = KejiChatRole.User, Content = "hello" } }.ToImmutableArray()
     };
 
     private static string TokenChunk(string value) =>

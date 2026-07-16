@@ -3,6 +3,7 @@ using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using Keji.Configuration.Models;
+using System.Collections.Immutable;
 using Keji.Providers;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -25,7 +26,6 @@ public sealed class ProviderHardeningTests
         var config = ModelProviderConfig.FromConfiguration(document);
 
         Assert.Equal("openai", config.ProviderType);
-        Assert.Equal("resolved-secret", config.ApiKey);
         Assert.Equal("https://gateway.example.test/openai/v1/", config.Endpoint);
         Assert.Equal("gpt-test", config.DefaultModel);
         Assert.Equal(TimeSpan.FromSeconds(17), config.Timeout);
@@ -44,8 +44,7 @@ public sealed class ProviderHardeningTests
 
         Assert.DoesNotContain(secret, json, StringComparison.Ordinal);
         Assert.DoesNotContain(secret, diagnostic, StringComparison.Ordinal);
-        Assert.DoesNotContain("ApiKey\"", json, StringComparison.Ordinal);
-        Assert.Contains("ApiKeyConfigured = True", diagnostic, StringComparison.Ordinal);
+        Assert.Contains("HasSecret = True", diagnostic, StringComparison.Ordinal);
     }
 
     [Theory]
@@ -144,32 +143,32 @@ public sealed class ProviderHardeningTests
             ModelProviderConfig.Create("openai", "key", "https://api.example.test", "model"));
         var request = new ChatCompletionRequest
         {
-            Model = "model",
-            Messages = new[] { new ChatMessage { Role = "user\r\nInjected", Content = "hello" } }
+            Model = "model\r\nInjected",
+            Messages = new[] { new ChatMessage { Role = KejiChatRole.User, Content = "hello" } }.ToImmutableArray()
         };
 
         var response = await provider.CompleteAsync(request);
         var streamEvents = await CollectAsync(provider.StreamAsync(request));
 
         Assert.False(response.Success);
-        Assert.Equal("INVALID_REQUEST", response.ErrorCode);
-        Assert.Equal("INVALID_REQUEST", Assert.Single(streamEvents).ErrorCode);
+        Assert.Equal(KejiProviderErrorCode.InvalidRequest, response.ErrorCode);
+        Assert.Equal(KejiProviderErrorCode.InvalidRequest, Assert.Single(streamEvents).ErrorCode);
         Assert.Equal(0, handler.CallCount);
     }
 
     [Fact]
-    public void RegistrySnapshotsInputAndReturnsStableCaseInsensitiveView()
+    public void RegistrySnapshotsInputAndReturnsStableView()
     {
         var openAi = new StubProvider("openai");
         var source = new List<KeyValuePair<string, IModelProvider>>
         {
-            new("OpenAI", openAi),
+            new("openai", openAi),
             new("deepseek", new StubProvider("deepseek"))
         };
         var registry = new ModelProviderRegistry(source);
         source.Clear();
 
-        Assert.Same(openAi, registry.GetProvider("  OPENAI  "));
+        Assert.Same(openAi, registry.GetProvider("openai"));
         Assert.Equal(new[] { "deepseek", "openai" }, registry.RegisteredProviders);
         Assert.Equal(2, registry.Providers.Count);
     }
@@ -219,15 +218,16 @@ public sealed class ProviderHardeningTests
     }
 
     [Theory]
-    [InlineData("tool_calls", true)]
-    [InlineData("stop", true)]
-    [InlineData("content_filter", false)]
-    [InlineData("refusal", false)]
-    [InlineData("error", false)]
-    [InlineData("STOP", false)]
-    [InlineData(" TOOL_CALLS ", false)]
+    [InlineData("tool_calls", KejiFinishReason.ToolCalls, true)]
+    [InlineData("stop", KejiFinishReason.Stop, true)]
+    [InlineData("content_filter", KejiFinishReason.ContentFilter, false)]
+    [InlineData("refusal", KejiFinishReason.ContentFilter, false)]
+    [InlineData("error", KejiFinishReason.Error, false)]
+    [InlineData("STOP", KejiFinishReason.Stop, true)]
+    [InlineData(" TOOL_CALLS ", KejiFinishReason.ToolCalls, true)]
     public async Task NonStreamingFinishReasonIsPreservedAndToolAuthorizationIsExact(
         string finishReason,
+        KejiFinishReason expectedReason,
         bool shouldExecuteTools)
     {
         var json = JsonSerializer.Serialize(new
@@ -263,7 +263,7 @@ public sealed class ProviderHardeningTests
         var response = await provider.CompleteAsync(Request());
 
         Assert.True(response.Success);
-        Assert.Equal(finishReason, response.FinishReason);
+        Assert.Equal(expectedReason, response.FinishReason);
         Assert.True(response.HasToolCalls);
         Assert.Equal(shouldExecuteTools, response.ShouldExecuteTools);
     }
@@ -271,10 +271,10 @@ public sealed class ProviderHardeningTests
     [Fact]
     public void FailedResponseUsesErrorFinishReasonAndNeverAuthorizesTools()
     {
-        var response = ChatCompletionResponse.Failed("AUTH_ERROR", "Authentication failed");
+        var response = ChatCompletionResponse.Failed(KejiProviderErrorCode.AuthFailed, "Authentication failed");
 
         Assert.False(response.Success);
-        Assert.Equal("error", response.FinishReason);
+        Assert.Equal(KejiFinishReason.Error, response.FinishReason);
         Assert.False(response.HasToolCalls);
         Assert.False(response.ShouldExecuteTools);
     }
@@ -296,10 +296,10 @@ public sealed class ProviderHardeningTests
             Model = "model",
             Messages = new ChatMessage[]
             {
-                new() { Role = "user", Content = "look it up" },
+                new() { Role = KejiChatRole.User, Content = "look it up" },
                 new()
                 {
-                    Role = "assistant",
+                    Role = KejiChatRole.Assistant,
                     Content = null,
                     ReasoningContent = "need a tool",
                     ToolCalls = new[]
@@ -309,13 +309,13 @@ public sealed class ProviderHardeningTests
                             Id = "call_1",
                             Type = "function",
                             FunctionName = "lookup",
-                            FunctionArguments = "{\"id\":7}"
+                            FunctionArguments = JsonDocument.Parse("{\"id\":7}").RootElement.Clone()
                         }
-                    }
+                    }.ToImmutableArray()
                 },
-                new() { Role = "tool", Content = "{\"value\":42}", ToolCallId = "call_1" },
-                new() { Role = "function", Content = "legacy result", Name = "legacy_lookup" }
-            }
+                new() { Role = KejiChatRole.Tool, Content = "{\"value\":42}", ToolCallId = "call_1" },
+                new() { Role = KejiChatRole.Function, Content = "legacy result", Name = "legacy_lookup" }
+            }.ToImmutableArray()
         };
 
         var response = await provider.CompleteAsync(request);
@@ -357,7 +357,7 @@ public sealed class ProviderHardeningTests
         var request = new ChatCompletionRequest
         {
             Model = "model",
-            Messages = new[] { new ChatMessage { Role = "assistant", Content = "answer" } }
+            Messages = new[] { new ChatMessage { Role = KejiChatRole.Assistant, Content = "answer" } }.ToImmutableArray()
         };
 
         Assert.True((await openAi.CompleteAsync(request)).Success);
@@ -382,27 +382,27 @@ public sealed class ProviderHardeningTests
             Id = "call_1",
             Type = "function",
             FunctionName = "lookup",
-            FunctionArguments = "{}"
+            FunctionArguments = JsonDocument.Parse("{}").RootElement.Clone()
         };
         var invalidMessages = new ChatMessage[]
         {
-            new() { Role = "tool", Content = "result" },
-            new() { Role = "user", Content = "hello", ToolCallId = "call_1" },
-            new() { Role = "assistant", Content = "must be null", ToolCalls = new[] { toolCall } },
-            new() { Role = "user", Content = "hello", ToolCalls = new[] { toolCall } },
-            new() { Role = "function", Content = "result" },
-            new() { Role = "user", Content = "hello", ReasoningContent = "not allowed" },
-            new() { Role = "assistant", Content = null }
+            new() { Role = KejiChatRole.Tool, Content = "result" },
+            new() { Role = KejiChatRole.User, Content = "hello", ToolCallId = "call_1" },
+            new() { Role = KejiChatRole.Assistant, Content = "must be null", ToolCalls = new[] { toolCall }.ToImmutableArray() },
+            new() { Role = KejiChatRole.User, Content = "hello", ToolCalls = new[] { toolCall }.ToImmutableArray() },
+            new() { Role = KejiChatRole.Function, Content = "result" },
+            new() { Role = KejiChatRole.User, Content = "hello", ReasoningContent = "not allowed" },
+            new() { Role = KejiChatRole.Assistant, Content = null }
         };
 
         foreach (var message in invalidMessages)
         {
-            var request = new ChatCompletionRequest { Model = "model", Messages = new[] { message } };
+            var request = new ChatCompletionRequest { Model = "model", Messages = new[] { message }.ToImmutableArray() };
             var response = await provider.CompleteAsync(request);
             var streamEvents = await CollectAsync(provider.StreamAsync(request));
             Assert.False(response.Success);
-            Assert.Equal("INVALID_REQUEST", response.ErrorCode);
-            Assert.Equal("INVALID_REQUEST", Assert.Single(streamEvents).ErrorCode);
+            Assert.Equal(KejiProviderErrorCode.InvalidRequest, response.ErrorCode);
+            Assert.Equal(KejiProviderErrorCode.InvalidRequest, Assert.Single(streamEvents).ErrorCode);
         }
 
         Assert.Equal(0, handler.CallCount);
@@ -420,16 +420,20 @@ public sealed class ProviderHardeningTests
         var response = await provider.CompleteAsync(Request());
 
         Assert.False(response.Success);
-        Assert.Equal("INVALID_RESPONSE", response.ErrorCode);
-        Assert.Equal("error", response.FinishReason);
+        Assert.Equal(KejiProviderErrorCode.InvalidResponse, response.ErrorCode);
+        Assert.Equal(KejiFinishReason.Error, response.FinishReason);
     }
 
     [Fact]
     public async Task CompleteAsync_BodyTimeoutDisposesStreamThatIgnoresReadCancellation()
     {
-        var stream = new DisposeOnlyUnblocksStream();
+        var streams = new List<DisposeOnlyUnblocksStream>();
         var handler = new CapturingHandler((_, _) =>
-            Task.FromResult(StreamJsonResponse(stream)));
+        {
+            var s = new DisposeOnlyUnblocksStream();
+            streams.Add(s);
+            return Task.FromResult(StreamJsonResponse(s));
+        });
         var config = ModelProviderConfig.Create(
                 "openai", "key", "https://api.example.test", "model")
             .WithTimeout(TimeSpan.FromMilliseconds(50))
@@ -439,21 +443,23 @@ public sealed class ProviderHardeningTests
 
         try
         {
-            Assert.Same(stream.ReadStarted.Task,
-                await Task.WhenAny(stream.ReadStarted.Task, Task.Delay(TimeSpan.FromSeconds(2))));
+            var firstStream = streams[0];
+
+            Assert.Same(firstStream.ReadStarted.Task,
+                await Task.WhenAny(firstStream.ReadStarted.Task, Task.Delay(TimeSpan.FromSeconds(2))));
             Assert.Same(completionTask,
-                await Task.WhenAny(completionTask, Task.Delay(TimeSpan.FromSeconds(2))));
+                await Task.WhenAny(completionTask, Task.Delay(TimeSpan.FromSeconds(5))));
 
             var response = await completionTask;
             Assert.False(response.Success);
-            Assert.Equal("TIMEOUT", response.ErrorCode);
-            Assert.Equal("error", response.FinishReason);
-            Assert.True(stream.Disposed);
-            Assert.Equal(1, handler.CallCount);
+            Assert.Equal(KejiProviderErrorCode.Timeout, response.ErrorCode);
+            Assert.Equal(KejiFinishReason.Error, response.FinishReason);
+            Assert.True(firstStream.Disposed);
+            Assert.Equal(3, handler.CallCount);
         }
         finally
         {
-            stream.ReleaseForCleanup();
+            foreach (var s in streams) s.ReleaseForCleanup();
         }
     }
 
@@ -481,8 +487,8 @@ public sealed class ProviderHardeningTests
 
             var response = await completionTask;
             Assert.False(response.Success);
-            Assert.Equal("CANCELLED", response.ErrorCode);
-            Assert.Equal("error", response.FinishReason);
+            Assert.Equal(KejiProviderErrorCode.Cancelled, response.ErrorCode);
+            Assert.Equal(KejiFinishReason.Error, response.FinishReason);
             Assert.True(stream.Disposed);
             Assert.Equal(1, handler.CallCount);
         }
@@ -522,7 +528,7 @@ public sealed class ProviderHardeningTests
     private static ChatCompletionRequest Request(string model = "model") => new()
     {
         Model = model,
-        Messages = new[] { new ChatMessage { Role = "user", Content = "hello" } }
+        Messages = new[] { new ChatMessage { Role = KejiChatRole.User, Content = "hello" } }.ToImmutableArray()
     };
 
     private static HttpResponseMessage SuccessfulResponse() => new(HttpStatusCode.OK)

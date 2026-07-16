@@ -30,7 +30,7 @@ public static class KejiSseAdapter
             yield break;
 
         var clock = timeProvider ?? TimeProvider.System;
-        var sequence = 0L;
+        var sequence = 1L;
         var lastTimestamp = DateTime.MinValue;
         var usageSeen = false;
         TokenUsage? pendingUsage = null;
@@ -39,6 +39,7 @@ public static class KejiSseAdapter
         var activeToolCalls = new Dictionary<(int ChoiceIndex, int ToolCallIndex), string>();
         var activeToolArguments = new Dictionary<(int ChoiceIndex, int ToolCallIndex), ToolArgumentState>();
         var choiceStates = new Dictionary<int, AdapterChoiceState>();
+        var doneEmitted = false;
 
         bool TryGetChoiceState(int choiceIndex, out AdapterChoiceState state)
         {
@@ -70,7 +71,7 @@ public static class KejiSseAdapter
             int? toolCallIndex = null,
             int? choiceIndex = null,
             TokenUsage? usage = null,
-            string? errorCode = null,
+            KejiProviderErrorCode errorCode = default,
             string? errorMessage = null)
         {
             var timestamp = clock.GetUtcNow().UtcDateTime;
@@ -92,19 +93,18 @@ public static class KejiSseAdapter
                 ErrorCode = errorCode,
                 ErrorMessage = errorMessage,
                 Sequence = currentSequence,
-                EventId = $"evt_{currentSequence}",
+                EventId = Guid.NewGuid().ToString("N"),
                 TimestampUtc = timestamp,
             };
         }
 
         KejiSseEvent CreateProtocolError()
         {
-            var error = ProviderErrorMapper.Sanitize("STREAM_PROTOCOL_ERROR");
             return CreateEvent(
                 KejiSseEventType.Error,
                 KejiSsePhase.Error,
-                errorCode: error.Code,
-                errorMessage: error.Message);
+                errorCode: KejiProviderErrorCode.StreamProtocolError,
+                errorMessage: "Provider stream violated the protocol");
         }
 
         IAsyncEnumerator<ChatCompletionStreamEvent>? enumerator = null;
@@ -124,12 +124,11 @@ public static class KejiSseAdapter
 
         if (acquisitionException is not null || enumerator is null)
         {
-            var error = ProviderErrorMapper.Sanitize("PROVIDER_ERROR");
             yield return CreateEvent(
                 KejiSseEventType.Error,
                 KejiSsePhase.Error,
-                errorCode: error.Code,
-                errorMessage: error.Message);
+                errorCode: KejiProviderErrorCode.ProviderError,
+                errorMessage: "Model provider request failed");
             yield break;
         }
 
@@ -157,17 +156,22 @@ public static class KejiSseAdapter
 
                 if (upstreamException is not null)
                 {
-                    var error = ProviderErrorMapper.Sanitize("PROVIDER_ERROR");
                     yield return CreateEvent(
                         KejiSseEventType.Error,
                         KejiSsePhase.Error,
-                        errorCode: error.Code,
-                        errorMessage: error.Message);
+                        errorCode: KejiProviderErrorCode.ProviderError,
+                        errorMessage: "Model provider request failed");
                     yield break;
                 }
 
                 if (!hasNext)
                     break;
+
+                if (doneEmitted)
+                {
+                    yield return CreateProtocolError();
+                    yield break;
+                }
 
                 ct.ThrowIfCancellationRequested();
                 sawAnyProviderEvent = true;
@@ -179,7 +183,7 @@ public static class KejiSseAdapter
                 }
 
                 if (usageSeen && providerEvent.Type is not
-                    (ChatCompletionStreamEventType.Done or ChatCompletionStreamEventType.Error))
+                    (KejiProviderStreamEventKind.Done or KejiProviderStreamEventKind.Error))
                 {
                     yield return CreateProtocolError();
                     yield break;
@@ -187,7 +191,7 @@ public static class KejiSseAdapter
 
                 switch (providerEvent.Type)
                 {
-                    case ChatCompletionStreamEventType.ReasoningToken:
+                    case KejiProviderStreamEventKind.ReasoningToken:
                         if (string.IsNullOrEmpty(providerEvent.Content) ||
                             !TryGetChoiceState(providerEvent.ChoiceIndex, out var reasoningState) ||
                             reasoningState.Finished ||
@@ -220,7 +224,7 @@ public static class KejiSseAdapter
                             choiceIndex: providerEvent.ChoiceIndex);
                         break;
 
-                    case ChatCompletionStreamEventType.Token:
+                    case KejiProviderStreamEventKind.Token:
                         if (string.IsNullOrEmpty(providerEvent.Content) ||
                             !TryGetChoiceState(providerEvent.ChoiceIndex, out var answerState) ||
                             answerState.Finished ||
@@ -251,7 +255,7 @@ public static class KejiSseAdapter
                             choiceIndex: providerEvent.ChoiceIndex);
                         break;
 
-                    case ChatCompletionStreamEventType.ToolCallBegin:
+                    case KejiProviderStreamEventKind.ToolCallBegin:
                         var toolKey = (providerEvent.ChoiceIndex, providerEvent.ToolCallIndex);
                         if (providerEvent.ToolCallIndex is < 0 or > MaxToolCallIndex ||
                             !IsValidIdentifier(providerEvent.ToolCallId, 256) ||
@@ -275,7 +279,7 @@ public static class KejiSseAdapter
                         toolState.MayResumeThinking = false;
                         break;
 
-                    case ChatCompletionStreamEventType.ToolCallDelta:
+                    case KejiProviderStreamEventKind.ToolCallDelta:
                         var deltaKey = (providerEvent.ChoiceIndex, providerEvent.ToolCallIndex);
                         if (providerEvent.ToolCallIndex is < 0 or > MaxToolCallIndex ||
                             providerEvent.ToolArguments is null ||
@@ -297,7 +301,7 @@ public static class KejiSseAdapter
 
                         break;
 
-                    case ChatCompletionStreamEventType.ToolCallEnd:
+                    case KejiProviderStreamEventKind.ToolCallEnd:
                         var endKey = (providerEvent.ChoiceIndex, providerEvent.ToolCallIndex);
                         if (providerEvent.ToolCallIndex is < 0 or > MaxToolCallIndex ||
                             !choiceStates.TryGetValue(providerEvent.ChoiceIndex, out var endedToolState) ||
@@ -323,8 +327,8 @@ public static class KejiSseAdapter
                         }
                         break;
 
-                    case ChatCompletionStreamEventType.ChoiceFinished:
-                        if (!IsValidFinishReason(providerEvent.FinishReason) ||
+                    case KejiProviderStreamEventKind.ChoiceFinished:
+                        if (providerEvent.FinishReason == KejiFinishReason.Invalid ||
                             !TryGetChoiceState(providerEvent.ChoiceIndex, out var finishedState) ||
                             finishedState.Finished ||
                             providerEvent.HasToolCalls != (finishedState.ToolCallCount > 0) ||
@@ -338,7 +342,7 @@ public static class KejiSseAdapter
                         finishedState.FinishReason = providerEvent.FinishReason;
                         break;
 
-                    case ChatCompletionStreamEventType.Usage:
+                    case KejiProviderStreamEventKind.Usage:
                         if (!IsValidUsage(providerEvent.Usage) || activeToolCalls.Count != 0 ||
                             choiceStates.Count == 0 ||
                             choiceStates.Values.Any(static state => !state.Finished))
@@ -351,16 +355,18 @@ public static class KejiSseAdapter
                         pendingUsage = providerEvent.Usage;
                         break;
 
-                    case ChatCompletionStreamEventType.Error:
-                        var sanitized = ProviderErrorMapper.Sanitize(providerEvent.ErrorCode);
+                    case KejiProviderStreamEventKind.Error:
+                        var (sanitizedCode, sanitizedMessage) = ProviderErrorMapper.Sanitize(providerEvent.ErrorCode);
                         yield return CreateEvent(
                             KejiSseEventType.Error,
                             KejiSsePhase.Error,
-                            errorCode: sanitized.Code,
-                            errorMessage: sanitized.Message);
+                            errorCode: sanitizedCode,
+                            errorMessage: sanitizedMessage);
+                        doneEmitted = true;
+                        yield return CreateEvent(KejiSseEventType.Done, KejiSsePhase.Done);
                         yield break;
 
-                    case ChatCompletionStreamEventType.Done:
+                    case KejiProviderStreamEventKind.Done:
                         if (activeToolCalls.Count != 0 || choiceStates.Count == 0 ||
                             choiceStates.Values.Any(static state => !state.Finished))
                         {
@@ -371,7 +377,7 @@ public static class KejiSseAdapter
                         foreach (var (choiceIndex, state) in choiceStates.OrderBy(static pair => pair.Key))
                         {
                             if (state.ToolCallCount == 0 ||
-                                state.FinishReason is not ("tool_calls" or "stop"))
+                                state.FinishReason is not (KejiFinishReason.ToolCalls or KejiFinishReason.Stop))
                             {
                                 state.PendingToolCalls.Clear();
                                 continue;
@@ -410,6 +416,7 @@ public static class KejiSseAdapter
                         }
 
                         ct.ThrowIfCancellationRequested();
+                        doneEmitted = true;
                         yield return CreateEvent(KejiSseEventType.Done, KejiSsePhase.Done);
                         yield break;
 
@@ -419,14 +426,15 @@ public static class KejiSseAdapter
                 }
             }
 
-            if (sawAnyProviderEvent)
+            if (sawAnyProviderEvent && !doneEmitted)
             {
-                var truncated = ProviderErrorMapper.Sanitize("STREAM_TRUNCATED");
                 yield return CreateEvent(
                     KejiSseEventType.Error,
                     KejiSsePhase.Error,
-                    errorCode: truncated.Code,
-                    errorMessage: truncated.Message);
+                    errorCode: KejiProviderErrorCode.StreamTruncated,
+                    errorMessage: "Provider stream ended unexpectedly");
+                doneEmitted = true;
+                yield return CreateEvent(KejiSseEventType.Done, KejiSsePhase.Done);
             }
         }
         finally
@@ -437,7 +445,6 @@ public static class KejiSseAdapter
             }
             catch (Exception)
             {
-                // The provider boundary never lets disposal diagnostics replace a terminal wire event.
             }
         }
     }
@@ -547,6 +554,8 @@ public static class KejiSseAdapter
         value.All(static character =>
             character is >= 'a' and <= 'z' or >= 'A' and <= 'Z' or >= '0' and <= '9' or '_' or '-' or '.');
 
+    private static readonly string[] ValidFinishReasons = ["stop", "length", "tool_calls", "content_filter", "error", "end_turn"];
+
     private static bool IsValidFinishReason(string? value) =>
         !string.IsNullOrWhiteSpace(value) &&
         value.Length <= 64 &&
@@ -563,7 +572,7 @@ public static class KejiSseAdapter
         public int ReasoningBytes;
         public int ToolArgumentBytes;
         public int ToolCallCount;
-        public string? FinishReason;
+        public KejiFinishReason FinishReason;
         public HashSet<string> ToolCallIds { get; } = new(StringComparer.Ordinal);
         public List<PendingToolCall> PendingToolCalls { get; } = new();
     }

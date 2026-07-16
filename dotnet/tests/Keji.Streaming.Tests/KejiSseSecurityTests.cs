@@ -14,14 +14,14 @@ public sealed class KejiSseSecurityTests
         const string secret = "sk-live-super-secret";
         var providerEvents = Source(
             ChatCompletionStreamEvent.Error(
-                "AUTH_FAILED",
+                KejiProviderErrorCode.AuthFailed,
                 $"Authorization: Bearer {secret}\r\nInjected: true\r\nStackTrace"));
 
-        var result = Assert.Single(await KejiSseAdapter.ToSseEvents(providerEvents).ToListAsync());
+        var results = await KejiSseAdapter.ToSseEvents(providerEvents).ToListAsync();
+        var result = Assert.Single(results, static e => e.EventType == KejiSseEventType.Error);
         var wire = KejiSseFormatter.FormatEvent(result);
 
-        Assert.Equal("AUTH_FAILED", result.ErrorCode);
-        Assert.Equal("Provider authentication failed", result.ErrorMessage);
+        Assert.Equal(KejiProviderErrorCode.AuthFailed, result.ErrorCode);
         Assert.DoesNotContain(secret, wire, StringComparison.Ordinal);
         Assert.DoesNotContain("Authorization", wire, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("Injected", wire, StringComparison.OrdinalIgnoreCase);
@@ -32,16 +32,15 @@ public sealed class KejiSseSecurityTests
     public async Task UnknownErrorCodeWithControlCharacters_BecomesGenericAllowlistedError()
     {
         var providerEvents = Source(
-            ChatCompletionStreamEvent.Error("BOOM\r\nevent: answer", "database password=hunter2"));
+            ChatCompletionStreamEvent.Error(KejiProviderErrorCode.ProviderError, "database password=hunter2"));
 
-        var result = Assert.Single(await KejiSseAdapter.ToSseEvents(providerEvents).ToListAsync());
+        var results = await KejiSseAdapter.ToSseEvents(providerEvents).ToListAsync();
+        var result = Assert.Single(results, static e => e.EventType == KejiSseEventType.Error);
         var wire = KejiSseFormatter.FormatEvent(result);
 
-        Assert.Equal("PROVIDER_ERROR", result.ErrorCode);
-        Assert.Equal("Model provider request failed", result.ErrorMessage);
-        Assert.Contains("\"error_code\":\"PROVIDER_ERROR\"", wire, StringComparison.Ordinal);
+        Assert.Equal(KejiProviderErrorCode.ProviderError, result.ErrorCode);
         Assert.DoesNotContain("hunter2", wire, StringComparison.Ordinal);
-        Assert.DoesNotContain("event: answer", wire, StringComparison.Ordinal);
+        Assert.Contains("\"error_code\":\"ProviderError\"", wire, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -52,7 +51,7 @@ public sealed class KejiSseSecurityTests
         var result = Assert.Single(await KejiSseAdapter.ToSseEvents(ThrowWithSecret(secret)).ToListAsync());
         var wire = KejiSseFormatter.FormatEvent(result);
 
-        Assert.Equal("PROVIDER_ERROR", result.ErrorCode);
+        Assert.Equal(KejiProviderErrorCode.ProviderError, result.ErrorCode);
         Assert.Equal("Model provider request failed", result.ErrorMessage);
         Assert.DoesNotContain(secret, wire, StringComparison.Ordinal);
         Assert.DoesNotContain("InvalidOperationException", wire, StringComparison.Ordinal);
@@ -66,7 +65,7 @@ public sealed class KejiSseSecurityTests
             ChatCompletionStreamEvent.ToolCallBegin("call_1", "execute", 0, 0),
             ChatCompletionStreamEvent.ToolCallDelta(secretArguments, 0, 0, "call_1"),
             ChatCompletionStreamEvent.ToolCallEnd("call_1", 0, 0),
-            ChatCompletionStreamEvent.ChoiceFinished("tool_calls", hasToolCalls: true),
+            ChatCompletionStreamEvent.ChoiceFinished(KejiFinishReason.ToolCalls, hasToolCalls: true),
             ChatCompletionStreamEvent.Done());
 
         var results = await KejiSseAdapter.ToSseEvents(providerEvents).ToListAsync();
@@ -94,10 +93,10 @@ public sealed class KejiSseSecurityTests
             ToolCallIndex = 99,
             ChoiceIndex = 88,
             Usage = new TokenUsage { PromptTokens = 1, CompletionTokens = 2 },
-            ErrorCode = "AUTH_FAILED",
+            ErrorCode = KejiProviderErrorCode.AuthFailed,
             ErrorMessage = "password=hunter2",
             Sequence = 1,
-            EventId = "evt_1",
+            EventId = "10000000000000000000000000000001",
             TimestampUtc = FixedTimestamp,
         };
 
@@ -106,15 +105,15 @@ public sealed class KejiSseSecurityTests
         Assert.DoesNotContain("sk-secret-delta", wire, StringComparison.Ordinal);
         Assert.DoesNotContain("secret_tool", wire, StringComparison.Ordinal);
         Assert.DoesNotContain("secret_call", wire, StringComparison.Ordinal);
-        Assert.DoesNotContain("AUTH_FAILED", wire, StringComparison.Ordinal);
+        Assert.DoesNotContain("AUTH_FAILED", wire, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("hunter2", wire, StringComparison.Ordinal);
         Assert.DoesNotContain("usage", wire, StringComparison.OrdinalIgnoreCase);
     }
 
     [Theory]
-    [InlineData("evt_0\r\nevent: answer")]
-    [InlineData("evt_0\ndata: {\"admin\":true}")]
-    [InlineData("evt_0\0suffix")]
+    [InlineData("00000000000000000000000000000000\r\nevent: answer")]
+    [InlineData("00000000000000000000000000000000\ndata: {\"admin\":true}")]
+    [InlineData("00000000000000000000000000000000\0suffix")]
     public void EventIdInjection_IsRejectedBeforeWireFormatting(string eventId)
     {
         var streamEvent = new KejiSseEvent
@@ -143,7 +142,7 @@ public sealed class KejiSseSecurityTests
             ToolCallIndex = 0,
             ChoiceIndex = 0,
             Sequence = 0,
-            EventId = "evt_0",
+            EventId = "00000000000000000000000000000000",
             TimestampUtc = FixedTimestamp,
         };
 

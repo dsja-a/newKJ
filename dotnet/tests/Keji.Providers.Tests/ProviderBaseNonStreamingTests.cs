@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text.Json;
+using System.Collections.Immutable;
 using Keji.Providers;
 
 namespace Keji.Providers.Tests;
@@ -27,7 +28,7 @@ public sealed class ProviderBaseNonStreamingTests
     private static ChatCompletionRequest MakeRequest() => new()
     {
         Model = "test-model",
-        Messages = new[] { new ChatMessage { Role = "user", Content = "hello" } }
+        Messages = new[] { new ChatMessage { Role = KejiChatRole.User, Content = "hello" } }.ToImmutableArray()
     };
 
     [Fact]
@@ -85,7 +86,7 @@ public sealed class ProviderBaseNonStreamingTests
 
         var result = await provider.CompleteAsync(MakeRequest());
 
-        Assert.NotNull(result.ToolCalls);
+        Assert.False(result.ToolCalls.IsDefaultOrEmpty);
         Assert.Single(result.ToolCalls);
         Assert.Equal("read_file", result.ToolCalls[0].FunctionName);
     }
@@ -99,7 +100,7 @@ public sealed class ProviderBaseNonStreamingTests
         var result = await provider.CompleteAsync(MakeRequest());
 
         Assert.False(result.Success);
-        Assert.Equal("AUTH_FAILED", result.ErrorCode);
+        Assert.Equal(KejiProviderErrorCode.AuthFailed, result.ErrorCode);
     }
 
     [Fact]
@@ -111,7 +112,7 @@ public sealed class ProviderBaseNonStreamingTests
         var result = await provider.CompleteAsync(MakeRequest());
 
         Assert.False(result.Success);
-        Assert.Equal("RATE_LIMITED", result.ErrorCode);
+        Assert.Equal(KejiProviderErrorCode.RateLimited, result.ErrorCode);
     }
 
     [Fact]
@@ -123,7 +124,7 @@ public sealed class ProviderBaseNonStreamingTests
         var result = await provider.CompleteAsync(MakeRequest());
 
         Assert.False(result.Success);
-        Assert.Equal("SERVICE_UNAVAILABLE", result.ErrorCode);
+        Assert.Equal(KejiProviderErrorCode.ServiceUnavailable, result.ErrorCode);
     }
 
     [Fact]
@@ -141,7 +142,7 @@ public sealed class ProviderBaseNonStreamingTests
         var result = await provider.CompleteAsync(MakeRequest());
 
         Assert.False(result.Success);
-        Assert.Equal("SERVER_ERROR", result.ErrorCode);
+        Assert.Equal(KejiProviderErrorCode.ServerError, result.ErrorCode);
     }
 
     [Fact]
@@ -155,7 +156,7 @@ public sealed class ProviderBaseNonStreamingTests
 
         var result = await provider.CompleteAsync(MakeRequest(), cts.Token);
         Assert.False(result.Success);
-        Assert.Equal("CANCELLED", result.ErrorCode);
+        Assert.Equal(KejiProviderErrorCode.Cancelled, result.ErrorCode);
     }
 
     [Fact]
@@ -186,7 +187,7 @@ public sealed class ProviderBaseNonStreamingTests
 
         var result = await provider.CompleteAsync(MakeRequest());
         Assert.False(result.Success);
-        Assert.Equal("REQUEST_ERROR", result.ErrorCode);
+        Assert.Equal(KejiProviderErrorCode.RequestError, result.ErrorCode);
     }
 
     [Fact]
@@ -197,7 +198,7 @@ public sealed class ProviderBaseNonStreamingTests
 
         var result = await provider.CompleteAsync(MakeRequest());
         Assert.False(result.Success);
-        Assert.Equal("GATEWAY_TIMEOUT", result.ErrorCode);
+        Assert.Equal(KejiProviderErrorCode.GatewayTimeout, result.ErrorCode);
     }
 
     [Fact]
@@ -208,7 +209,7 @@ public sealed class ProviderBaseNonStreamingTests
 
         var result = await provider.CompleteAsync(MakeRequest());
         Assert.False(result.Success);
-        Assert.Equal("ENDPOINT_NOT_FOUND", result.ErrorCode);
+        Assert.Equal(KejiProviderErrorCode.EndpointNotFound, result.ErrorCode);
     }
 
     [Fact]
@@ -222,7 +223,7 @@ public sealed class ProviderBaseNonStreamingTests
 
         var result = await provider.CompleteAsync(MakeRequest());
         Assert.False(result.Success);
-        Assert.Equal("CONNECTION_ERROR", result.ErrorCode);
+        Assert.Equal(KejiProviderErrorCode.ConnectionError, result.ErrorCode);
     }
 
     [Fact]
@@ -264,7 +265,7 @@ public sealed class ProviderBaseNonStreamingTests
             {
                 Content = new StringContent(JsonSerializer.Serialize(new
                 {
-                    choices = new[] { new { index = 0, message = new { role = "assistant", content = "OK" }, finish_reason = "stop" } }
+                    choices = new[] { new { index = 0,             message = new { role = "assistant", content = "OK" }, finish_reason = "stop" } }
                 }, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower }))
             });
         var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) };
@@ -301,7 +302,7 @@ public sealed class ProviderBaseNonStreamingTests
             {
                 Content = new StringContent(JsonSerializer.Serialize(new
                 {
-                    choices = new[] { new { index = 0, message = new { role = "assistant", content = "OK" }, finish_reason = "stop" } }
+                    choices = new[] { new { index = 0,             message = new { role = "assistant", content = "OK" }, finish_reason = "stop" } }
                 }, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower }))
             });
         var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) };
@@ -322,7 +323,7 @@ public sealed class ProviderBaseNonStreamingTests
             {
                 Content = new StringContent(JsonSerializer.Serialize(new
                 {
-                    choices = new[] { new { index = 0, message = new { role = "assistant", content = "OK" }, finish_reason = "stop" } }
+                    choices = new[] { new { index = 0,             message = new { role = "assistant", content = "OK" }, finish_reason = "stop" } }
                 }, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower }))
             });
         var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) };
@@ -359,7 +360,7 @@ public sealed class ProviderBaseNonStreamingTests
 
         var result = await provider.CompleteAsync(MakeRequest(), cts.Token);
         Assert.False(result.Success);
-        Assert.Equal("CANCELLED", result.ErrorCode);
+        Assert.Equal(KejiProviderErrorCode.Cancelled, result.ErrorCode);
     }
 
     [Fact]
@@ -413,6 +414,7 @@ public sealed class ProviderBaseNonStreamingTests
 internal sealed class MockHttpMessageHandler : HttpMessageHandler
 {
     private readonly Queue<Func<HttpResponseMessage>> _responses;
+    private Func<HttpResponseMessage>? _lastResponse;
     public int CallCount { get; private set; }
 
     public MockHttpMessageHandler(params HttpResponseMessage[] responses)
@@ -439,12 +441,24 @@ internal sealed class MockHttpMessageHandler : HttpMessageHandler
         if (cancellationToken.IsCancellationRequested)
             return Task.FromCanceled<HttpResponseMessage>(cancellationToken);
 
-        if (_responses.Count == 0)
+        Func<HttpResponseMessage> responseFunc;
+        if (_responses.Count > 0)
+        {
+            responseFunc = _responses.Dequeue();
+            _lastResponse = responseFunc;
+        }
+        else if (_lastResponse is not null)
+        {
+            responseFunc = _lastResponse;
+        }
+        else
+        {
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
+        }
 
         try
         {
-            var response = _responses.Dequeue()();
+            var response = responseFunc();
             return Task.FromResult(response);
         }
         catch (TaskCanceledException ex)

@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using Keji.Providers;
 
 namespace Keji.Providers.Tests;
@@ -15,9 +16,9 @@ public class ProviderModelTests
     [Fact]
     public void ChatCompletionResponse_Failed_SetsError()
     {
-        var resp = ChatCompletionResponse.Failed("ERR", "msg");
+        var resp = ChatCompletionResponse.Failed(KejiProviderErrorCode.ProviderError, "msg");
         Assert.False(resp.Success);
-        Assert.Equal("ERR", resp.ErrorCode);
+        Assert.Equal(KejiProviderErrorCode.ProviderError, resp.ErrorCode);
         Assert.Equal("msg", resp.ErrorMessage);
     }
 
@@ -39,7 +40,7 @@ public class ProviderModelTests
     [Fact]
     public void ChatCompletionResponse_Succeeded_WithToolCalls()
     {
-        var calls = new List<ChatToolCall> { new() { FunctionName = "read_file" } };
+        var calls = ImmutableArray.Create(new ChatToolCall { FunctionName = "read_file" });
         var resp = ChatCompletionResponse.Succeeded("", toolCalls: calls);
         Assert.Single(resp.ToolCalls!);
     }
@@ -55,7 +56,7 @@ public class ProviderModelTests
     public void ChatCompletionStreamEvent_ReasoningToken_SetsType()
     {
         var evt = ChatCompletionStreamEvent.ReasoningToken("think");
-        Assert.Equal(ChatCompletionStreamEventType.ReasoningToken, evt.Type);
+        Assert.Equal(KejiProviderStreamEventKind.ReasoningToken, evt.Type);
         Assert.Equal("think", evt.Content);
     }
 
@@ -63,7 +64,7 @@ public class ProviderModelTests
     public void ChatCompletionStreamEvent_Token_SetsType()
     {
         var evt = ChatCompletionStreamEvent.Token("hello");
-        Assert.Equal(ChatCompletionStreamEventType.Token, evt.Type);
+        Assert.Equal(KejiProviderStreamEventKind.Token, evt.Type);
         Assert.Equal("hello", evt.Content);
     }
 
@@ -86,7 +87,7 @@ public class ProviderModelTests
     public void ChatCompletionStreamEvent_ToolCallEnd_SetsType()
     {
         var evt = ChatCompletionStreamEvent.ToolCallEnd();
-        Assert.Equal(ChatCompletionStreamEventType.ToolCallEnd, evt.Type);
+        Assert.Equal(KejiProviderStreamEventKind.ToolCallEnd, evt.Type);
     }
 
     [Fact]
@@ -100,8 +101,8 @@ public class ProviderModelTests
     [Fact]
     public void ChatCompletionStreamEvent_Error_SetsCodeAndMessage()
     {
-        var evt = ChatCompletionStreamEvent.Error("ERR", "error msg");
-        Assert.Equal("ERR", evt.ErrorCode);
+        var evt = ChatCompletionStreamEvent.Error(KejiProviderErrorCode.ProviderError, "error msg");
+        Assert.Equal(KejiProviderErrorCode.ProviderError, evt.ErrorCode);
         Assert.Equal("error msg", evt.ErrorMessage);
     }
 
@@ -109,7 +110,7 @@ public class ProviderModelTests
     public void ChatCompletionStreamEvent_Done_SetsType()
     {
         var evt = ChatCompletionStreamEvent.Done();
-        Assert.Equal(ChatCompletionStreamEventType.Done, evt.Type);
+        Assert.Equal(KejiProviderStreamEventKind.Done, evt.Type);
     }
 
     [Fact]
@@ -130,9 +131,9 @@ public class ProviderModelTests
     public void ChatMessage_DefaultValues()
     {
         var msg = new ChatMessage();
-        Assert.Equal("", msg.Role);
+        Assert.Equal(KejiChatRole.Invalid, msg.Role);
         Assert.Equal("", msg.Content);
-        Assert.Null(msg.ToolCalls);
+        Assert.True(msg.ToolCalls.IsDefaultOrEmpty);
     }
 
     [Fact]
@@ -161,40 +162,40 @@ public class ProviderModelTests
     [Fact]
     public void ChatCompletionRequest_WithTools_HasToolsTrue()
     {
-        var req = new ChatCompletionRequest { Tools = new[] { new ChatTool { Name = "test" } } };
+        var req = new ChatCompletionRequest { Tools = new[] { new ChatTool { Name = "test" } }.ToImmutableArray() };
         Assert.True(req.HasTools);
     }
 
     [Fact]
     public void ModelProviderConfig_Create_ThrowsOnEmptyProviderType()
     {
-        Assert.Throws<ArgumentException>(() => ModelProviderConfig.Create("", "", "http://localhost", "model"));
+        Assert.Throws<ArgumentException>(() => ModelProviderConfig.Create("", "", "https://localhost", "model"));
     }
 
     [Fact]
     public void ModelProviderConfig_Create_ThrowsOnEmptyModel()
     {
-        Assert.Throws<ArgumentException>(() => ModelProviderConfig.Create("openai", "", "http://localhost", ""));
+        Assert.Throws<ArgumentException>(() => ModelProviderConfig.Create("openai", "", "https://localhost", ""));
     }
 
     [Fact]
     public void ModelProviderConfig_WithTimeout_ThrowsOnZero()
     {
-        var cfg = ModelProviderConfig.Create("openai", "key", "http://localhost", "model");
+        var cfg = ModelProviderConfig.Create("openai", "key", "https://localhost", "model");
         Assert.Throws<ArgumentOutOfRangeException>(() => cfg.WithTimeout(TimeSpan.Zero));
     }
 
     [Fact]
     public void ModelProviderConfig_WithTimeout_ThrowsOnOver120()
     {
-        var cfg = ModelProviderConfig.Create("openai", "key", "http://localhost", "model");
+        var cfg = ModelProviderConfig.Create("openai", "key", "https://localhost", "model");
         Assert.Throws<ArgumentOutOfRangeException>(() => cfg.WithTimeout(TimeSpan.FromSeconds(121)));
     }
 
     [Fact]
     public void ModelProviderConfig_WithTimeout_Valid()
     {
-        var cfg = ModelProviderConfig.Create("openai", "key", "http://localhost", "model");
+        var cfg = ModelProviderConfig.Create("openai", "key", "https://localhost", "model");
         var result = cfg.WithTimeout(TimeSpan.FromSeconds(30));
         Assert.Equal(30, result.Timeout.TotalSeconds);
     }
@@ -202,21 +203,21 @@ public class ProviderModelTests
     [Fact]
     public void ModelProviderConfig_WithMaxRetries_Negative_Throws()
     {
-        var cfg = ModelProviderConfig.Create("openai", "key", "http://localhost", "model");
+        var cfg = ModelProviderConfig.Create("openai", "key", "https://localhost", "model");
         Assert.Throws<ArgumentOutOfRangeException>(() => cfg.WithMaxRetries(-1));
     }
 
     [Fact]
     public void ModelProviderConfig_WithMaxRetries_Over5_Throws()
     {
-        var cfg = ModelProviderConfig.Create("openai", "key", "http://localhost", "model");
+        var cfg = ModelProviderConfig.Create("openai", "key", "https://localhost", "model");
         Assert.Throws<ArgumentOutOfRangeException>(() => cfg.WithMaxRetries(6));
     }
 
     [Fact]
     public void ModelProviderConfig_WithMaxRetries_Valid()
     {
-        var cfg = ModelProviderConfig.Create("openai", "key", "http://localhost", "model");
+        var cfg = ModelProviderConfig.Create("openai", "key", "https://localhost", "model");
         var result = cfg.WithMaxRetries(3);
         Assert.Equal(3, result.MaxRetries);
     }
@@ -224,21 +225,21 @@ public class ProviderModelTests
     [Fact]
     public void ModelProviderConfig_WithMaxTokens_Zero_Throws()
     {
-        var cfg = ModelProviderConfig.Create("openai", "key", "http://localhost", "model");
+        var cfg = ModelProviderConfig.Create("openai", "key", "https://localhost", "model");
         Assert.Throws<ArgumentOutOfRangeException>(() => cfg.WithMaxTokens(0));
     }
 
     [Fact]
     public void ModelProviderConfig_WithMaxTokens_Over131072_Throws()
     {
-        var cfg = ModelProviderConfig.Create("openai", "key", "http://localhost", "model");
+        var cfg = ModelProviderConfig.Create("openai", "key", "https://localhost", "model");
         Assert.Throws<ArgumentOutOfRangeException>(() => cfg.WithMaxTokens(200000));
     }
 
     [Fact]
     public void ModelProviderConfig_WithMaxTokens_Valid()
     {
-        var cfg = ModelProviderConfig.Create("openai", "key", "http://localhost", "model");
+        var cfg = ModelProviderConfig.Create("openai", "key", "https://localhost", "model");
         var result = cfg.WithMaxTokens(8192);
         Assert.Equal(8192, result.MaxTokens);
     }
@@ -246,21 +247,21 @@ public class ProviderModelTests
     [Fact]
     public void ModelProviderConfig_EndpointNormalized_TrailingSlash()
     {
-        var cfg = ModelProviderConfig.Create("openai", "key", "http://localhost:11434", "model");
+        var cfg = ModelProviderConfig.Create("openai", "key", "https://localhost:11434", "model");
         Assert.EndsWith("/", cfg.Endpoint);
     }
 
     [Fact]
     public void ModelProviderConfig_DefaultTimeoutIs30Seconds()
     {
-        var cfg = ModelProviderConfig.Create("openai", "key", "http://localhost", "model");
+        var cfg = ModelProviderConfig.Create("openai", "key", "https://localhost", "model");
         Assert.Equal(30, cfg.Timeout.TotalSeconds);
     }
 
     [Fact]
     public void ModelProviderConfig_DefaultMaxRetriesIs2()
     {
-        var cfg = ModelProviderConfig.Create("openai", "key", "http://localhost", "model");
+        var cfg = ModelProviderConfig.Create("openai", "key", "https://localhost", "model");
         Assert.Equal(2, cfg.MaxRetries);
     }
 }

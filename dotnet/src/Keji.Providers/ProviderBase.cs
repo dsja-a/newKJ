@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Collections.Immutable;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Runtime.CompilerServices;
@@ -33,7 +34,9 @@ public abstract partial class ProviderBase : IModelProvider
     private const int MaxToolNameLength = 128;
     private const int MaxToolCallIdLength = 256;
     private const long MaxReportedTokens = 1_000_000_000;
-    private static readonly TimeSpan MaxRetryAfter = TimeSpan.FromSeconds(30);
+    private const int MaxAttempts = 3;
+    private static readonly TimeSpan MaxRetryAfter = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan[] DefaultBackoff = [TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(4)];
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -75,10 +78,9 @@ public abstract partial class ProviderBase : IModelProvider
     {
         ArgumentNullException.ThrowIfNull(request);
         if (!TryValidateRequest(request, out _))
-            return ChatCompletionResponse.Failed("INVALID_REQUEST", "Model request is invalid");
+            return ChatCompletionResponse.Failed(KejiProviderErrorCode.InvalidRequest, "Model request is invalid");
 
-        var retryCount = 0;
-        while (true)
+        for (var attempt = 1; attempt <= MaxAttempts; attempt++)
         {
             HttpResponseMessage? response = null;
             try
@@ -92,17 +94,15 @@ public abstract partial class ProviderBase : IModelProvider
 
                 if (!response.IsSuccessStatusCode)
                 {
-                    if (retryCount < MaxRetries && IsRetryableStatus(response.StatusCode))
+                    var (retryable, delay) = await ShouldRetryAsync(response, attempt, ct).ConfigureAwait(false);
+                    if (retryable)
                     {
-                        var retryDelay = GetRetryDelay(response, retryCount + 1);
                         TryDisposeResponse(response);
-                        response = null;
-                        retryCount++;
-                        await DelayBeforeRetryAsync(retryDelay, ct).ConfigureAwait(false);
                         continue;
                     }
 
-                    var mapped = ProviderErrorMapper.Map(response.StatusCode, responseBody: null);
+                    var body = await ReadErrorBodyAsync(response.Content, ct).ConfigureAwait(false);
+                    var mapped = ProviderErrorMapper.Map(response.StatusCode, body);
                     return ChatCompletionResponse.Failed(mapped.Code, mapped.Message);
                 }
 
@@ -110,17 +110,17 @@ public abstract partial class ProviderBase : IModelProvider
                     response.Content,
                     timeoutCts.Token).ConfigureAwait(false);
                 if (json is null)
-                    return ChatCompletionResponse.Failed("INVALID_RESPONSE", "Provider returned an invalid response");
+                    return ChatCompletionResponse.Failed(KejiProviderErrorCode.InvalidResponse, "Provider returned an invalid response");
 
                 if (json.Choices is not { Count: > 0 and <= MaxChoices } ||
                     json.Choices.Any(static choice => choice is null) ||
                     json.Choices.Any(static choice => choice.Index is < 0 or > MaxChoiceIndex) ||
                     json.Choices.Select(static choice => choice.Index).Distinct().Count() != json.Choices.Count)
-                    return ChatCompletionResponse.Failed("INVALID_RESPONSE", "Provider returned an invalid response");
+                    return ChatCompletionResponse.Failed(KejiProviderErrorCode.InvalidResponse, "Provider returned an invalid response");
 
                 var choice = json.Choices.OrderBy(static item => item.Index).First();
                 if (choice.Message is null)
-                    return ChatCompletionResponse.Failed("INVALID_RESPONSE", "Provider returned an invalid response");
+                    return ChatCompletionResponse.Failed(KejiProviderErrorCode.InvalidResponse, "Provider returned an invalid response");
 
                 var usage = MapAndValidateUsage(json.Usage);
                 var content = choice.Message.Content ?? string.Empty;
@@ -136,7 +136,7 @@ public abstract partial class ProviderBase : IModelProvider
                 var responseModel = string.IsNullOrWhiteSpace(json.Model)
                     ? string.Empty
                     : ValidateResponseModel(json.Model);
-                var finishReason = ValidateFinishReason(choice.FinishReason);
+                var finishReason = MapFinishReason(choice.FinishReason);
 
                 return ChatCompletionResponse.Succeeded(
                     content,
@@ -148,55 +148,39 @@ public abstract partial class ProviderBase : IModelProvider
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
-                return ChatCompletionResponse.Failed("CANCELLED", "Request was cancelled");
+                return ChatCompletionResponse.Failed(KejiProviderErrorCode.Cancelled, "Request was cancelled");
             }
             catch (OperationCanceledException)
             {
-                if (retryCount < MaxRetries)
+                if (attempt < MaxAttempts)
                 {
-                    retryCount++;
-                    try
-                    {
-                        await DelayBeforeRetryAsync(GetBackoffDelay(retryCount), ct).ConfigureAwait(false);
-                    }
-                    catch (OperationCanceledException) when (ct.IsCancellationRequested)
-                    {
-                        return ChatCompletionResponse.Failed("CANCELLED", "Request was cancelled");
-                    }
+                    await DelayBeforeRetryAsync(GetBackoffDelay(attempt), ct).ConfigureAwait(false);
                     continue;
                 }
 
-                return ChatCompletionResponse.Failed("TIMEOUT", "Provider request timed out");
+                return ChatCompletionResponse.Failed(KejiProviderErrorCode.Timeout, "Provider request timed out");
             }
             catch (ProviderResponseTooLargeException)
             {
-                return ChatCompletionResponse.Failed("RESPONSE_TOO_LARGE", "Provider response exceeded the size limit");
+                return ChatCompletionResponse.Failed(KejiProviderErrorCode.ResponseTooLarge, "Provider response exceeded the size limit");
             }
             catch (JsonException)
             {
-                return ChatCompletionResponse.Failed("INVALID_RESPONSE", "Provider returned an invalid response");
+                return ChatCompletionResponse.Failed(KejiProviderErrorCode.InvalidResponse, "Provider returned an invalid response");
             }
             catch (InvalidDataException)
             {
-                return ChatCompletionResponse.Failed("INVALID_RESPONSE", "Provider returned an invalid response");
+                return ChatCompletionResponse.Failed(KejiProviderErrorCode.InvalidResponse, "Provider returned an invalid response");
             }
             catch (StreamProtocolException)
             {
-                return ChatCompletionResponse.Failed("INVALID_RESPONSE", "Provider returned an invalid response");
+                return ChatCompletionResponse.Failed(KejiProviderErrorCode.InvalidResponse, "Provider returned an invalid response");
             }
             catch (HttpRequestException exception)
             {
-                if (retryCount < MaxRetries && IsRetryableException(exception))
+                if (attempt < MaxAttempts && IsRetryableException(exception))
                 {
-                    retryCount++;
-                    try
-                    {
-                        await DelayBeforeRetryAsync(GetBackoffDelay(retryCount), ct).ConfigureAwait(false);
-                    }
-                    catch (OperationCanceledException) when (ct.IsCancellationRequested)
-                    {
-                        return ChatCompletionResponse.Failed("CANCELLED", "Request was cancelled");
-                    }
+                    await DelayBeforeRetryAsync(GetBackoffDelay(attempt), ct).ConfigureAwait(false);
                     continue;
                 }
 
@@ -207,27 +191,21 @@ public abstract partial class ProviderBase : IModelProvider
             }
             catch (IOException)
             {
-                if (retryCount < MaxRetries)
+                if (attempt < MaxAttempts)
                 {
-                    retryCount++;
-                    try
-                    {
-                        await DelayBeforeRetryAsync(GetBackoffDelay(retryCount), ct).ConfigureAwait(false);
-                    }
-                    catch (OperationCanceledException) when (ct.IsCancellationRequested)
-                    {
-                        return ChatCompletionResponse.Failed("CANCELLED", "Request was cancelled");
-                    }
+                    await DelayBeforeRetryAsync(GetBackoffDelay(attempt), ct).ConfigureAwait(false);
                     continue;
                 }
 
-                return ChatCompletionResponse.Failed("CONNECTION_ERROR", "Failed to connect to provider");
+                return ChatCompletionResponse.Failed(KejiProviderErrorCode.ConnectionError, "Failed to connect to provider");
             }
             finally
             {
                 TryDisposeResponse(response);
             }
         }
+
+        return ChatCompletionResponse.Failed(KejiProviderErrorCode.ServerError, "Provider request failed");
     }
 
     public async IAsyncEnumerable<ChatCompletionStreamEvent> StreamAsync(
@@ -281,13 +259,12 @@ public abstract partial class ProviderBase : IModelProvider
             if (!TryValidateRequest(request, out _))
             {
                 await output.WriteAsync(ChatCompletionStreamEvent.Error(
-                    "INVALID_REQUEST",
+                    KejiProviderErrorCode.InvalidRequest,
                     "Model request is invalid")).ConfigureAwait(false);
                 return;
             }
 
-            var retryCount = 0;
-            while (true)
+            for (var attempt = 1; attempt <= MaxAttempts; attempt++)
             {
                 HttpRequestMessage? httpRequest = null;
                 HttpResponseMessage? httpResponse = null;
@@ -309,20 +286,22 @@ public abstract partial class ProviderBase : IModelProvider
 
                     if (!httpResponse.IsSuccessStatusCode)
                     {
-                        if (!output.HasEmitted && retryCount < MaxRetries && IsRetryableStatus(httpResponse.StatusCode))
+                        var (retryable, retryDelayForAttempt) = await ShouldRetryAsync(httpResponse, attempt, ct).ConfigureAwait(false);
+                        if (!output.HasEmitted && retryable)
                         {
-                            retryDelay = GetRetryDelay(httpResponse, retryCount + 1);
+                            retryDelay = retryDelayForAttempt;
                         }
                         else
                         {
-                            var mapped = ProviderErrorMapper.Map(httpResponse.StatusCode, responseBody: null);
+                            var body = await ReadErrorBodyAsync(httpResponse.Content, ct).ConfigureAwait(false);
+                            var mapped = ProviderErrorMapper.Map(httpResponse.StatusCode, body);
                             await output.WriteAsync(ChatCompletionStreamEvent.Error(mapped.Code, mapped.Message)).ConfigureAwait(false);
                         }
                     }
                     else if (!HasEventStreamContentType(httpResponse))
                     {
                         await output.WriteAsync(ChatCompletionStreamEvent.Error(
-                            "INVALID_CONTENT_TYPE",
+                            KejiProviderErrorCode.InvalidContentType,
                             "Provider returned an invalid stream content type")).ConfigureAwait(false);
                     }
                     else
@@ -356,7 +335,7 @@ public abstract partial class ProviderBase : IModelProvider
                                 else
                                 {
                                     await output.WriteAsync(ChatCompletionStreamEvent.Error(
-                                        "STREAM_TRUNCATED",
+                                        KejiProviderErrorCode.StreamTruncated,
                                         "Provider stream ended unexpectedly")).ConfigureAwait(false);
                                 }
                                 return;
@@ -368,7 +347,7 @@ public abstract partial class ProviderBase : IModelProvider
                                     streamState.ChoiceStates.Values.Any(static state => !state.Finished))
                                 {
                                     await output.WriteAsync(ChatCompletionStreamEvent.Error(
-                                        "STREAM_TRUNCATED",
+                                        KejiProviderErrorCode.StreamTruncated,
                                         "Provider stream ended unexpectedly")).ConfigureAwait(false);
                                     return;
                                 }
@@ -400,77 +379,76 @@ public abstract partial class ProviderBase : IModelProvider
                 }
                 catch (ProviderReadTimeoutException)
                 {
-                    if (!output.HasEmitted && retryCount < MaxRetries)
+                    if (!output.HasEmitted && attempt < MaxAttempts)
                     {
-                        retryDelay = GetBackoffDelay(retryCount + 1);
+                        retryDelay = GetBackoffDelay(attempt);
                     }
                     else
                     {
                         await output.WriteAsync(ChatCompletionStreamEvent.Error(
-                            "TIMEOUT",
+                            KejiProviderErrorCode.Timeout,
                             "Provider request timed out")).ConfigureAwait(false);
                     }
                 }
                 catch (OperationCanceledException)
                 {
-                    if (!output.HasEmitted && retryCount < MaxRetries)
+                    if (!output.HasEmitted && attempt < MaxAttempts)
                     {
-                        retryDelay = GetBackoffDelay(retryCount + 1);
+                        retryDelay = GetBackoffDelay(attempt);
                     }
                     else
                     {
                         await output.WriteAsync(ChatCompletionStreamEvent.Error(
-                            "TIMEOUT",
+                            KejiProviderErrorCode.Timeout,
                             "Provider request timed out")).ConfigureAwait(false);
                     }
                 }
                 catch (HttpRequestException exception)
                 {
-                    if (!output.HasEmitted && retryCount < MaxRetries && IsRetryableException(exception))
+                    if (!output.HasEmitted && attempt < MaxAttempts && IsRetryableException(exception))
                     {
-                        retryDelay = GetBackoffDelay(retryCount + 1);
+                        retryDelay = GetBackoffDelay(attempt);
                     }
                     else
                     {
-                        var mapped = output.HasEmitted
-                            ? (Code: "STREAM_INTERRUPTED", Message: "Provider stream was interrupted")
+                        var (code, message) = output.HasEmitted
+                            ? (KejiProviderErrorCode.StreamInterrupted, "Provider stream was interrupted")
                             : exception.StatusCode is { } statusCode
                                 ? ProviderErrorMapper.Map(statusCode, responseBody: null)
                                 : ProviderErrorMapper.MapFromException(exception);
-                        await output.WriteAsync(ChatCompletionStreamEvent.Error(mapped.Code, mapped.Message)).ConfigureAwait(false);
+                        await output.WriteAsync(ChatCompletionStreamEvent.Error(code, message)).ConfigureAwait(false);
                     }
                 }
                 catch (IOException)
                 {
-                    if (!output.HasEmitted && retryCount < MaxRetries)
+                    if (!output.HasEmitted && attempt < MaxAttempts)
                     {
-                        retryDelay = GetBackoffDelay(retryCount + 1);
+                        retryDelay = GetBackoffDelay(attempt);
                     }
                     else
                     {
-                        var errorCode = output.HasEmitted ? "STREAM_INTERRUPTED" : "CONNECTION_ERROR";
-                        var errorMessage = output.HasEmitted
-                            ? "Provider stream was interrupted"
-                            : "Failed to connect to provider";
-                        await output.WriteAsync(ChatCompletionStreamEvent.Error(errorCode, errorMessage)).ConfigureAwait(false);
+                        var (code, message) = output.HasEmitted
+                            ? (KejiProviderErrorCode.StreamInterrupted, "Provider stream was interrupted")
+                            : (KejiProviderErrorCode.ConnectionError, "Failed to connect to provider");
+                        await output.WriteAsync(ChatCompletionStreamEvent.Error(code, message)).ConfigureAwait(false);
                     }
                 }
                 catch (JsonException)
                 {
                     await output.WriteAsync(ChatCompletionStreamEvent.Error(
-                        "STREAM_PROTOCOL_ERROR",
+                        KejiProviderErrorCode.StreamProtocolError,
                         "Provider stream violated the protocol")).ConfigureAwait(false);
                 }
                 catch (DecoderFallbackException)
                 {
                     await output.WriteAsync(ChatCompletionStreamEvent.Error(
-                        "STREAM_PROTOCOL_ERROR",
+                        KejiProviderErrorCode.StreamProtocolError,
                         "Provider stream violated the protocol")).ConfigureAwait(false);
                 }
                 catch (StreamProtocolException)
                 {
                     await output.WriteAsync(ChatCompletionStreamEvent.Error(
-                        "STREAM_PROTOCOL_ERROR",
+                        KejiProviderErrorCode.StreamProtocolError,
                         "Provider stream violated the protocol")).ConfigureAwait(false);
                 }
                 finally
@@ -485,7 +463,6 @@ public abstract partial class ProviderBase : IModelProvider
 
                 if (retryDelay is { } delay)
                 {
-                    retryCount++;
                     await DelayBeforeRetryAsync(delay, ct).ConfigureAwait(false);
                     continue;
                 }
@@ -550,7 +527,7 @@ public abstract partial class ProviderBase : IModelProvider
 
             if (choice.FinishReason is not null)
             {
-                var finishReason = ValidateFinishReason(choice.FinishReason);
+                var finishReason = MapFinishReason(choice.FinishReason);
                 await CloseActiveToolCallsAsync(output, choice.Index, state).ConfigureAwait(false);
                 state.FinishReason = finishReason;
                 state.Finished = true;
@@ -564,7 +541,7 @@ public abstract partial class ProviderBase : IModelProvider
     {
         foreach (var (choiceIndex, state) in streamState.ChoiceStates.OrderBy(static pair => pair.Key))
         {
-            if (!state.Finished || state.FinishReason is null)
+            if (!state.Finished || state.FinishReason == KejiFinishReason.Invalid)
                 throw new StreamProtocolException();
 
             await output.WriteAsync(ChatCompletionStreamEvent.ChoiceFinished(
@@ -710,18 +687,17 @@ public abstract partial class ProviderBase : IModelProvider
 
         var messages = request.Messages.Select(message => new OutboundMessage
         {
-            Role = message.Role,
-            Content = string.Equals(message.Role, "assistant", StringComparison.Ordinal) &&
-                message.ToolCalls is { Count: > 0 }
+            Role = RoleToString(message.Role),
+            Content = message.Role == KejiChatRole.Assistant && !message.ToolCalls.IsDefaultOrEmpty
                     ? null
                     : message.Content,
             Name = message.Name,
             ToolCallId = message.ToolCallId,
-            ReasoningContent = string.Equals(message.Role, "assistant", StringComparison.Ordinal) &&
+            ReasoningContent = message.Role == KejiChatRole.Assistant &&
                 BackfillAssistantReasoningContent
                     ? message.ReasoningContent ?? string.Empty
                     : message.ReasoningContent,
-            ToolCalls = message.ToolCalls is { Count: > 0 }
+            ToolCalls = !message.ToolCalls.IsDefaultOrEmpty
                 ? message.ToolCalls.Select(static toolCall => new OutboundToolCall
                 {
                     Id = toolCall.Id,
@@ -729,7 +705,7 @@ public abstract partial class ProviderBase : IModelProvider
                     Function = new OutboundFunction
                     {
                         Name = toolCall.FunctionName,
-                        Arguments = toolCall.FunctionArguments,
+                        Arguments = toolCall.FunctionArguments.GetRawText(),
                     },
                 }).ToList()
                 : null,
@@ -782,7 +758,7 @@ public abstract partial class ProviderBase : IModelProvider
         var model = string.IsNullOrWhiteSpace(request.Model) ? DefaultModel : request.Model;
         if (string.IsNullOrWhiteSpace(model) || model.Length > 256 || model.Any(char.IsControl))
             return false;
-        if (request.Messages is null || request.Messages.Count is < 1 or > MaxMessages)
+        if (request.Messages.IsDefaultOrEmpty || request.Messages.Length is < 1 or > MaxMessages)
             return false;
         if (request.Temperature is { } temperature &&
             (!double.IsFinite(temperature) || temperature is < 0 or > 2))
@@ -795,27 +771,28 @@ public abstract partial class ProviderBase : IModelProvider
         long totalTextBytes = Encoding.UTF8.GetByteCount(model);
         foreach (var message in request.Messages)
         {
-            if (message is null || !IsValidMessageRole(message.Role) ||
+            var roleString = RoleToString(message.Role);
+            if (message.Role == KejiChatRole.Invalid ||
                 message.Name is { } name && !IsValidMessageName(name) ||
                 message.ReasoningContent is not null &&
-                    (!string.Equals(message.Role, "assistant", StringComparison.Ordinal) ||
+                    (message.Role != KejiChatRole.Assistant ||
                      Encoding.UTF8.GetByteCount(message.ReasoningContent) > MaxReasoningBytesPerChoice))
             {
                 return false;
             }
 
-            var isAssistant = string.Equals(message.Role, "assistant", StringComparison.Ordinal);
-            var isTool = string.Equals(message.Role, "tool", StringComparison.Ordinal);
-            var isFunction = string.Equals(message.Role, "function", StringComparison.Ordinal);
+            var isAssistant = message.Role == KejiChatRole.Assistant;
+            var isTool = message.Role == KejiChatRole.Tool;
+            var isFunction = message.Role == KejiChatRole.Function;
             if (!isAssistant && message.Content is null ||
                 isAssistant && message.Content is null &&
-                    message.ReasoningContent is null && message.ToolCalls is not { Count: > 0 } ||
-                isAssistant && message.ToolCalls is { Count: > 0 } &&
+                    message.ReasoningContent is null && message.ToolCalls.IsDefaultOrEmpty ||
+                isAssistant && !message.ToolCalls.IsDefaultOrEmpty &&
                     !string.IsNullOrEmpty(message.Content) ||
                 isTool != (message.ToolCallId is not null) ||
                 isTool && !IsValidProtocolIdentifier(message.ToolCallId, MaxToolCallIdLength) ||
                 isFunction && message.Name is null ||
-                !isAssistant && message.ToolCalls is not null)
+                !isAssistant && !message.ToolCalls.IsDefaultOrEmpty)
             {
                 return false;
             }
@@ -823,7 +800,7 @@ public abstract partial class ProviderBase : IModelProvider
             var contentBytes = message.Content is null ? 0 : Encoding.UTF8.GetByteCount(message.Content);
             if (contentBytes > MaxMessageBytes)
                 return false;
-            totalTextBytes += contentBytes + Encoding.UTF8.GetByteCount(message.Role);
+            totalTextBytes += contentBytes + Encoding.UTF8.GetByteCount(roleString);
             if (message.Name is not null)
                 totalTextBytes += Encoding.UTF8.GetByteCount(message.Name);
             if (message.ToolCallId is not null)
@@ -831,54 +808,61 @@ public abstract partial class ProviderBase : IModelProvider
             if (message.ReasoningContent is not null)
                 totalTextBytes += Encoding.UTF8.GetByteCount(message.ReasoningContent);
 
-            if (message.ToolCalls is { Count: > MaxTools })
-                return false;
-            foreach (var toolCall in message.ToolCalls ?? Array.Empty<ChatToolCall>())
+            if (!message.ToolCalls.IsDefaultOrEmpty)
             {
-                if (toolCall is null || !IsValidProtocolIdentifier(toolCall.Id, MaxToolCallIdLength) ||
-                    !string.Equals(toolCall.Type, "function", StringComparison.Ordinal) ||
-                    !IsValidToolName(toolCall.FunctionName) || toolCall.FunctionArguments is null ||
-                    !IsValidToolArguments(toolCall.FunctionArguments))
+                if (message.ToolCalls.Length > MaxTools)
+                    return false;
+                foreach (var toolCall in message.ToolCalls)
                 {
-                    return false;
-                }
+                    var argsText = toolCall.FunctionArguments.ValueKind == JsonValueKind.Undefined ? "" : toolCall.FunctionArguments.GetRawText();
+                    if (!IsValidProtocolIdentifier(toolCall.Id, MaxToolCallIdLength) ||
+                        !string.Equals(toolCall.Type, "function", StringComparison.Ordinal) ||
+                        !IsValidToolName(toolCall.FunctionName) ||
+                        !IsValidToolArguments(argsText))
+                    {
+                        return false;
+                    }
 
-                var argumentBytes = Encoding.UTF8.GetByteCount(toolCall.FunctionArguments);
-                if (argumentBytes > MaxToolArgumentsBytesPerCall)
-                    return false;
-                totalTextBytes += argumentBytes + Encoding.UTF8.GetByteCount(toolCall.Id) +
-                    Encoding.UTF8.GetByteCount(toolCall.FunctionName);
+                    var argumentBytes = Encoding.UTF8.GetByteCount(argsText);
+                    if (argumentBytes > MaxToolArgumentsBytesPerCall)
+                        return false;
+                    totalTextBytes += argumentBytes + Encoding.UTF8.GetByteCount(toolCall.Id) +
+                        Encoding.UTF8.GetByteCount(toolCall.FunctionName);
+                }
             }
         }
 
-        if (request.Tools is { Count: > MaxTools })
-            return false;
-        foreach (var tool in request.Tools ?? Array.Empty<ChatTool>())
+        if (!request.Tools.IsDefaultOrEmpty)
         {
-            if (tool is null || !IsValidToolName(tool.Name) || tool.Description is null ||
-                Encoding.UTF8.GetByteCount(tool.Description) > MaxToolDescriptionBytes)
-            {
+            if (request.Tools.Length > MaxTools)
                 return false;
-            }
-
-            totalTextBytes += Encoding.UTF8.GetByteCount(tool.Name) +
-                Encoding.UTF8.GetByteCount(tool.Description);
-
-            if (tool.InputSchemaJson is { } schema)
+            foreach (var tool in request.Tools)
             {
-                var schemaBytes = Encoding.UTF8.GetByteCount(schema);
-                if (schemaBytes > MaxToolSchemaBytes)
-                    return false;
-                totalTextBytes += schemaBytes;
-                try
+                if (tool is null || !IsValidToolName(tool.Name) || tool.Description is null ||
+                    Encoding.UTF8.GetByteCount(tool.Description) > MaxToolDescriptionBytes)
                 {
-                    using var schemaDocument = JsonDocument.Parse(schema, new JsonDocumentOptions { MaxDepth = 64 });
-                    if (schemaDocument.RootElement.ValueKind != JsonValueKind.Object)
-                        return false;
+                    return false;
                 }
-                catch (JsonException)
+
+                totalTextBytes += Encoding.UTF8.GetByteCount(tool.Name) +
+                    Encoding.UTF8.GetByteCount(tool.Description);
+
+                if (tool.InputSchemaJson is { } schema)
                 {
-                    return false;
+                    var schemaBytes = Encoding.UTF8.GetByteCount(schema);
+                    if (schemaBytes > MaxToolSchemaBytes)
+                        return false;
+                    totalTextBytes += schemaBytes;
+                    try
+                    {
+                        using var schemaDocument = JsonDocument.Parse(schema, new JsonDocumentOptions { MaxDepth = 64 });
+                        if (schemaDocument.RootElement.ValueKind != JsonValueKind.Object)
+                            return false;
+                    }
+                    catch (JsonException)
+                    {
+                        return false;
+                    }
                 }
             }
         }
@@ -1019,7 +1003,7 @@ public abstract partial class ProviderBase : IModelProvider
         }
     }
 
-    private TimeSpan GetRetryDelay(HttpResponseMessage response, int retryNumber)
+    private static TimeSpan GetRetryDelay(HttpResponseMessage response, int retryNumber)
     {
         var retryAfter = response.Headers.RetryAfter;
         if (retryAfter?.Delta is { } delta && delta >= TimeSpan.Zero)
@@ -1027,7 +1011,7 @@ public abstract partial class ProviderBase : IModelProvider
 
         if (retryAfter?.Date is { } date)
         {
-            var dateDelay = date - GetUtcNow();
+            var dateDelay = date - DateTimeOffset.UtcNow;
             if (dateDelay >= TimeSpan.Zero)
                 return dateDelay > MaxRetryAfter ? MaxRetryAfter : dateDelay;
         }
@@ -1035,10 +1019,10 @@ public abstract partial class ProviderBase : IModelProvider
         return GetBackoffDelay(retryNumber);
     }
 
-    private static TimeSpan GetBackoffDelay(int retryNumber)
+    private static TimeSpan GetBackoffDelay(int attempt)
     {
-        var exponent = Math.Clamp(retryNumber - 1, 0, 5);
-        return TimeSpan.FromMilliseconds(Math.Min(250 * (1 << exponent), 8000));
+        var index = Math.Clamp(attempt - 1, 0, DefaultBackoff.Length - 1);
+        return DefaultBackoff[index];
     }
 
     private static bool IsRetryableStatus(HttpStatusCode statusCode)
@@ -1069,33 +1053,53 @@ public abstract partial class ProviderBase : IModelProvider
     {
         if (usage is null)
             return null;
-        var totalTokens = usage.PromptTokens + usage.CompletionTokens;
         if (usage.PromptTokens is < 0 or > MaxReportedTokens ||
-            usage.CompletionTokens is < 0 or > MaxReportedTokens ||
-            totalTokens > MaxReportedTokens ||
-            usage.TotalTokens is { } reportedTotal && reportedTotal != totalTokens)
+            usage.CompletionTokens is < 0 or > MaxReportedTokens)
         {
             throw new StreamProtocolException();
+        }
+
+        var cachedTokens = usage.CachedTokens;
+        if (usage.PromptTokensDetails?.CachedTokens is { } dtCached)
+            cachedTokens = dtCached;
+        if (usage.PromptCacheHitTokens is { } hitTokens)
+            cachedTokens = hitTokens;
+
+        cachedTokens ??= 0;
+        if (cachedTokens < 0 || cachedTokens > MaxReportedTokens || cachedTokens > usage.PromptTokens)
+            throw new StreamProtocolException();
+
+        var totalTokens = usage.PromptTokens + usage.CompletionTokens;
+        if (totalTokens > MaxReportedTokens)
+            throw new StreamProtocolException();
+
+        if (usage.TotalTokens is { } reportedTotal)
+        {
+            if (reportedTotal < 0 || reportedTotal > MaxReportedTokens)
+                throw new StreamProtocolException();
+            if (reportedTotal < totalTokens)
+                throw new StreamProtocolException();
         }
 
         return new TokenUsage
         {
             PromptTokens = usage.PromptTokens,
             CompletionTokens = usage.CompletionTokens,
+            CachedTokens = cachedTokens.Value,
         };
     }
 
-    private static IReadOnlyList<ChatToolCall>? MapAndValidateToolCalls(
+    private static ImmutableArray<ChatToolCall> MapAndValidateToolCalls(
         List<OpenAiToolCall>? providerToolCalls)
     {
         if (providerToolCalls is null)
-            return null;
+            return default;
         if (providerToolCalls.Count > MaxToolCallsPerChoice)
             throw new StreamProtocolException();
         if (providerToolCalls.Any(static toolCall => toolCall is null))
             throw new StreamProtocolException();
 
-        var mapped = new List<ChatToolCall>(providerToolCalls.Count);
+        var builder = ImmutableArray.CreateBuilder<ChatToolCall>(providerToolCalls.Count);
         var totalArgumentBytes = 0;
         var identifiers = new HashSet<string>(StringComparer.Ordinal);
         foreach (var providerToolCall in providerToolCalls)
@@ -1119,16 +1123,17 @@ public abstract partial class ProviderBase : IModelProvider
             totalArgumentBytes += argumentBytes;
             ValidateToolArguments(arguments);
 
-            mapped.Add(new ChatToolCall
+            using var argsDoc = JsonDocument.Parse(arguments, new JsonDocumentOptions { MaxDepth = 64 });
+            builder.Add(new ChatToolCall
             {
                 Id = id!,
                 Type = "function",
                 FunctionName = name!,
-                FunctionArguments = arguments,
+                FunctionArguments = argsDoc.RootElement.Clone(),
             });
         }
 
-        return mapped;
+        return builder.MoveToImmutable();
     }
 
     private static string ValidateResponseModel(string model)
@@ -1162,7 +1167,7 @@ public abstract partial class ProviderBase : IModelProvider
         }
     }
 
-    private static string ValidateFinishReason(string? finishReason)
+    private static KejiFinishReason MapFinishReason(string? finishReason)
     {
         if (string.IsNullOrWhiteSpace(finishReason) || finishReason.Length > 64 ||
             finishReason.Any(char.IsControl))
@@ -1173,7 +1178,95 @@ public abstract partial class ProviderBase : IModelProvider
         if (!IsValidUnicode(finishReason))
             throw new StreamProtocolException();
 
-        return finishReason;
+        return finishReason.Trim().ToLowerInvariant() switch
+        {
+            "stop" => KejiFinishReason.Stop,
+            "length" => KejiFinishReason.Length,
+            "tool_calls" => KejiFinishReason.ToolCalls,
+            "content_filter" => KejiFinishReason.ContentFilter,
+            "refusal" => KejiFinishReason.ContentFilter,
+            "error" => KejiFinishReason.Error,
+            "end_turn" => KejiFinishReason.EndTurn,
+            _ => throw new StreamProtocolException(),
+        };
+    }
+
+    private static string FinishReasonToString(KejiFinishReason reason) => reason switch
+    {
+        KejiFinishReason.Stop => "stop",
+        KejiFinishReason.Length => "length",
+        KejiFinishReason.ToolCalls => "tool_calls",
+        KejiFinishReason.ContentFilter => "content_filter",
+        KejiFinishReason.Error => "error",
+        KejiFinishReason.EndTurn => "end_turn",
+        _ => "unknown",
+    };
+
+    private static string RoleToString(KejiChatRole role) => role switch
+    {
+        KejiChatRole.System => "system",
+        KejiChatRole.Developer => "developer",
+        KejiChatRole.User => "user",
+        KejiChatRole.Assistant => "assistant",
+        KejiChatRole.Tool => "tool",
+        KejiChatRole.Function => "function",
+        _ => "",
+    };
+
+    private static async Task<string?> ReadErrorBodyAsync(HttpContent content, CancellationToken ct)
+    {
+        try
+        {
+            var source = await content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+            using var destination = new MemoryStream();
+            var buffer = ArrayPool<byte>.Shared.Rent(81920);
+            try
+            {
+                var totalRead = 0;
+                while (true)
+                {
+                    var read = await source.ReadAsync(buffer.AsMemory(0, buffer.Length), ct).ConfigureAwait(false);
+                    if (read == 0)
+                        break;
+                    totalRead += read;
+                    if (totalRead > MaxErrorBodyBytes)
+                    {
+                        totalRead = MaxErrorBodyBytes;
+                        break;
+                    }
+                    await destination.WriteAsync(buffer.AsMemory(0, read), ct).ConfigureAwait(false);
+                }
+
+                return Encoding.UTF8.GetString(destination.GetBuffer().AsSpan(0, checked((int)destination.Length)));
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(buffer);
+                TryDisposeStream(source);
+            }
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private const int MaxErrorBodyBytes = 64 * 1024;
+
+    private static async Task<(bool Retryable, TimeSpan? Delay)> ShouldRetryAsync(
+        HttpResponseMessage response, int attempt, CancellationToken ct)
+    {
+        if (attempt >= MaxAttempts)
+            return (false, null);
+
+        var statusCode = (int)response.StatusCode;
+        if (statusCode is 408 or 409 or 429 || statusCode >= 500)
+        {
+            var delay = GetRetryDelay(response, attempt);
+            return (true, delay);
+        }
+
+        return (false, null);
     }
 
     private static bool IsValidMessageRole(string? role) =>
@@ -1453,7 +1546,7 @@ public abstract partial class ProviderBase : IModelProvider
         public int TotalToolArgumentBytes;
         public int ToolCallCount;
         public bool Finished;
-        public string? FinishReason;
+        public KejiFinishReason FinishReason;
     }
 
     private sealed class ToolCallState
@@ -1560,6 +1653,21 @@ public abstract partial class ProviderBase : IModelProvider
 
         [JsonPropertyName("total_tokens")]
         public long? TotalTokens { get; init; }
+
+        [JsonPropertyName("cached_tokens")]
+        public long? CachedTokens { get; init; }
+
+        [JsonPropertyName("prompt_tokens_details")]
+        public PromptTokensDetails? PromptTokensDetails { get; init; }
+
+        [JsonPropertyName("prompt_cache_hit_tokens")]
+        public long? PromptCacheHitTokens { get; init; }
+    }
+
+    private sealed class PromptTokensDetails
+    {
+        [JsonPropertyName("cached_tokens")]
+        public long? CachedTokens { get; init; }
     }
 
     private sealed class StreamedChunk

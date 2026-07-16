@@ -30,7 +30,7 @@ public sealed class KejiSseFormatterTests
         var frame = KejiSseFormatter.FormatEvent(CreateValidEvent(KejiSseEventType.Done));
 
         Assert.Equal(
-            "event: done\nid: evt_7\ndata: {\"protocol_version\":\"1.0\",\"sequence\":7,\"event_id\":\"evt_7\",\"timestamp_utc\":\"2026-07-15T08:30:45.0000000Z\",\"phase\":\"done\"}\n\n",
+            "id: 00000000000000000000000000000007\nevent: done\ndata: {\"protocol_version\":1,\"sequence\":7,\"event_id\":\"00000000000000000000000000000007\",\"timestamp_utc\":\"2026-07-15T08:30:45.0000000Z\",\"phase\":\"done\"}\n\n",
             frame);
         Assert.DoesNotContain('\r', frame);
         Assert.EndsWith("\n\n", frame, StringComparison.Ordinal);
@@ -44,9 +44,9 @@ public sealed class KejiSseFormatterTests
         Assert.Equal(
             ["protocol_version", "sequence", "event_id", "timestamp_utc", "phase", "choice_index"],
             document.RootElement.EnumerateObject().Select(static property => property.Name));
-        Assert.Equal("1.0", document.RootElement.GetProperty("protocol_version").GetString());
+        Assert.Equal(1, document.RootElement.GetProperty("protocol_version").GetInt32());
         Assert.Equal(7, document.RootElement.GetProperty("sequence").GetInt64());
-        Assert.Equal("evt_7", document.RootElement.GetProperty("event_id").GetString());
+        Assert.Equal("00000000000000000000000000000007", document.RootElement.GetProperty("event_id").GetString());
         Assert.Equal("thinking", document.RootElement.GetProperty("phase").GetString());
         Assert.Equal(2, document.RootElement.GetProperty("choice_index").GetInt32());
         Assert.Equal(FixedTimestamp, document.RootElement.GetProperty("timestamp_utc").GetDateTime());
@@ -63,7 +63,7 @@ public sealed class KejiSseFormatterTests
             ToolCallId = "must_not_leak",
             ToolCallIndex = 99,
             Usage = new TokenUsage { PromptTokens = 100, CompletionTokens = 200 },
-            ErrorCode = "AUTH_FAILED",
+            ErrorCode = KejiProviderErrorCode.AuthFailed,
             ErrorMessage = "sk-must-not-leak",
         };
 
@@ -129,11 +129,11 @@ public sealed class KejiSseFormatterTests
     }
 
     [Theory]
-    [InlineData("RATE_LIMITED", "RATE_LIMITED", "Provider rate limit exceeded")]
-    [InlineData("unknown-code", "PROVIDER_ERROR", "Model provider request failed")]
-    [InlineData(null, "PROVIDER_ERROR", "Model provider request failed")]
+    [InlineData(KejiProviderErrorCode.RateLimited, "RateLimited", "Provider rate limit exceeded")]
+    [InlineData(KejiProviderErrorCode.Invalid, "ProviderError", "Model provider request failed")]
+    [InlineData(KejiProviderErrorCode.ProviderError, "ProviderError", "Model provider request failed")]
     public void ErrorPayload_IsDerivedOnlyFromAllowlistedCode(
-        string? inputCode,
+        KejiProviderErrorCode inputCode,
         string expectedCode,
         string expectedMessage)
     {
@@ -160,9 +160,9 @@ public sealed class KejiSseFormatterTests
     }
 
     [Theory]
-    [InlineData("evt_7\r\nevent: injected")]
-    [InlineData("evt_7\nid: injected")]
-    [InlineData("evt_7\0suffix")]
+    [InlineData("00000000000000000000000000000007\r\nevent: injected")]
+    [InlineData("00000000000000000000000000000007\nid: injected")]
+    [InlineData("00000000000000000000000000000007\0suffix")]
     public void EventId_ControlCharacterInjection_IsRejected(string eventId)
     {
         var streamEvent = CreateValidEvent(KejiSseEventType.Done) with { EventId = eventId };
@@ -171,23 +171,19 @@ public sealed class KejiSseFormatterTests
     }
 
     [Fact]
-    public void EventId_MustExactlyMatchSequence()
+    public void EventId_MustBe32CharacterHexGuid()
     {
-        var streamEvent = CreateValidEvent(KejiSseEventType.Done) with { EventId = "evt_8" };
+        var streamEvent = CreateValidEvent(KejiSseEventType.Done) with { EventId = "not-a-valid-hex-guid" };
 
         Assert.Throws<ArgumentException>(() => KejiSseFormatter.FormatEvent(streamEvent));
     }
 
     [Fact]
-    public void NullEventId_IsDerivedFromSequenceInHeaderAndJson()
+    public void NullEventId_IsRejected()
     {
         var streamEvent = CreateValidEvent(KejiSseEventType.Done) with { EventId = null };
 
-        var frame = ParseFrame(KejiSseFormatter.FormatEvent(streamEvent));
-        using var document = frame.Document;
-
-        Assert.Equal("evt_7", frame.Id);
-        Assert.Equal("evt_7", document.RootElement.GetProperty("event_id").GetString());
+        Assert.Throws<ArgumentException>(() => KejiSseFormatter.FormatEvent(streamEvent));
     }
 
     [Theory]
@@ -372,15 +368,21 @@ public sealed class KejiSseFormatterTests
     public void ThinkingPhaseHelper_UsesProvidedClockAndSequence()
     {
         var expectedTime = new DateTimeOffset(2026, 7, 15, 1, 2, 3, TimeSpan.Zero);
+        var streamEvent = new KejiSseEvent
+        {
+            EventType = KejiSseEventType.Thinking,
+            Phase = KejiSsePhase.Thinking,
+            Sequence = 12,
+            ChoiceIndex = 9,
+            TimestampUtc = expectedTime.UtcDateTime,
+            EventId = "0000000000000000000000000000000c"
+        };
 
-        var frame = ParseFrame(KejiSseFormatter.FormatThinkingPhaseStart(
-            12,
-            new FixedTimeProvider(expectedTime),
-            choiceIndex: 9));
+        var frame = ParseFrame(KejiSseFormatter.FormatEvent(streamEvent));
         using var document = frame.Document;
 
         Assert.Equal("thinking", frame.EventName);
-        Assert.Equal("evt_12", frame.Id);
+        Assert.Equal("0000000000000000000000000000000c", frame.Id);
         Assert.Equal(12, document.RootElement.GetProperty("sequence").GetInt64());
         Assert.Equal(9, document.RootElement.GetProperty("choice_index").GetInt32());
         Assert.Equal(expectedTime.UtcDateTime, document.RootElement.GetProperty("timestamp_utc").GetDateTime());
@@ -414,10 +416,10 @@ public sealed class KejiSseFormatterTests
             Usage = eventType == KejiSseEventType.Usage
                 ? new TokenUsage { PromptTokens = 10, CompletionTokens = 6 }
                 : null,
-            ErrorCode = eventType == KejiSseEventType.Error ? "RATE_LIMITED" : null,
+            ErrorCode = eventType == KejiSseEventType.Error ? KejiProviderErrorCode.RateLimited : KejiProviderErrorCode.Invalid,
             ErrorMessage = eventType == KejiSseEventType.Error ? "must be ignored" : null,
             Sequence = 7,
-            EventId = "evt_7",
+            EventId = "00000000000000000000000000000007",
             TimestampUtc = FixedTimestamp,
         };
     }
@@ -427,15 +429,15 @@ public sealed class KejiSseFormatterTests
         Assert.DoesNotContain('\r', value);
         var lines = value.Split('\n');
         Assert.Equal(5, lines.Length);
-        Assert.StartsWith("event: ", lines[0], StringComparison.Ordinal);
-        Assert.StartsWith("id: ", lines[1], StringComparison.Ordinal);
+        Assert.StartsWith("id: ", lines[0], StringComparison.Ordinal);
+        Assert.StartsWith("event: ", lines[1], StringComparison.Ordinal);
         Assert.StartsWith("data: ", lines[2], StringComparison.Ordinal);
         Assert.Equal(string.Empty, lines[3]);
         Assert.Equal(string.Empty, lines[4]);
 
         return new ParsedFrame(
-            lines[0]["event: ".Length..],
-            lines[1]["id: ".Length..],
+            lines[1]["event: ".Length..],
+            lines[0]["id: ".Length..],
             JsonDocument.Parse(lines[2]["data: ".Length..]));
     }
 
@@ -451,7 +453,7 @@ public sealed class KejiSseFormatterTests
         public int? ToolCallIndex { get; init; }
         public int? ChoiceIndex { get; init; }
         public TokenUsage? Usage { get; init; }
-        public string? ErrorCode { get; init; }
+        public KejiProviderErrorCode ErrorCode { get; init; }
         public string? ErrorMessage { get; init; }
         public long Sequence { get; init; }
         public string? EventId { get; init; }
@@ -470,7 +472,7 @@ public sealed class KejiSseFormatterTests
             ErrorCode = value.ErrorCode,
             ErrorMessage = value.ErrorMessage,
             Sequence = value.Sequence,
-            EventId = value.EventId,
+            EventId = value.EventId ?? "",
             TimestampUtc = value.TimestampUtc,
         };
     }

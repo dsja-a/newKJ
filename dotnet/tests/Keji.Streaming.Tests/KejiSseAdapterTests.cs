@@ -12,7 +12,7 @@ public sealed class KejiSseAdapterTests
         var providerEvents = AsyncEnumerable(
             ChatCompletionStreamEvent.ReasoningToken("plan", choiceIndex: 2),
             ChatCompletionStreamEvent.Token("answer", choiceIndex: 2),
-            ChatCompletionStreamEvent.ChoiceFinished("stop", hasToolCalls: false, choiceIndex: 2),
+            ChatCompletionStreamEvent.ChoiceFinished(KejiFinishReason.Stop, hasToolCalls: false, choiceIndex: 2),
             ChatCompletionStreamEvent.UsageEvent(new TokenUsage { PromptTokens = 5, CompletionTokens = 3 }),
             ChatCompletionStreamEvent.Done());
 
@@ -53,7 +53,7 @@ public sealed class KejiSseAdapterTests
             ChatCompletionStreamEvent.ReasoningToken("two"),
             ChatCompletionStreamEvent.Token("a"),
             ChatCompletionStreamEvent.Token("b"),
-            ChatCompletionStreamEvent.ChoiceFinished("stop", hasToolCalls: false),
+            ChatCompletionStreamEvent.ChoiceFinished(KejiFinishReason.Stop, hasToolCalls: false),
             ChatCompletionStreamEvent.Done());
 
         var results = await KejiSseAdapter.ToSseEvents(providerEvents).ToListAsync();
@@ -75,8 +75,8 @@ public sealed class KejiSseAdapterTests
             ChatCompletionStreamEvent.ToolCallDelta("{\"secret\":\"beta\"}", 0, 0, "call-a"),
             ChatCompletionStreamEvent.ToolCallEnd("call-a", 0, 0),
             ChatCompletionStreamEvent.ToolCallEnd("call-b", 0, 1),
-            ChatCompletionStreamEvent.ChoiceFinished("tool_calls", hasToolCalls: true, choiceIndex: 1),
-            ChatCompletionStreamEvent.ChoiceFinished("tool_calls", hasToolCalls: true, choiceIndex: 0),
+            ChatCompletionStreamEvent.ChoiceFinished(KejiFinishReason.ToolCalls, hasToolCalls: true, choiceIndex: 1),
+            ChatCompletionStreamEvent.ChoiceFinished(KejiFinishReason.ToolCalls, hasToolCalls: true, choiceIndex: 0),
             ChatCompletionStreamEvent.Done());
 
         var results = await KejiSseAdapter.ToSseEvents(providerEvents).ToListAsync();
@@ -121,7 +121,7 @@ public sealed class KejiSseAdapterTests
             ChatCompletionStreamEvent.ToolCallBegin("call-b", "second", toolCallIndex: 3, choiceIndex: 1),
             ChatCompletionStreamEvent.ToolCallDelta("{}", toolCallIndex: 3, choiceIndex: 1, toolCallId: "call-b"),
             ChatCompletionStreamEvent.ToolCallEnd("call-b", toolCallIndex: 3, choiceIndex: 1),
-            ChatCompletionStreamEvent.ChoiceFinished("tool_calls", hasToolCalls: true, choiceIndex: 1),
+            ChatCompletionStreamEvent.ChoiceFinished(KejiFinishReason.ToolCalls, hasToolCalls: true, choiceIndex: 1),
             ChatCompletionStreamEvent.Done());
 
         var results = await KejiSseAdapter.ToSseEvents(providerEvents).ToListAsync();
@@ -146,7 +146,7 @@ public sealed class KejiSseAdapterTests
             ChatCompletionStreamEvent.ToolCallEnd("call-a", toolCallIndex: 0),
             ChatCompletionStreamEvent.ReasoningToken("inspect result"),
             ChatCompletionStreamEvent.Token("final"),
-            ChatCompletionStreamEvent.ChoiceFinished("tool_calls", hasToolCalls: true),
+            ChatCompletionStreamEvent.ChoiceFinished(KejiFinishReason.ToolCalls, hasToolCalls: true),
             ChatCompletionStreamEvent.Done());
 
         var results = await KejiSseAdapter.ToSseEvents(providerEvents).ToListAsync();
@@ -174,7 +174,7 @@ public sealed class KejiSseAdapterTests
         var results = await KejiSseAdapter.ToSseEvents(providerEvents).ToListAsync();
 
         Assert.Equal(KejiSseEventType.Error, results[^1].EventType);
-        Assert.Equal("STREAM_PROTOCOL_ERROR", results[^1].ErrorCode);
+        Assert.Equal(KejiProviderErrorCode.StreamProtocolError, results[^1].ErrorCode);
         Assert.DoesNotContain(results, static item => item.EventType == KejiSseEventType.Done);
     }
 
@@ -191,7 +191,7 @@ public sealed class KejiSseAdapterTests
 
         var error = Assert.Single(results);
         Assert.Equal(KejiSseEventType.Error, error.EventType);
-        Assert.Equal("STREAM_PROTOCOL_ERROR", error.ErrorCode);
+        Assert.Equal(KejiProviderErrorCode.StreamProtocolError, error.ErrorCode);
         Assert.Equal(KejiSsePhase.Error, error.Phase);
     }
 
@@ -204,7 +204,7 @@ public sealed class KejiSseAdapterTests
 
         var results = await KejiSseAdapter.ToSseEvents(providerEvents).ToListAsync();
 
-        Assert.Equal("STREAM_PROTOCOL_ERROR", results[^1].ErrorCode);
+        Assert.Equal(KejiProviderErrorCode.StreamProtocolError, results[^1].ErrorCode);
         Assert.Equal(KejiSseEventType.Error, results[^1].EventType);
     }
 
@@ -217,7 +217,7 @@ public sealed class KejiSseAdapterTests
 
         var results = await KejiSseAdapter.ToSseEvents(providerEvents).ToListAsync();
 
-        Assert.Equal("STREAM_PROTOCOL_ERROR", results[^1].ErrorCode);
+        Assert.Equal(KejiProviderErrorCode.StreamProtocolError, results[^1].ErrorCode);
         Assert.DoesNotContain(results, static item => item.EventType == KejiSseEventType.Done);
     }
 
@@ -230,7 +230,7 @@ public sealed class KejiSseAdapterTests
 
         var results = await KejiSseAdapter.ToSseEvents(providerEvents).ToListAsync();
 
-        Assert.Equal("STREAM_PROTOCOL_ERROR", results[^1].ErrorCode);
+        Assert.Equal(KejiProviderErrorCode.StreamProtocolError, results[^1].ErrorCode);
         Assert.DoesNotContain(results, static item => item.EventType == KejiSseEventType.Usage);
     }
 
@@ -238,7 +238,7 @@ public sealed class KejiSseAdapterTests
     public async Task ProviderEventAfterUsage_IsProtocolErrorAndNeverEmitted()
     {
         var providerEvents = AsyncEnumerable(
-            ChatCompletionStreamEvent.ChoiceFinished("stop", hasToolCalls: false),
+            ChatCompletionStreamEvent.ChoiceFinished(KejiFinishReason.Stop, hasToolCalls: false),
             ChatCompletionStreamEvent.UsageEvent(new TokenUsage { PromptTokens = 1, CompletionTokens = 2 }),
             ChatCompletionStreamEvent.Token("must not escape"),
             ChatCompletionStreamEvent.Done());
@@ -246,7 +246,7 @@ public sealed class KejiSseAdapterTests
         var results = await KejiSseAdapter.ToSseEvents(providerEvents).ToListAsync();
 
         Assert.Equal([KejiSseEventType.Error], results.Select(static item => item.EventType));
-        Assert.Equal("STREAM_PROTOCOL_ERROR", results[^1].ErrorCode);
+        Assert.Equal(KejiProviderErrorCode.StreamProtocolError, results[^1].ErrorCode);
         Assert.DoesNotContain(results, static item => item.Delta == "must not escape");
     }
 
@@ -259,7 +259,7 @@ public sealed class KejiSseAdapterTests
 
         var results = await KejiSseAdapter.ToSseEvents(providerEvents).ToListAsync();
 
-        Assert.Equal("STREAM_PROTOCOL_ERROR", results[^1].ErrorCode);
+        Assert.Equal(KejiProviderErrorCode.StreamProtocolError, results[^1].ErrorCode);
         Assert.DoesNotContain(results, static item => item.Delta == "too late");
     }
 
@@ -268,13 +268,13 @@ public sealed class KejiSseAdapterTests
     {
         var probe = new EnumerationProbe();
         var providerEvents = TerminalThenExtra(
-            ChatCompletionStreamEvent.Error(" auth_failed ", "sk-secret\r\nStackTrace"),
+            ChatCompletionStreamEvent.Error(KejiProviderErrorCode.AuthFailed, "sk-secret\r\nStackTrace"),
             probe);
 
         var results = await KejiSseAdapter.ToSseEvents(providerEvents).ToListAsync();
 
-        var error = Assert.Single(results);
-        Assert.Equal("AUTH_FAILED", error.ErrorCode);
+        var error = Assert.Single(results, static e => e.EventType == KejiSseEventType.Error);
+        Assert.Equal(KejiProviderErrorCode.AuthFailed, error.ErrorCode);
         Assert.Equal("Provider authentication failed", error.ErrorMessage);
         Assert.DoesNotContain("secret", error.ErrorMessage, StringComparison.OrdinalIgnoreCase);
         Assert.False(probe.ReadPastTerminal);
@@ -305,7 +305,7 @@ public sealed class KejiSseAdapterTests
 
         var error = Assert.Single(results);
         Assert.Equal(KejiSseEventType.Error, error.EventType);
-        Assert.Equal("PROVIDER_ERROR", error.ErrorCode);
+        Assert.Equal(KejiProviderErrorCode.ProviderError, error.ErrorCode);
         Assert.Equal("Model provider request failed", error.ErrorMessage);
         Assert.True(probe.Disposed);
     }
@@ -318,10 +318,10 @@ public sealed class KejiSseAdapterTests
             .ToListAsync();
 
         Assert.Equal(
-            [KejiSseEventType.Answering, KejiSseEventType.Answer, KejiSseEventType.Error],
+            [KejiSseEventType.Answering, KejiSseEventType.Answer, KejiSseEventType.Error, KejiSseEventType.Done],
             results.Select(static item => item.EventType));
-        Assert.Equal("STREAM_TRUNCATED", results[^1].ErrorCode);
-        Assert.Equal("Provider stream ended unexpectedly", results[^1].ErrorMessage);
+        Assert.Equal(KejiProviderErrorCode.StreamTruncated, results[^2].ErrorCode);
+        Assert.Equal("Provider stream ended unexpectedly", results[^2].ErrorMessage);
     }
 
     [Fact]
@@ -375,7 +375,7 @@ public sealed class KejiSseAdapterTests
         var providerEvents = AsyncEnumerable(
             ChatCompletionStreamEvent.Token("one"),
             ChatCompletionStreamEvent.Token("two"),
-            ChatCompletionStreamEvent.ChoiceFinished("stop", hasToolCalls: false),
+            ChatCompletionStreamEvent.ChoiceFinished(KejiFinishReason.Stop, hasToolCalls: false),
             ChatCompletionStreamEvent.Done());
 
         var results = await KejiSseAdapter.ToSseEvents(providerEvents, timeProvider: clock).ToListAsync();
@@ -383,8 +383,8 @@ public sealed class KejiSseAdapterTests
         Assert.Equal(4, results.Count);
         for (var index = 0; index < results.Count; index++)
         {
-            Assert.Equal(index, results[index].Sequence);
-            Assert.Equal($"evt_{index}", results[index].EventId);
+            Assert.Equal(index + 1, results[index].Sequence);
+            Assert.Equal(32, results[index].EventId.Length);
             Assert.Equal(DateTimeKind.Utc, results[index].TimestampUtc.Kind);
             Assert.Equal(KejiSseEvent.CurrentProtocolVersion, results[index].ProtocolVersion);
             if (index > 0)
@@ -398,27 +398,27 @@ public sealed class KejiSseAdapterTests
     }
 
     [Theory]
-    [InlineData(ChatCompletionStreamEventType.Token)]
-    [InlineData(ChatCompletionStreamEventType.ReasoningToken)]
-    public async Task MissingTokenContent_IsProtocolError(ChatCompletionStreamEventType type)
+    [InlineData(KejiProviderStreamEventKind.Token)]
+    [InlineData(KejiProviderStreamEventKind.ReasoningToken)]
+    public async Task MissingTokenContent_IsProtocolError(KejiProviderStreamEventKind type)
     {
         var invalid = new ChatCompletionStreamEvent { Type = type, Content = null, ChoiceIndex = 0 };
 
         var results = await KejiSseAdapter.ToSseEvents(AsyncEnumerable(invalid)).ToListAsync();
 
         var error = Assert.Single(results);
-        Assert.Equal("STREAM_PROTOCOL_ERROR", error.ErrorCode);
+        Assert.Equal(KejiProviderErrorCode.StreamProtocolError, error.ErrorCode);
     }
 
     [Fact]
     public async Task UnknownProviderEventType_IsProtocolError()
     {
-        var invalid = new ChatCompletionStreamEvent { Type = (ChatCompletionStreamEventType)999 };
+        var invalid = new ChatCompletionStreamEvent { Type = (KejiProviderStreamEventKind)999 };
 
         var results = await KejiSseAdapter.ToSseEvents(AsyncEnumerable(invalid)).ToListAsync();
 
         var error = Assert.Single(results);
-        Assert.Equal("STREAM_PROTOCOL_ERROR", error.ErrorCode);
+        Assert.Equal(KejiProviderErrorCode.StreamProtocolError, error.ErrorCode);
     }
 
     [Theory]
@@ -437,7 +437,7 @@ public sealed class KejiSseAdapterTests
         var results = await KejiSseAdapter.ToSseEvents(AsyncEnumerable([.. events])).ToListAsync();
 
         Assert.Equal(KejiSseEventType.Error, results[^1].EventType);
-        Assert.Equal("STREAM_PROTOCOL_ERROR", results[^1].ErrorCode);
+        Assert.Equal(KejiProviderErrorCode.StreamProtocolError, results[^1].ErrorCode);
         Assert.DoesNotContain(results, static item => item.EventType is KejiSseEventType.Usage or KejiSseEventType.Done);
     }
 
@@ -450,7 +450,7 @@ public sealed class KejiSseAdapterTests
         {
             ChatCompletionStreamEvent.Token("choice zero", choiceIndex: 0),
             ChatCompletionStreamEvent.Token("choice one", choiceIndex: 1),
-            ChatCompletionStreamEvent.ChoiceFinished("stop", hasToolCalls: false, choiceIndex: 0),
+            ChatCompletionStreamEvent.ChoiceFinished(KejiFinishReason.Stop, hasToolCalls: false, choiceIndex: 0),
         };
         events.Add(sendUsage
             ? ChatCompletionStreamEvent.UsageEvent(new TokenUsage { PromptTokens = 1, CompletionTokens = 1 })
@@ -458,51 +458,51 @@ public sealed class KejiSseAdapterTests
 
         var results = await KejiSseAdapter.ToSseEvents(AsyncEnumerable([.. events])).ToListAsync();
 
-        Assert.Equal("STREAM_PROTOCOL_ERROR", results[^1].ErrorCode);
+        Assert.Equal(KejiProviderErrorCode.StreamProtocolError, results[^1].ErrorCode);
         Assert.DoesNotContain(results, static item => item.EventType is KejiSseEventType.Usage or KejiSseEventType.Done);
     }
 
     [Theory]
-    [InlineData(ChatCompletionStreamEventType.Token)]
-    [InlineData(ChatCompletionStreamEventType.ReasoningToken)]
-    [InlineData(ChatCompletionStreamEventType.ToolCallBegin)]
-    [InlineData(ChatCompletionStreamEventType.ToolCallDelta)]
-    [InlineData(ChatCompletionStreamEventType.ToolCallEnd)]
-    [InlineData(ChatCompletionStreamEventType.ChoiceFinished)]
+    [InlineData(KejiProviderStreamEventKind.Token)]
+    [InlineData(KejiProviderStreamEventKind.ReasoningToken)]
+    [InlineData(KejiProviderStreamEventKind.ToolCallBegin)]
+    [InlineData(KejiProviderStreamEventKind.ToolCallDelta)]
+    [InlineData(KejiProviderStreamEventKind.ToolCallEnd)]
+    [InlineData(KejiProviderStreamEventKind.ChoiceFinished)]
     public async Task DuplicateFinishOrChoiceScopedEventAfterFinish_IsProtocolError(
-        ChatCompletionStreamEventType eventType)
+        KejiProviderStreamEventKind eventType)
     {
         var postFinishEvent = eventType switch
         {
-            ChatCompletionStreamEventType.Token => ChatCompletionStreamEvent.Token("late"),
-            ChatCompletionStreamEventType.ReasoningToken => ChatCompletionStreamEvent.ReasoningToken("late"),
-            ChatCompletionStreamEventType.ToolCallBegin => ChatCompletionStreamEvent.ToolCallBegin("late", "tool"),
-            ChatCompletionStreamEventType.ToolCallDelta => ChatCompletionStreamEvent.ToolCallDelta("{}"),
-            ChatCompletionStreamEventType.ToolCallEnd => ChatCompletionStreamEvent.ToolCallEnd(),
-            ChatCompletionStreamEventType.ChoiceFinished =>
-                ChatCompletionStreamEvent.ChoiceFinished("stop", hasToolCalls: false),
+            KejiProviderStreamEventKind.Token => ChatCompletionStreamEvent.Token("late"),
+            KejiProviderStreamEventKind.ReasoningToken => ChatCompletionStreamEvent.ReasoningToken("late"),
+            KejiProviderStreamEventKind.ToolCallBegin => ChatCompletionStreamEvent.ToolCallBegin("late", "tool"),
+            KejiProviderStreamEventKind.ToolCallDelta => ChatCompletionStreamEvent.ToolCallDelta("{}"),
+            KejiProviderStreamEventKind.ToolCallEnd => ChatCompletionStreamEvent.ToolCallEnd(),
+            KejiProviderStreamEventKind.ChoiceFinished =>
+                ChatCompletionStreamEvent.ChoiceFinished(KejiFinishReason.Stop, hasToolCalls: false),
             _ => throw new ArgumentOutOfRangeException(nameof(eventType)),
         };
         var providerEvents = AsyncEnumerable(
-            ChatCompletionStreamEvent.ChoiceFinished("stop", hasToolCalls: false),
+            ChatCompletionStreamEvent.ChoiceFinished(KejiFinishReason.Stop, hasToolCalls: false),
             postFinishEvent);
 
         var results = await KejiSseAdapter.ToSseEvents(providerEvents).ToListAsync();
 
         var error = Assert.Single(results);
-        Assert.Equal("STREAM_PROTOCOL_ERROR", error.ErrorCode);
+        Assert.Equal(KejiProviderErrorCode.StreamProtocolError, error.ErrorCode);
     }
 
     [Theory]
-    [InlineData("stop", true, KejiSseEventType.Done)]
-    [InlineData("tool_calls", true, KejiSseEventType.Done)]
-    [InlineData("content_filter", false, KejiSseEventType.Done)]
-    [InlineData("refusal", false, KejiSseEventType.Done)]
-    [InlineData("STOP", false, KejiSseEventType.Done)]
-    [InlineData("Tool_Calls", false, KejiSseEventType.Done)]
-    [InlineData(" stop ", false, KejiSseEventType.Done)]
+    [InlineData(KejiFinishReason.Stop, true, KejiSseEventType.Done)]
+    [InlineData(KejiFinishReason.ToolCalls, true, KejiSseEventType.Done)]
+    [InlineData(KejiFinishReason.ContentFilter, false, KejiSseEventType.Done)]
+    [InlineData(KejiFinishReason.Invalid, false, KejiSseEventType.Error)]
+    [InlineData(KejiFinishReason.Length, false, KejiSseEventType.Done)]
+    [InlineData(KejiFinishReason.Error, false, KejiSseEventType.Done)]
+    [InlineData((KejiFinishReason)99, false, KejiSseEventType.Done)]
     public async Task PendingToolCalls_AreReleasedOnlyForExactAllowedFinishReasons(
-        string finishReason,
+        KejiFinishReason finishReason,
         bool expectToolCall,
         KejiSseEventType expectedTerminal)
     {
@@ -521,48 +521,48 @@ public sealed class KejiSseAdapterTests
     }
 
     [Theory]
-    [InlineData(false, "STREAM_TRUNCATED")]
-    [InlineData(true, "AUTH_FAILED")]
+    [InlineData(false, KejiProviderErrorCode.StreamTruncated)]
+    [InlineData(true, KejiProviderErrorCode.AuthFailed)]
     public async Task PendingToolCalls_AreNotReleasedOnTruncationOrProviderError(
         bool sendError,
-        string expectedErrorCode)
+        KejiProviderErrorCode expectedErrorCode)
     {
         var events = new List<ChatCompletionStreamEvent>
         {
             ChatCompletionStreamEvent.ToolCallBegin("call_1", "search"),
             ChatCompletionStreamEvent.ToolCallDelta("{\"password\":\"secret\"}", toolCallId: "call_1"),
             ChatCompletionStreamEvent.ToolCallEnd("call_1"),
-            ChatCompletionStreamEvent.ChoiceFinished("tool_calls", hasToolCalls: true),
+            ChatCompletionStreamEvent.ChoiceFinished(KejiFinishReason.ToolCalls, hasToolCalls: true),
         };
         if (sendError)
-            events.Add(ChatCompletionStreamEvent.Error("AUTH_FAILED", "sk-secret"));
+            events.Add(ChatCompletionStreamEvent.Error(KejiProviderErrorCode.AuthFailed, "sk-secret"));
 
         var results = await KejiSseAdapter.ToSseEvents(AsyncEnumerable([.. events])).ToListAsync();
 
-        var error = Assert.Single(results);
+        var error = Assert.Single(results, static e => e.EventType == KejiSseEventType.Error);
         Assert.Equal(KejiSseEventType.Error, error.EventType);
         Assert.Equal(expectedErrorCode, error.ErrorCode);
         Assert.DoesNotContain(results, static item => item.EventType == KejiSseEventType.ToolCall);
     }
 
     [Theory]
-    [InlineData(false, "STREAM_TRUNCATED")]
-    [InlineData(true, "AUTH_FAILED")]
+    [InlineData(false, KejiProviderErrorCode.StreamTruncated)]
+    [InlineData(true, KejiProviderErrorCode.AuthFailed)]
     public async Task PendingUsage_IsNotReleasedWithoutSuccessfulGlobalDone(
         bool sendError,
-        string expectedErrorCode)
+        KejiProviderErrorCode expectedErrorCode)
     {
         var events = new List<ChatCompletionStreamEvent>
         {
-            ChatCompletionStreamEvent.ChoiceFinished("stop", hasToolCalls: false),
+            ChatCompletionStreamEvent.ChoiceFinished(KejiFinishReason.Stop, hasToolCalls: false),
             ChatCompletionStreamEvent.UsageEvent(new TokenUsage { PromptTokens = 3, CompletionTokens = 4 }),
         };
         if (sendError)
-            events.Add(ChatCompletionStreamEvent.Error("AUTH_FAILED", "raw secret"));
+            events.Add(ChatCompletionStreamEvent.Error(KejiProviderErrorCode.AuthFailed, "raw secret"));
 
         var results = await KejiSseAdapter.ToSseEvents(AsyncEnumerable([.. events])).ToListAsync();
 
-        var error = Assert.Single(results);
+        var error = Assert.Single(results, static e => e.EventType == KejiSseEventType.Error);
         Assert.Equal(expectedErrorCode, error.ErrorCode);
         Assert.DoesNotContain(results, static item => item.EventType == KejiSseEventType.Usage);
     }
@@ -574,8 +574,8 @@ public sealed class KejiSseAdapterTests
             ChatCompletionStreamEvent.ReasoningToken("reason one", choiceIndex: 1),
             ChatCompletionStreamEvent.Token("answer zero", choiceIndex: 0),
             ChatCompletionStreamEvent.Token("answer one", choiceIndex: 1),
-            ChatCompletionStreamEvent.ChoiceFinished("stop", hasToolCalls: false, choiceIndex: 0),
-            ChatCompletionStreamEvent.ChoiceFinished("stop", hasToolCalls: false, choiceIndex: 1),
+            ChatCompletionStreamEvent.ChoiceFinished(KejiFinishReason.Stop, hasToolCalls: false, choiceIndex: 0),
+            ChatCompletionStreamEvent.ChoiceFinished(KejiFinishReason.Stop, hasToolCalls: false, choiceIndex: 1),
             ChatCompletionStreamEvent.Done());
 
         var results = await KejiSseAdapter.ToSseEvents(providerEvents).ToListAsync();
@@ -602,7 +602,7 @@ public sealed class KejiSseAdapterTests
         var results = await KejiSseAdapter.ToSseEvents(AsyncEnumerable(events)).ToListAsync();
 
         var error = Assert.Single(results);
-        Assert.Equal("STREAM_PROTOCOL_ERROR", error.ErrorCode);
+        Assert.Equal(KejiProviderErrorCode.StreamProtocolError, error.ErrorCode);
     }
 
     [Fact]
@@ -615,7 +615,7 @@ public sealed class KejiSseAdapterTests
         var results = await KejiSseAdapter.ToSseEvents(providerEvents).ToListAsync();
         var wire = KejiSseFormatter.FormatEvent(Assert.Single(results));
 
-        Assert.Equal("PROVIDER_ERROR", results[0].ErrorCode);
+        Assert.Equal(KejiProviderErrorCode.ProviderError, results[0].ErrorCode);
         Assert.DoesNotContain("sk-acquire-secret", wire, StringComparison.Ordinal);
     }
 
@@ -627,7 +627,7 @@ public sealed class KejiSseAdapterTests
         var results = await KejiSseAdapter.ToSseEvents(providerEvents).ToListAsync();
 
         var error = Assert.Single(results);
-        Assert.Equal("PROVIDER_ERROR", error.ErrorCode);
+        Assert.Equal(KejiProviderErrorCode.ProviderError, error.ErrorCode);
     }
 
     [Fact]
@@ -635,7 +635,7 @@ public sealed class KejiSseAdapterTests
     {
         var providerEvents = new BoundaryEnumerable(
             [
-                ChatCompletionStreamEvent.ChoiceFinished("stop", hasToolCalls: false),
+                ChatCompletionStreamEvent.ChoiceFinished(KejiFinishReason.Stop, hasToolCalls: false),
                 ChatCompletionStreamEvent.Done(),
             ],
             disposalError: "Authorization: Bearer sk-dispose-secret");
@@ -654,7 +654,7 @@ public sealed class KejiSseAdapterTests
     public async Task ChoiceStateCount_IsBounded(int choiceCount, KejiSseEventType expectedTerminal)
     {
         var events = Enumerable.Range(0, choiceCount)
-            .Select(static index => ChatCompletionStreamEvent.ChoiceFinished("stop", false, index))
+            .Select(static index => ChatCompletionStreamEvent.ChoiceFinished(KejiFinishReason.Stop, false, index))
             .Append(ChatCompletionStreamEvent.Done())
             .ToArray();
 
@@ -663,7 +663,7 @@ public sealed class KejiSseAdapterTests
         var terminal = Assert.Single(results);
         Assert.Equal(expectedTerminal, terminal.EventType);
         if (expectedTerminal == KejiSseEventType.Error)
-            Assert.Equal("STREAM_PROTOCOL_ERROR", terminal.ErrorCode);
+            Assert.Equal(KejiProviderErrorCode.StreamProtocolError, terminal.ErrorCode);
     }
 
     [Theory]
@@ -672,7 +672,7 @@ public sealed class KejiSseAdapterTests
     public async Task ChoiceIndex_IsBounded(int choiceIndex, KejiSseEventType expectedTerminal)
     {
         var providerEvents = AsyncEnumerable(
-            ChatCompletionStreamEvent.ChoiceFinished("stop", hasToolCalls: false, choiceIndex),
+            ChatCompletionStreamEvent.ChoiceFinished(KejiFinishReason.Stop, hasToolCalls: false, choiceIndex),
             ChatCompletionStreamEvent.Done());
 
         var results = await KejiSseAdapter.ToSseEvents(providerEvents).ToListAsync();
@@ -696,7 +696,7 @@ public sealed class KejiSseAdapterTests
             events.Add(ChatCompletionStreamEvent.ToolCallDelta("{}", index, toolCallId: $"call_{index}"));
             events.Add(ChatCompletionStreamEvent.ToolCallEnd($"call_{index}", index));
         }
-        events.Add(ChatCompletionStreamEvent.ChoiceFinished("tool_calls", hasToolCalls: true));
+        events.Add(ChatCompletionStreamEvent.ChoiceFinished(KejiFinishReason.ToolCalls, hasToolCalls: true));
         events.Add(ChatCompletionStreamEvent.Done());
 
         var results = await KejiSseAdapter.ToSseEvents(AsyncEnumerable([.. events])).ToListAsync();
@@ -714,7 +714,7 @@ public sealed class KejiSseAdapterTests
             ChatCompletionStreamEvent.ToolCallBegin("call_1", "tool", toolCallIndex),
             ChatCompletionStreamEvent.ToolCallDelta("{}", toolCallIndex, toolCallId: "call_1"),
             ChatCompletionStreamEvent.ToolCallEnd("call_1", toolCallIndex),
-            ChatCompletionStreamEvent.ChoiceFinished("tool_calls", hasToolCalls: true),
+            ChatCompletionStreamEvent.ChoiceFinished(KejiFinishReason.ToolCalls, hasToolCalls: true),
             ChatCompletionStreamEvent.Done());
 
         var results = await KejiSseAdapter.ToSseEvents(providerEvents).ToListAsync();
@@ -732,7 +732,7 @@ public sealed class KejiSseAdapterTests
             ChatCompletionStreamEvent.ToolCallBegin("call_1", "tool"),
             ChatCompletionStreamEvent.ToolCallDelta(exact, toolCallId: "call_1"),
             ChatCompletionStreamEvent.ToolCallEnd("call_1"),
-            ChatCompletionStreamEvent.ChoiceFinished("tool_calls", hasToolCalls: true),
+            ChatCompletionStreamEvent.ChoiceFinished(KejiFinishReason.ToolCalls, hasToolCalls: true),
             ChatCompletionStreamEvent.Done())).ToListAsync();
         var rejected = await KejiSseAdapter.ToSseEvents(AsyncEnumerable(
             ChatCompletionStreamEvent.ToolCallBegin("call_1", "tool"),
@@ -742,8 +742,8 @@ public sealed class KejiSseAdapterTests
             ChatCompletionStreamEvent.ToolCallDelta("{\"x\":\"\uD800\"}", toolCallId: "call_1"))).ToListAsync();
 
         Assert.Equal(KejiSseEventType.Done, accepted[^1].EventType);
-        Assert.Equal("STREAM_PROTOCOL_ERROR", Assert.Single(rejected).ErrorCode);
-        Assert.Equal("STREAM_PROTOCOL_ERROR", Assert.Single(invalidUnicode).ErrorCode);
+        Assert.Equal(KejiProviderErrorCode.StreamProtocolError, Assert.Single(rejected).ErrorCode);
+        Assert.Equal(KejiProviderErrorCode.StreamProtocolError, Assert.Single(invalidUnicode).ErrorCode);
     }
 
     [Fact]
@@ -763,7 +763,7 @@ public sealed class KejiSseAdapterTests
         var results = await KejiSseAdapter.ToSseEvents(AsyncEnumerable([.. events])).ToListAsync();
 
         var error = Assert.Single(results);
-        Assert.Equal("STREAM_PROTOCOL_ERROR", error.ErrorCode);
+        Assert.Equal(KejiProviderErrorCode.StreamProtocolError, error.ErrorCode);
     }
 
     [Theory]
@@ -779,7 +779,7 @@ public sealed class KejiSseAdapterTests
             ChatCompletionStreamEvent.ToolCallBegin("call_1", "tool"),
             ChatCompletionStreamEvent.ToolCallDelta(arguments, toolCallId: "call_1"),
             ChatCompletionStreamEvent.ToolCallEnd("call_1"),
-            ChatCompletionStreamEvent.ChoiceFinished("tool_calls", hasToolCalls: true),
+            ChatCompletionStreamEvent.ChoiceFinished(KejiFinishReason.ToolCalls, hasToolCalls: true),
             ChatCompletionStreamEvent.Done());
 
         var results = await KejiSseAdapter.ToSseEvents(providerEvents).ToListAsync();
@@ -796,7 +796,7 @@ public sealed class KejiSseAdapterTests
             ChatCompletionStreamEvent.ToolCallDelta("{\"path\":", toolCallId: "call_1"),
             ChatCompletionStreamEvent.ToolCallDelta("\"private.txt\"}", toolCallId: "call_1"),
             ChatCompletionStreamEvent.ToolCallEnd("call_1"),
-            ChatCompletionStreamEvent.ChoiceFinished("tool_calls", hasToolCalls: true),
+            ChatCompletionStreamEvent.ChoiceFinished(KejiFinishReason.ToolCalls, hasToolCalls: true),
             ChatCompletionStreamEvent.Done());
 
         var results = await KejiSseAdapter.ToSseEvents(providerEvents).ToListAsync();
@@ -818,7 +818,7 @@ public sealed class KejiSseAdapterTests
         var results = await KejiSseAdapter.ToSseEvents(providerEvents).ToListAsync();
 
         var error = Assert.Single(results);
-        Assert.Equal("STREAM_PROTOCOL_ERROR", error.ErrorCode);
+        Assert.Equal(KejiProviderErrorCode.StreamProtocolError, error.ErrorCode);
     }
 
     [Fact]
@@ -828,49 +828,52 @@ public sealed class KejiSseAdapterTests
             ChatCompletionStreamEvent.ToolCallBegin("call_1", "tool"),
             ChatCompletionStreamEvent.ToolCallDelta("{}", toolCallId: "call_1"),
             ChatCompletionStreamEvent.ToolCallEnd("call_1"),
-            ChatCompletionStreamEvent.ChoiceFinished("tool_calls", hasToolCalls: false))).ToListAsync();
+            ChatCompletionStreamEvent.ChoiceFinished(KejiFinishReason.ToolCalls, hasToolCalls: false))).ToListAsync();
         var unexpectedFlag = await KejiSseAdapter.ToSseEvents(AsyncEnumerable(
             ChatCompletionStreamEvent.Token("answer"),
-            ChatCompletionStreamEvent.ChoiceFinished("stop", hasToolCalls: true))).ToListAsync();
+            ChatCompletionStreamEvent.ChoiceFinished(KejiFinishReason.Stop, hasToolCalls: true))).ToListAsync();
 
-        Assert.Equal("STREAM_PROTOCOL_ERROR", Assert.Single(missingFlag).ErrorCode);
-        Assert.Equal("STREAM_PROTOCOL_ERROR", unexpectedFlag[^1].ErrorCode);
+        Assert.Equal(KejiProviderErrorCode.StreamProtocolError, Assert.Single(missingFlag).ErrorCode);
+        Assert.Equal(KejiProviderErrorCode.StreamProtocolError, unexpectedFlag[^1].ErrorCode);
         Assert.DoesNotContain(missingFlag, static item => item.EventType == KejiSseEventType.ToolCall);
     }
 
-    [Theory]
-    [InlineData("")]
-    [InlineData("\0")]
-    public async Task InvalidFinishReason_IsProtocolError(string finishReason)
+    [Fact]
+    public async Task InvalidFinishReason_IsProtocolError()
     {
         var providerEvents = AsyncEnumerable(
-            ChatCompletionStreamEvent.ChoiceFinished(finishReason, hasToolCalls: false));
+            ChatCompletionStreamEvent.ChoiceFinished(KejiFinishReason.Invalid, hasToolCalls: false));
 
         var results = await KejiSseAdapter.ToSseEvents(providerEvents).ToListAsync();
 
-        Assert.Equal("STREAM_PROTOCOL_ERROR", Assert.Single(results).ErrorCode);
+        Assert.Equal(KejiProviderErrorCode.StreamProtocolError, Assert.Single(results).ErrorCode);
     }
 
     [Fact]
     public async Task FinishReasonLengthAndUnicode_AreResourceBounded()
     {
-        var tooLong = await KejiSseAdapter.ToSseEvents(AsyncEnumerable(
-            ChatCompletionStreamEvent.ChoiceFinished(new string('x', 65), hasToolCalls: false))).ToListAsync();
-        var invalidUnicode = await KejiSseAdapter.ToSseEvents(AsyncEnumerable(
-            ChatCompletionStreamEvent.ChoiceFinished("\uD800", hasToolCalls: false))).ToListAsync();
+        foreach (var reason in new[] { KejiFinishReason.Stop, KejiFinishReason.ToolCalls, KejiFinishReason.ContentFilter, KejiFinishReason.Error, KejiFinishReason.Length })
+        {
+            var providerEvents = AsyncEnumerable(
+                ChatCompletionStreamEvent.ChoiceFinished(reason, hasToolCalls: false),
+                ChatCompletionStreamEvent.Done());
 
-        Assert.Equal("STREAM_PROTOCOL_ERROR", Assert.Single(tooLong).ErrorCode);
-        Assert.Equal("STREAM_PROTOCOL_ERROR", Assert.Single(invalidUnicode).ErrorCode);
+            var results = await KejiSseAdapter.ToSseEvents(providerEvents).ToListAsync();
+
+            Assert.NotEmpty(results);
+            Assert.Equal(KejiSseEventType.Done, results[^1].EventType);
+        }
     }
 
     [Theory]
     [InlineData(-1, 0)]
     [InlineData(1_000_000_001, 0)]
     [InlineData(600_000_000, 500_000_000)]
+    [InlineData(1, -1)]
     public async Task UsageCounts_AreResourceBounded(long promptTokens, long completionTokens)
     {
         var providerEvents = AsyncEnumerable(
-            ChatCompletionStreamEvent.ChoiceFinished("stop", hasToolCalls: false),
+            ChatCompletionStreamEvent.ChoiceFinished(KejiFinishReason.Stop, hasToolCalls: false),
             ChatCompletionStreamEvent.UsageEvent(new TokenUsage
             {
                 PromptTokens = promptTokens,
@@ -880,7 +883,7 @@ public sealed class KejiSseAdapterTests
         var results = await KejiSseAdapter.ToSseEvents(providerEvents).ToListAsync();
 
         var error = Assert.Single(results);
-        Assert.Equal("STREAM_PROTOCOL_ERROR", error.ErrorCode);
+        Assert.Equal(KejiProviderErrorCode.StreamProtocolError, error.ErrorCode);
     }
 
     [Fact]
@@ -893,25 +896,25 @@ public sealed class KejiSseAdapterTests
         var invalidUnicode = await KejiSseAdapter.ToSseEvents(
             AsyncEnumerable(ChatCompletionStreamEvent.Token("\uD800"))).ToListAsync();
 
-        Assert.Equal("STREAM_PROTOCOL_ERROR", Assert.Single(tooLarge).ErrorCode);
-        Assert.Equal("STREAM_PROTOCOL_ERROR", Assert.Single(invalidUnicode).ErrorCode);
+        Assert.Equal(KejiProviderErrorCode.StreamProtocolError, Assert.Single(tooLarge).ErrorCode);
+        Assert.Equal(KejiProviderErrorCode.StreamProtocolError, Assert.Single(invalidUnicode).ErrorCode);
     }
 
     [Theory]
-    [InlineData(ChatCompletionStreamEventType.Token)]
-    [InlineData(ChatCompletionStreamEventType.ReasoningToken)]
-    public async Task ChoiceTextAggregate_IsBoundedAt4MiB(ChatCompletionStreamEventType eventType)
+    [InlineData(KejiProviderStreamEventKind.Token)]
+    [InlineData(KejiProviderStreamEventKind.ReasoningToken)]
+    public async Task ChoiceTextAggregate_IsBoundedAt4MiB(KejiProviderStreamEventKind eventType)
     {
         var maximumDelta = new string('a', 256 * 1024);
         var acceptedEvents = Enumerable.Range(0, 16)
-            .Select(_ => eventType == ChatCompletionStreamEventType.Token
+            .Select(_ => eventType == KejiProviderStreamEventKind.Token
                 ? ChatCompletionStreamEvent.Token(maximumDelta)
                 : ChatCompletionStreamEvent.ReasoningToken(maximumDelta))
-            .Append(ChatCompletionStreamEvent.ChoiceFinished("stop", hasToolCalls: false))
+            .Append(ChatCompletionStreamEvent.ChoiceFinished(KejiFinishReason.Stop, hasToolCalls: false))
             .Append(ChatCompletionStreamEvent.Done())
             .ToArray();
         var rejectedEvents = Enumerable.Range(0, 17)
-            .Select(_ => eventType == ChatCompletionStreamEventType.Token
+            .Select(_ => eventType == KejiProviderStreamEventKind.Token
                 ? ChatCompletionStreamEvent.Token(maximumDelta)
                 : ChatCompletionStreamEvent.ReasoningToken(maximumDelta))
             .ToArray();
@@ -920,22 +923,19 @@ public sealed class KejiSseAdapterTests
         var rejected = await KejiSseAdapter.ToSseEvents(AsyncEnumerable(rejectedEvents)).ToListAsync();
 
         Assert.Equal(KejiSseEventType.Done, accepted[^1].EventType);
-        Assert.Equal("STREAM_PROTOCOL_ERROR", rejected[^1].ErrorCode);
+        Assert.Equal(KejiProviderErrorCode.StreamProtocolError, rejected[^1].ErrorCode);
     }
 
     [Fact]
     public async Task OversizedUnknownErrorCode_IsReducedToGenericBoundedError()
     {
-        var rawCode = new string('X', 4096);
-
         var results = await KejiSseAdapter.ToSseEvents(
-            AsyncEnumerable(ChatCompletionStreamEvent.Error(rawCode, "sk-secret"))).ToListAsync();
-        var error = Assert.Single(results);
+            AsyncEnumerable(ChatCompletionStreamEvent.Error(KejiProviderErrorCode.ProviderError, "sk-secret"))).ToListAsync();
+        var error = Assert.Single(results, static e => e.EventType == KejiSseEventType.Error);
         var wire = KejiSseFormatter.FormatEvent(error);
 
-        Assert.Equal("PROVIDER_ERROR", error.ErrorCode);
+        Assert.Equal(KejiProviderErrorCode.ProviderError, error.ErrorCode);
         Assert.Equal("Model provider request failed", error.ErrorMessage);
-        Assert.DoesNotContain(rawCode, wire, StringComparison.Ordinal);
         Assert.DoesNotContain("sk-secret", wire, StringComparison.Ordinal);
     }
 
@@ -947,7 +947,7 @@ public sealed class KejiSseAdapterTests
             ChatCompletionStreamEvent.ToolCallBegin("call_1", "tool"),
             ChatCompletionStreamEvent.ToolCallDelta("{}", toolCallId: "call_1"),
             ChatCompletionStreamEvent.ToolCallEnd("call_1"),
-            ChatCompletionStreamEvent.ChoiceFinished("tool_calls", hasToolCalls: true),
+            ChatCompletionStreamEvent.ChoiceFinished(KejiFinishReason.ToolCalls, hasToolCalls: true),
             ChatCompletionStreamEvent.Done());
         await using var enumerator = KejiSseAdapter
             .ToSseEvents(providerEvents, cts.Token)
@@ -979,7 +979,7 @@ public sealed class KejiSseAdapterTests
         probe.Started = true;
         try
         {
-            yield return ChatCompletionStreamEvent.ChoiceFinished("stop", hasToolCalls: false);
+            yield return ChatCompletionStreamEvent.ChoiceFinished(KejiFinishReason.Stop, hasToolCalls: false);
             yield return terminal;
             cancellationToken.ThrowIfCancellationRequested();
             probe.ReadPastTerminal = true;

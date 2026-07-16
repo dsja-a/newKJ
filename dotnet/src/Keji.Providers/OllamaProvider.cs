@@ -4,7 +4,7 @@ namespace Keji.Providers;
 
 public sealed class OllamaProvider : ProviderBase
 {
-    private readonly string _endpoint;
+    private readonly Uri _endpointUri;
     private readonly string _defaultModel;
     private readonly int _maxTokens;
 
@@ -14,15 +14,15 @@ public sealed class OllamaProvider : ProviderBase
             (config ?? throw new ArgumentNullException(nameof(config))).Timeout,
             config.MaxRetries)
     {
-        if (!string.Equals(config.ProviderType, "ollama", StringComparison.OrdinalIgnoreCase))
+        if (!string.Equals(config.ProviderType, "ollama", StringComparison.Ordinal))
             throw new ArgumentException("OllamaProvider requires an ollama configuration", nameof(config));
-        _endpoint = NormalizeOpenAiCompatibleEndpoint(config.EndpointUri);
+        _endpointUri = config.EndpointUri;
         _defaultModel = config.DefaultModel;
         _maxTokens = config.MaxTokens;
     }
 
     public override string ProviderName => "ollama";
-    protected override string BaseUri => _endpoint;
+    protected override string BaseUri => NormalizeOpenAiCompatibleEndpoint(_endpointUri);
     protected override string DefaultModel => _defaultModel;
     protected override int DefaultMaxTokens => _maxTokens;
     protected override AuthenticationHeaderValue? AuthHeader => null;

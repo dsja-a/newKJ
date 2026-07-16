@@ -1,5 +1,4 @@
 using Keji.Providers;
-using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace Microsoft.Extensions.DependencyInjection;
 
@@ -38,7 +37,7 @@ public interface IModelProviderRegistryBuilder
 internal sealed class ModelProviderRegistryBuilder : IModelProviderRegistryBuilder
 {
     private readonly IServiceCollection _services;
-    private readonly Dictionary<string, ModelProviderConfig> _configs = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, ModelProviderConfig> _configs = new(StringComparer.Ordinal);
     private bool _finalized;
 
     public ModelProviderRegistryBuilder(IServiceCollection services)
@@ -96,7 +95,7 @@ internal sealed class ModelProviderRegistryBuilder : IModelProviderRegistryBuild
         if (_finalized)
             throw new InvalidOperationException("Provider registration is frozen");
         ArgumentNullException.ThrowIfNull(config);
-        if (!string.Equals(config.ProviderType, providerName, StringComparison.OrdinalIgnoreCase))
+        if (!string.Equals(config.ProviderType, providerName, StringComparison.Ordinal))
             throw new ArgumentException("Provider configuration type does not match the registration", nameof(config));
         if (!_configs.TryAdd(providerName, config))
             throw new InvalidOperationException($"Provider '{providerName}' is already registered");

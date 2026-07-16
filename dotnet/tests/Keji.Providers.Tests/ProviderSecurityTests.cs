@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text.Json;
+using System.Collections.Immutable;
 using Keji.Providers;
 
 namespace Keji.Providers.Tests;
@@ -47,7 +48,7 @@ public class ProviderSecurityTests
         await foreach (var e in provider.StreamAsync(MakeRequest()))
             results.Add(e);
 
-        var error = results.FirstOrDefault(r => r.Type == ChatCompletionStreamEventType.Error);
+        var error = results.FirstOrDefault(r => r.Type == KejiProviderStreamEventKind.Error);
         Assert.NotNull(error);
         Assert.DoesNotContain("sk-abc123", error.ErrorMessage);
     }
@@ -65,7 +66,7 @@ public class ProviderSecurityTests
         var result = await provider.CompleteAsync(new ChatCompletionRequest
         {
             Model = "test",
-            Messages = new[] { new ChatMessage { Role = "user", Content = "My password is secret123" } }
+            Messages = new[] { new ChatMessage { Role = KejiChatRole.User, Content = "My password is secret123" } }.ToImmutableArray()
         });
 
         Assert.True(result.Success);
@@ -94,7 +95,7 @@ public class ProviderSecurityTests
         await foreach (var e in provider.StreamAsync(MakeRequest()))
             results.Add(e);
 
-        var error = results.FirstOrDefault(r => r.Type == ChatCompletionStreamEventType.Error);
+        var error = results.FirstOrDefault(r => r.Type == KejiProviderStreamEventKind.Error);
         Assert.NotNull(error);
         Assert.DoesNotContain("sk-xxx", error.ErrorMessage);
     }
@@ -112,7 +113,7 @@ public class ProviderSecurityTests
     private static ChatCompletionRequest MakeRequest() => new()
     {
         Model = "test",
-        Messages = new[] { new ChatMessage { Role = "user", Content = "hello" } }
+        Messages = new[] { new ChatMessage { Role = KejiChatRole.User, Content = "hello" } }.ToImmutableArray()
     };
 
     private sealed class MockProvider : ProviderBase

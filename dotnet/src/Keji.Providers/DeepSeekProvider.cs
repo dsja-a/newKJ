@@ -5,7 +5,7 @@ namespace Keji.Providers;
 public sealed class DeepSeekProvider : ProviderBase
 {
     private readonly string _apiKey;
-    private readonly string _endpoint;
+    private readonly Uri _endpointUri;
     private readonly string _defaultModel;
     private readonly int _maxTokens;
 
@@ -15,16 +15,16 @@ public sealed class DeepSeekProvider : ProviderBase
             (config ?? throw new ArgumentNullException(nameof(config))).Timeout,
             config.MaxRetries)
     {
-        if (!string.Equals(config.ProviderType, "deepseek", StringComparison.OrdinalIgnoreCase))
+        if (!string.Equals(config.ProviderType, "deepseek", StringComparison.Ordinal))
             throw new ArgumentException("DeepSeekProvider requires a deepseek configuration", nameof(config));
         _apiKey = config.ApiKey;
-        _endpoint = config.Endpoint;
+        _endpointUri = config.EndpointUri;
         _defaultModel = config.DefaultModel;
         _maxTokens = config.MaxTokens;
     }
 
     public override string ProviderName => "deepseek";
-    protected override string BaseUri => _endpoint;
+    protected override string BaseUri => _endpointUri.AbsoluteUri;
     protected override string DefaultModel => _defaultModel;
     protected override int DefaultMaxTokens => _maxTokens;
     protected override bool BackfillAssistantReasoningContent => true;

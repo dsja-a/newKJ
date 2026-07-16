@@ -4,27 +4,31 @@ namespace Keji.Streaming;
 
 public enum KejiSseEventType
 {
-    Thinking,
-    ThinkToken,
-    Answering,
-    Answer,
-    ToolCall,
-    Usage,
-    Error,
-    Done,
+    Invalid = 0,
+    Thinking = 1,
+    ThinkToken = 2,
+    Answering = 3,
+    Answer = 4,
+    ToolCall = 5,
+    ToolResult = 6,
+    Usage = 7,
+    Error = 8,
+    Done = 9,
+    SystemNotice = 10,
 }
 
 public enum KejiSsePhase
 {
-    Thinking,
-    Answering,
-    Done,
-    Error,
+    Invalid = 0,
+    Thinking = 1,
+    Answering = 2,
+    Done = 3,
+    Error = 4,
 }
 
 public sealed class KejiSseEvent
 {
-    public const string CurrentProtocolVersion = "1.0";
+    public const int CurrentProtocolVersion = 1;
 
     public KejiSseEventType EventType { get; init; }
     public KejiSsePhase Phase { get; init; }
@@ -34,10 +38,10 @@ public sealed class KejiSseEvent
     public int? ToolCallIndex { get; init; }
     public int? ChoiceIndex { get; init; }
     public TokenUsage? Usage { get; init; }
-    public string? ErrorCode { get; init; }
+    public KejiProviderErrorCode ErrorCode { get; init; }
     public string? ErrorMessage { get; init; }
-    public string ProtocolVersion => CurrentProtocolVersion;
+    public int ProtocolVersion => CurrentProtocolVersion;
     public long Sequence { get; init; }
-    public string? EventId { get; init; }
+    public string EventId { get; init; } = "";
     public DateTime TimestampUtc { get; init; } = DateTime.UtcNow;
 }

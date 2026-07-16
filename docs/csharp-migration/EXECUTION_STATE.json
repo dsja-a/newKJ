@@ -15,7 +15,7 @@
   "task008_final_commit_sha": "c027ab34a7a30655f11ff035af191b31cae57bd1",
   "task008_accepted_sha": "c027ab34a7a30655f11ff035af191b31cae57bd1",
   "current_task": "TASK-012",
-  "status": "accepted",
+  "status": "repair_in_progress",
   "csharp_completion_percent": 48,
   "completed_tasks": [
     "TASK-000",
@@ -29,8 +29,7 @@
     "TASK-008",
     "TASK-009",
     "TASK-010",
-    "TASK-011",
-    "TASK-012"
+    "TASK-011"
   ],
   "task009_initial_commit_sha": "1a113ba21f68dfb3eccca31f53772b7bb6c71286",
   "task009_first_repair_commit_sha": "7dca227c239268591433f84758781ff88549f7b1",
@@ -108,5 +107,4 @@
     "final_commit_sha": "604846119096addaec0268dd85e719b13426ac5c",
     "accepted_sha": "604846119096addaec0268dd85e719b13426ac5c"
   }
-}
 }

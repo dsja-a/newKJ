@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Sockets;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using Keji.Configuration.Models;
@@ -9,17 +10,16 @@ public sealed partial class ModelProviderConfig
 {
     private const int MaxEndpointLength = 2048;
     private const int MaxModelLength = 256;
-    private const int MaxSecretLength = 16 * 1024;
 
     public string ProviderType { get; }
-    [JsonIgnore]
-    public string ApiKey { get; }
+    internal string ApiKey { get; }
     public Uri EndpointUri { get; }
     public string Endpoint => EndpointUri.AbsoluteUri;
     public string DefaultModel { get; }
     public TimeSpan Timeout { get; }
     public int MaxRetries { get; }
     public int MaxTokens { get; }
+    public KejiProviderSecretReference? SecretReference { get; }
 
     private ModelProviderConfig(
         string providerType,
@@ -28,7 +28,8 @@ public sealed partial class ModelProviderConfig
         string defaultModel,
         TimeSpan timeout,
         int maxRetries,
-        int maxTokens)
+        int maxTokens,
+        KejiProviderSecretReference? secretReference)
     {
         ProviderType = providerType;
         ApiKey = apiKey;
@@ -37,27 +38,49 @@ public sealed partial class ModelProviderConfig
         Timeout = timeout;
         MaxRetries = maxRetries;
         MaxTokens = maxTokens;
+        SecretReference = secretReference;
     }
 
     public static ModelProviderConfig Create(
         string providerType,
-        string? apiKey,
+        string? apiKeyOrReference,
         string endpoint,
         string defaultModel)
     {
         var normalizedProvider = ValidateProviderType(providerType);
-        var validatedSecret = ValidateSecret(apiKey ?? string.Empty, normalizedProvider);
-        var validatedEndpoint = ValidateEndpoint(endpoint);
+        var validatedEndpoint = ValidateEndpoint(endpoint, normalizedProvider);
         var validatedModel = ValidateModel(defaultModel);
+
+        KejiProviderSecretReference? secretRef = null;
+        string resolvedKey;
+
+        if (string.IsNullOrWhiteSpace(apiKeyOrReference))
+        {
+            resolvedKey = string.Empty;
+        }
+        else if (apiKeyOrReference.StartsWith("env:", StringComparison.Ordinal))
+        {
+            var envName = apiKeyOrReference[4..];
+            secretRef = new KejiProviderSecretReference(envName);
+            resolvedKey = Environment.GetEnvironmentVariable(envName) ?? string.Empty;
+
+            if (normalizedProvider is "openai" or "deepseek" && string.IsNullOrWhiteSpace(resolvedKey))
+                throw new ArgumentException($"Environment variable {envName} is not set or empty", nameof(apiKeyOrReference));
+        }
+        else
+        {
+            resolvedKey = ValidateSecret(apiKeyOrReference, normalizedProvider);
+        }
 
         return new ModelProviderConfig(
             normalizedProvider,
-            validatedSecret,
+            resolvedKey,
             validatedEndpoint,
             validatedModel,
             TimeSpan.FromSeconds(30),
             maxRetries: 2,
-            maxTokens: 4096);
+            maxTokens: 4096,
+            secretReference: secretRef);
     }
 
     public static ModelProviderConfig FromConfiguration(
@@ -110,39 +133,46 @@ public sealed partial class ModelProviderConfig
         return Copy(maxTokens: maxTokens);
     }
 
+    public ModelProviderConfig WithResolvedSecret(string resolvedApiKey)
+    {
+        ArgumentNullException.ThrowIfNull(resolvedApiKey);
+        return Copy(resolvedKey: resolvedApiKey);
+    }
+
     public override string ToString() =>
         $"ModelProviderConfig {{ ProviderType = {ProviderType}, Endpoint = {Endpoint}, " +
-        $"DefaultModel = {DefaultModel}, ApiKeyConfigured = {!string.IsNullOrEmpty(ApiKey)}, " +
+        $"DefaultModel = {DefaultModel}, HasSecret = {SecretReference is not null || !string.IsNullOrEmpty(ApiKey)}, " +
         $"Timeout = {Timeout}, MaxRetries = {MaxRetries}, MaxTokens = {MaxTokens} }}";
 
     private ModelProviderConfig Copy(
         TimeSpan? timeout = null,
         int? maxRetries = null,
-        int? maxTokens = null) =>
+        int? maxTokens = null,
+        string? resolvedKey = null) =>
         new(
             ProviderType,
-            ApiKey,
+            resolvedKey ?? ApiKey,
             EndpointUri,
             DefaultModel,
             timeout ?? Timeout,
             maxRetries ?? MaxRetries,
-            maxTokens ?? MaxTokens);
+            maxTokens ?? MaxTokens,
+            SecretReference);
 
     private static string ValidateProviderType(string providerType)
     {
         if (string.IsNullOrWhiteSpace(providerType))
             throw new ArgumentException("Provider type is required", nameof(providerType));
 
-        var normalized = providerType.Trim().ToLowerInvariant();
-        if (!ProviderTypePattern().IsMatch(normalized))
+        if (!ProviderTypePattern().IsMatch(providerType))
             throw new ArgumentException("Provider type contains invalid characters", nameof(providerType));
 
-        return normalized;
+        return providerType;
     }
 
     private static string ValidateSecret(string apiKey, string providerType)
     {
-        if (apiKey.Length > MaxSecretLength)
+        if (apiKey.Length > 16 * 1024)
             throw new ArgumentException("Provider API key exceeds the maximum length", nameof(apiKey));
 
         if (apiKey.Any(char.IsControl))
@@ -160,7 +190,7 @@ public sealed partial class ModelProviderConfig
         return apiKey;
     }
 
-    private static Uri ValidateEndpoint(string endpoint)
+    private static Uri ValidateEndpoint(string endpoint, string providerType)
     {
         if (string.IsNullOrWhiteSpace(endpoint))
             throw new ArgumentException("Endpoint is required", nameof(endpoint));
@@ -174,10 +204,14 @@ public sealed partial class ModelProviderConfig
         if (!string.IsNullOrEmpty(uri.UserInfo) || !string.IsNullOrEmpty(uri.Query) || !string.IsNullOrEmpty(uri.Fragment))
             throw new ArgumentException("Endpoint must not contain credentials, a query, or a fragment", nameof(endpoint));
 
-        var isHttps = string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase);
-        var isLoopbackHttp = string.Equals(uri.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase) && IsLoopback(uri);
-        if (!isHttps && !isLoopbackHttp)
-            throw new ArgumentException("Endpoint must use HTTPS unless targeting loopback", nameof(endpoint));
+        if (uri.Scheme.Contains('\r') || uri.Scheme.Contains('\n') || uri.Host.Contains('\r') || uri.Host.Contains('\n'))
+            throw new ArgumentException("Endpoint contains control characters", nameof(endpoint));
+
+        var scheme = uri.Scheme.ToLowerInvariant();
+        if (scheme is "file" or "ftp" or "data" or "javascript")
+            throw new ArgumentException("Endpoint uses an unsupported URI scheme", nameof(endpoint));
+
+        ValidateProviderEndpointPolicy(providerType, uri, scheme);
 
         if (uri.AbsolutePath.Contains('\\', StringComparison.Ordinal))
             throw new ArgumentException("Endpoint path contains an invalid separator", nameof(endpoint));
@@ -190,6 +224,39 @@ public sealed partial class ModelProviderConfig
         };
 
         return builder.Uri;
+    }
+
+    private static void ValidateProviderEndpointPolicy(string providerType, Uri uri, string scheme)
+    {
+        var isHttps = string.Equals(scheme, Uri.UriSchemeHttps, StringComparison.Ordinal);
+        var isHttp = string.Equals(scheme, Uri.UriSchemeHttp, StringComparison.Ordinal);
+
+        switch (providerType)
+        {
+            case "openai":
+                if (!isHttps)
+                    throw new ArgumentException("OpenAI endpoint must use HTTPS", nameof(uri));
+                break;
+
+            case "deepseek":
+                if (!isHttps)
+                    throw new ArgumentException("DeepSeek endpoint must use HTTPS", nameof(uri));
+                break;
+
+            case "ollama":
+                if (isHttps)
+                    break;
+                if (!isHttp)
+                    throw new ArgumentException("Ollama endpoint must use HTTP or HTTPS", nameof(uri));
+                if (!IsLoopback(uri) && !IsPrivateNetwork(uri))
+                    throw new ArgumentException("Ollama HTTP endpoint must target loopback or private network", nameof(uri));
+                break;
+
+            default:
+                if (!isHttps && !(isHttp && IsLoopback(uri)))
+                    throw new ArgumentException("Endpoint must use HTTPS unless targeting loopback", nameof(uri));
+                break;
+        }
     }
 
     private static string ValidateModel(string defaultModel)
@@ -211,7 +278,21 @@ public sealed partial class ModelProviderConfig
         return IPAddress.TryParse(uri.Host, out var address) && IPAddress.IsLoopback(address);
     }
 
-    [GeneratedRegex("^[a-z0-9][a-z0-9_-]{0,63}$", RegexOptions.CultureInvariant)]
+    private static bool IsPrivateNetwork(Uri uri)
+    {
+        if (!IPAddress.TryParse(uri.Host, out var address))
+            return false;
+
+        if (address.AddressFamily != AddressFamily.InterNetwork)
+            return false;
+
+        var bytes = address.GetAddressBytes();
+        return bytes[0] == 10 ||
+               (bytes[0] == 172 && bytes[1] is >= 16 and <= 31) ||
+               (bytes[0] == 192 && bytes[1] == 168);
+    }
+
+    [GeneratedRegex("^[a-z][a-z0-9_]{0,31}$", RegexOptions.CultureInvariant)]
     private static partial Regex ProviderTypePattern();
 
     [GeneratedRegex("^\\$\\{[A-Za-z_][A-Za-z0-9_]*\\}$", RegexOptions.CultureInvariant)]

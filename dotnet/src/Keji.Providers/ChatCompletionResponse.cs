@@ -1,3 +1,5 @@
+using System.Collections.Immutable;
+
 namespace Keji.Providers;
 
 public sealed class ChatCompletionResponse
@@ -5,23 +7,23 @@ public sealed class ChatCompletionResponse
     public bool Success { get; init; }
     public string? Content { get; init; }
     public string? ReasoningContent { get; init; }
-    public IReadOnlyList<ChatToolCall>? ToolCalls { get; init; }
+    public ImmutableArray<ChatToolCall> ToolCalls { get; init; }
     public TokenUsage? Usage { get; init; }
-    public string? ErrorCode { get; init; }
+    public KejiProviderErrorCode ErrorCode { get; init; }
     public string? ErrorMessage { get; init; }
     public string Model { get; init; } = "";
-    public string FinishReason { get; init; } = "unknown";
-    public bool HasToolCalls => ToolCalls is { Count: > 0 };
+    public KejiFinishReason FinishReason { get; init; }
+    public bool HasToolCalls => !ToolCalls.IsDefaultOrEmpty;
     public bool ShouldExecuteTools =>
-        HasToolCalls && FinishReason is "tool_calls" or "stop";
+        HasToolCalls && FinishReason is KejiFinishReason.ToolCalls or KejiFinishReason.Stop;
 
     public static ChatCompletionResponse Succeeded(
         string content,
         TokenUsage? usage = null,
         string? reasoningContent = null,
-        IReadOnlyList<ChatToolCall>? toolCalls = null,
+        ImmutableArray<ChatToolCall> toolCalls = default,
         string model = "",
-        string finishReason = "unknown") =>
+        KejiFinishReason finishReason = default) =>
         new()
         {
             Success = true,
@@ -33,6 +35,6 @@ public sealed class ChatCompletionResponse
             FinishReason = finishReason,
         };
 
-    public static ChatCompletionResponse Failed(string errorCode, string errorMessage) =>
-        new() { Success = false, ErrorCode = errorCode, ErrorMessage = errorMessage, FinishReason = "error" };
+    public static ChatCompletionResponse Failed(KejiProviderErrorCode errorCode, string errorMessage) =>
+        new() { Success = false, ErrorCode = errorCode, ErrorMessage = errorMessage, FinishReason = KejiFinishReason.Error };
 }

@@ -25,21 +25,24 @@ public static class KejiSseFormatter
         var phaseName = GetPhaseName(streamEvent.Phase);
         ValidatePhase(streamEvent.EventType, streamEvent.Phase);
 
-        var eventId = streamEvent.EventId ?? $"evt_{streamEvent.Sequence}";
-        if (!string.Equals(eventId, $"evt_{streamEvent.Sequence}", StringComparison.Ordinal))
-            throw new ArgumentException("SSE event ID must match its sequence", nameof(streamEvent));
-
         var data = new Dictionary<string, object?>(StringComparer.Ordinal)
         {
             ["protocol_version"] = streamEvent.ProtocolVersion,
             ["sequence"] = streamEvent.Sequence,
-            ["event_id"] = eventId,
+            ["event_id"] = streamEvent.EventId,
             ["timestamp_utc"] = streamEvent.TimestampUtc.ToString("O"),
             ["phase"] = phaseName,
         };
 
         switch (streamEvent.EventType)
         {
+            case KejiSseEventType.SystemNotice:
+                ValidateChoiceIndex(streamEvent.ChoiceIndex);
+                data["choice_index"] = streamEvent.ChoiceIndex!.Value;
+                if (!string.IsNullOrEmpty(streamEvent.Delta))
+                    data["delta"] = streamEvent.Delta;
+                break;
+
             case KejiSseEventType.Thinking:
             case KejiSseEventType.Answering:
                 ValidateChoiceIndex(streamEvent.ChoiceIndex);
@@ -60,6 +63,7 @@ public static class KejiSseFormatter
                 break;
 
             case KejiSseEventType.ToolCall:
+            case KejiSseEventType.ToolResult:
                 ValidateToolEvent(streamEvent);
                 data["choice_index"] = streamEvent.ChoiceIndex!.Value;
                 data["tool_call_index"] = streamEvent.ToolCallIndex!.Value;
@@ -69,17 +73,20 @@ public static class KejiSseFormatter
 
             case KejiSseEventType.Usage:
                 ValidateUsage(streamEvent.Usage);
-                data["usage"] = new Dictionary<string, long>(StringComparer.Ordinal)
+                var usageData = new Dictionary<string, long>(StringComparer.Ordinal)
                 {
                     ["prompt_tokens"] = streamEvent.Usage!.PromptTokens,
                     ["completion_tokens"] = streamEvent.Usage.CompletionTokens,
                     ["total_tokens"] = streamEvent.Usage.TotalTokens,
                 };
+                if (streamEvent.Usage.CachedTokens > 0)
+                    usageData["cached_tokens"] = streamEvent.Usage.CachedTokens;
+                data["usage"] = usageData;
                 break;
 
             case KejiSseEventType.Error:
                 var sanitizedError = ProviderErrorMapper.Sanitize(streamEvent.ErrorCode);
-                data["error_code"] = sanitizedError.Code;
+                data["error_code"] = sanitizedError.Code.ToString();
                 data["error"] = sanitizedError.Message;
                 break;
 
@@ -89,36 +96,23 @@ public static class KejiSseFormatter
 
         var json = JsonSerializer.Serialize(data, JsonOptions);
         var builder = new StringBuilder(json.Length + 64);
+        builder.Append("id: ").Append(streamEvent.EventId).Append('\n');
         builder.Append("event: ").Append(eventName).Append('\n');
-        builder.Append("id: ").Append(eventId).Append('\n');
         builder.Append("data: ").Append(json).Append("\n\n");
         return builder.ToString();
     }
 
-    public static string FormatThinkingPhaseStart(
-        long sequence = 0,
-        TimeProvider? timeProvider = null,
-        int choiceIndex = 0)
-    {
-        var clock = timeProvider ?? TimeProvider.System;
-        return FormatEvent(new KejiSseEvent
-        {
-            EventType = KejiSseEventType.Thinking,
-            Phase = KejiSsePhase.Thinking,
-            ChoiceIndex = choiceIndex,
-            Sequence = sequence,
-            EventId = $"evt_{sequence}",
-            TimestampUtc = clock.GetUtcNow().UtcDateTime,
-        });
-    }
+    public static string FormatHeartbeat() => ": keep-alive\n\n";
 
     private static string GetEventName(KejiSseEventType eventType) => eventType switch
     {
+        KejiSseEventType.SystemNotice => "system_notice",
         KejiSseEventType.Thinking => "thinking",
         KejiSseEventType.ThinkToken => "think_token",
         KejiSseEventType.Answering => "answering",
         KejiSseEventType.Answer => "answer",
         KejiSseEventType.ToolCall => "tool_call",
+        KejiSseEventType.ToolResult => "tool_result",
         KejiSseEventType.Usage => "usage",
         KejiSseEventType.Error => "error",
         KejiSseEventType.Done => "done",
@@ -138,21 +132,22 @@ public static class KejiSseFormatter
     {
         if (streamEvent.Sequence < 0)
             throw new ArgumentOutOfRangeException(nameof(streamEvent), "SSE sequence must be non-negative");
+        if (string.IsNullOrEmpty(streamEvent.EventId) || streamEvent.EventId.Length != 32 ||
+            streamEvent.EventId.Any(c => c is < '0' or > '9' and < 'a' or > 'f'))
+            throw new ArgumentException("SSE event ID must be a 32-character lowercase hex GUID", nameof(streamEvent));
         if (streamEvent.TimestampUtc == default || streamEvent.TimestampUtc.Kind != DateTimeKind.Utc)
             throw new ArgumentException("SSE timestamp must be a UTC timestamp", nameof(streamEvent));
-        if (streamEvent.EventId is { } eventId &&
-            (eventId.Length > 64 || eventId.IndexOfAny(['\0', '\r', '\n']) >= 0))
-        {
-            throw new ArgumentException("SSE event ID is invalid", nameof(streamEvent));
-        }
+        if (streamEvent.ProtocolVersion != 1)
+            throw new ArgumentException("SSE protocol version must be 1", nameof(streamEvent));
     }
 
     private static void ValidatePhase(KejiSseEventType eventType, KejiSsePhase phase)
     {
         var expectedPhase = eventType switch
         {
+            KejiSseEventType.SystemNotice => KejiSsePhase.Answering,
             KejiSseEventType.Thinking or KejiSseEventType.ThinkToken => KejiSsePhase.Thinking,
-            KejiSseEventType.Answering or KejiSseEventType.Answer or KejiSseEventType.ToolCall => KejiSsePhase.Answering,
+            KejiSseEventType.Answering or KejiSseEventType.Answer or KejiSseEventType.ToolCall or KejiSseEventType.ToolResult => KejiSsePhase.Answering,
             KejiSseEventType.Usage or KejiSseEventType.Done => KejiSsePhase.Done,
             KejiSseEventType.Error => KejiSsePhase.Error,
             _ => throw new ArgumentOutOfRangeException(nameof(eventType)),

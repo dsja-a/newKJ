@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using Keji.Providers;
 
 namespace Keji.Providers.Tests;
@@ -34,7 +35,7 @@ public class ProviderSpecificTests
     [Fact]
     public void Config_ObjectInit_CannotBypassValidation()
     {
-        var cfg = ModelProviderConfig.Create("openai", "key", "http://localhost", "model");
+        var cfg = ModelProviderConfig.Create("openai", "key", "https://localhost", "model");
 
         var ex = Assert.Throws<ArgumentOutOfRangeException>(() => cfg.WithTimeout(TimeSpan.FromSeconds(121)));
         Assert.Contains("Timeout", ex.Message);
@@ -55,7 +56,7 @@ public class ProviderSpecificTests
         var result = await provider.CompleteAsync(new ChatCompletionRequest
         {
             Model = "gpt-4o",
-            Messages = new[] { new ChatMessage { Role = "user", Content = "hi" } }
+            Messages = new[] { new ChatMessage { Role = KejiChatRole.User, Content = "hi" } }.ToImmutableArray()
         });
 
         Assert.True(result.Success);
@@ -76,7 +77,7 @@ public class ProviderSpecificTests
         var result = await provider.CompleteAsync(new ChatCompletionRequest
         {
             Model = "llama3",
-            Messages = new[] { new ChatMessage { Role = "user", Content = "hi" } }
+            Messages = new[] { new ChatMessage { Role = KejiChatRole.User, Content = "hi" } }.ToImmutableArray()
         });
 
         Assert.True(result.Success);
@@ -86,6 +87,6 @@ public class ProviderSpecificTests
     public void Provider_Constructor_RequiresNonNullFactory()
     {
         Assert.Throws<ArgumentNullException>(() => new OpenAIProvider(null!,
-            ModelProviderConfig.Create("openai", "key", "http://localhost", "gpt-4o")));
+            ModelProviderConfig.Create("openai", "key", "https://localhost", "gpt-4o")));
     }
 }
