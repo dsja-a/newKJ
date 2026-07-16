@@ -4,11 +4,11 @@
 
 - Repository: `dsja-a/newKJ`
 - Branch: `rewrite/csharp-core`
-- Last accepted baseline: `cd00ef16088b80d23507f4fdc54aa2108de906ff`
-- Current task: TASK-011
-- Current status: accepted (repaired)
-- Formal C# completion: 45%
-- Next task: TASK-012
+- Last accepted baseline: `604846119096addaec0268dd85e719b13426ac5c`
+- Current task: TASK-012
+- Current status: accepted (hardened)
+- Formal C# completion: 50%
+- Next task: TASK-013
 
 ## TASK-011 (Repair): Isolated ToolWorker
 
@@ -140,6 +140,35 @@ Host process                          ToolWorker.Client            ToolWorker pr
 | NuGet vulnerabilities | 0 | |
 | `git diff --check` | LF/CRLF only | |
 
+## TASK-012 (Hardening): Model Providers and SSE Protocol
+
+### Changes
+- **ProviderBase.cs**: Complete rewrite for true streaming via `Channel<T>`, eliminating the `StreamAsyncBuffer` pattern. `SseLineReader` enforces 64 KiB max line length. Per-(choiceIndex,toolCallIndex) tool call state tracking with `TooLCallState`. Size limits: content 4 MiB, reasoning 4 MiB, tool args 256 KiB/call, 1 MiB total, 128 max tool calls per choice. Retry on 408, 409, 429, 5xx with Retry-After support. Cancel/Timeout distinction via `OperationCanceledException when (!ct.IsCancellationRequested)`.
+- **ModelProviderRegistry.cs**: Uses `ImmutableDictionary` for frozen configuration after construction.
+- **ModelProviderConfig.cs**: HTTPS enforcement (rejects non-loopback HTTP), loopback IP detection, `WithResolvedSecret` for secret resolution pipeline.
+- **ChatCompletionStreamEvent.cs**: Added `Sequence` and `ToolCallIndex` fields.
+- **KejiSseEvent.cs**: Added `ProtocolVersion` (1.0), `Sequence`, `EventId`, `TimestampUtc`.
+- **KejiSseFormatter.cs**: Wire format includes `protocol_version`, `sequence`, `timestamp_utc`, optional `id:` line, `event:` + `data:` framing per SSE spec.
+- **KejiSseAdapter.cs**: Sequence incrementing across events, `EventId` in `evt_N` format, `TimestampUtc` set per event, `WithCancellation(ct)` support, phase tracking preserved.
+
+### Test files and counts
+| File | Count | Key additions |
+|---|---|---|
+| `ProviderHardeningTests.cs` | new | ProviderBase input validation, SSE reader limits, retry scenarios, cancel/timeout, config hardening, registry freeze |
+| Various | +65 (total) | Extended streaming and non-streaming test coverage |
+| Various | +107 (total) | Extended formatter, adapter, and security test coverage |
+
+### Verification
+| Project | Tests | Status |
+|---|---|---|
+| `Keji.Providers.Tests` | **165/165** | passed (+65) |
+| `Keji.Streaming.Tests` | **140/140** | passed (+107) |
+| **Full solution** | **1905/1905** | passed |
+| Failed | 0 | |
+| Skipped | 0 | |
+| Build warnings | 0 | |
+| Build errors | 0 | |
+
 ## Security decisions and limits
 
 - TASK-011 (ToolWorker) implements Host execution coordinator + isolated worker process.
@@ -165,4 +194,4 @@ Host process                          ToolWorker.Client            ToolWorker pr
 
 ## Next action
 
-TASK-011 is accepted (repaired). The next task is TASK-012 (Model Providers and SSE Protocol). TASK-012 has not started.
+TASK-012 is accepted (hardened). The next task is TASK-013 (Model Provider Implementations). TASK-013 has not started.
