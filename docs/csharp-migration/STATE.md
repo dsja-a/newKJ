@@ -1,10 +1,10 @@
 # C# Migration State
 
 | Field | Value |
-|---|---|---|
+|---|---|
 | 当前任务 | TASK-012 |
-| 当前状态 | accepted |
+| 当前状态 | accepted (final) |
 | 当前 C# 完成度 | 50% |
-| 下一任务 | TASK-013 |
+| 下一任务 | TASK-013（未开始） |
 
-TASK-012 完成：ProviderBase 真流式重写（Channel-based），SseLineReader（64 KiB 行限制），per-(choiceIndex,toolCallIndex) 工具调用状态追踪，大小限制（content 4MiB, reasoning 4MiB, tool args 256KiB/个），重试（408/409/429/5xx + Retry-After），取消/超时区分，ModelProviderRegistry 冻结（ImmutableDictionary），ModelProviderConfig HTTPS+loopback 验证 + WithResolvedSecret，SSE 协议 v1（protocol_version/sequence/event_id/timestamp_utc）。Providers 测试 165/165，Streaming 测试 140/140，全解决方案 1905/1905 通过。0 失败，0 跳过，0 警告，0 错误，0 NuGet 漏洞。
+TASK-012 最终验收基线为 `ad617eb806e28538182d7d871b3df396f106c9c7`。Provider 配置只保存 `KejiProviderSecretReference`，不读取或保存已解析 Secret；OpenAI 和 DeepSeek 分别只接受 `env:OPENAI_API_KEY` 与 `env:DEEPSEEK_API_KEY`，Provider 在每次请求边界解析 Secret，不缓存解析值，缺失或非法 Secret 在网络前安全失败。既有 Retry、429 分类、Error → Done、Sequence、`protocol_version` 和 EventId 协议保持不变。Providers 202/202、Streaming 156/156、全解决方案 1958/1958 通过；0 失败、0 跳过、0 警告、0 错误、0 已知 NuGet 漏洞。TASK-013 未开始。

@@ -171,7 +171,7 @@ Frozen after construction via `ImmutableDictionary<string, IModelProvider>`. The
 Security hardening:
 - **HTTPS enforcement**: `Uri.Scheme` must be `"https"` unless the host is loopback (localhost, 127.0.0.1, ::1, or any loopback IP).
 - **Loopback detection**: `Uri.IsLoopback` property plus manual IPv4/IPv6 loopback check.
-- **Secret resolution**: `WithResolvedSecret(string)` creates a new instance with the resolved API key, enabling a secret resolution pipeline (e.g., environment variable → config).
+- **Secret boundary**: configuration stores only `KejiProviderSecretReference`; it never reads or stores a resolved secret. OpenAI requires `env:OPENAI_API_KEY`, DeepSeek requires `env:DEEPSEEK_API_KEY`, and each provider resolves its reference once per outbound request without caching the value.
 
 ## SSE Protocol v1
 
@@ -179,32 +179,32 @@ Security hardening:
 
 ```
 event: think_token
-id: evt_0
-data: {"protocol_version":"1.0","sequence":0,"timestamp_utc":"2026-07-15T12:00:00.0000000Z","phase":"thinking","delta":"step 1"}
+id: 00000000000000000000000000000001
+data: {"protocol_version":1,"sequence":1,"timestamp_utc":"2026-07-15T12:00:00.0000000Z","phase":"thinking","delta":"step 1"}
 
 event: answering
-id: evt_1
-data: {"protocol_version":"1.0","sequence":1,"timestamp_utc":"...","phase":"answering"}
+id: 00000000000000000000000000000002
+data: {"protocol_version":1,"sequence":2,"timestamp_utc":"...","phase":"answering"}
 
 event: answer
-id: evt_2
-data: {"protocol_version":"1.0","sequence":2,"timestamp_utc":"...","phase":"answering","delta":"Hello"}
+id: 00000000000000000000000000000003
+data: {"protocol_version":1,"sequence":3,"timestamp_utc":"...","phase":"answering","delta":"Hello"}
 
 event: tool_call
-id: evt_3
-data: {"protocol_version":"1.0","sequence":3,"timestamp_utc":"...","phase":"answering","tool":"search"}
+id: 00000000000000000000000000000004
+data: {"protocol_version":1,"sequence":4,"timestamp_utc":"...","phase":"answering","tool":"search"}
 
 event: usage
-id: evt_4
-data: {"protocol_version":"1.0","sequence":4,"timestamp_utc":"...","phase":"done","usage":{"promptTokens":10,"completionTokens":5,"totalTokens":15}}
+id: 00000000000000000000000000000005
+data: {"protocol_version":1,"sequence":5,"timestamp_utc":"...","phase":"done","usage":{"promptTokens":10,"completionTokens":5,"totalTokens":15}}
 
 event: error
-id: evt_5
-data: {"protocol_version":"1.0","sequence":5,"timestamp_utc":"...","phase":"error","error":"Something failed"}
+id: 00000000000000000000000000000006
+data: {"protocol_version":1,"sequence":6,"timestamp_utc":"...","phase":"error","error":"Something failed"}
 
 event: done
-id: evt_6
-data: {"protocol_version":"1.0","sequence":6,"timestamp_utc":"...","phase":"done"}
+id: 00000000000000000000000000000007
+data: {"protocol_version":1,"sequence":7,"timestamp_utc":"...","phase":"done"}
 ```
 
 ### Event Types
@@ -246,7 +246,7 @@ services.AddSingleton<IModelProviderRegistry>(sp =>
     {
         ["openai"] = new OpenAIProvider(
             sp.GetRequiredService<IHttpClientFactory>(),
-            ModelProviderConfig.Create("openai", resolvedKey, "https://api.openai.com", "gpt-4o")
+            ModelProviderConfig.Create("openai", "env:OPENAI_API_KEY", "https://api.openai.com", "gpt-4o")
                 .WithTimeout(TimeSpan.FromSeconds(60))
                 .WithMaxRetries(3)),
         ["ollama"] = new OllamaProvider(
@@ -265,4 +265,4 @@ services.AddSingleton<IModelProviderRegistry>(sp =>
 - **KejiSseAdapterTests** (23 tests): All mappings, phase transitions, multiple events, cancellation, empty stream, tool call without begin, sequence increments, EventId format, timestamp freshness, protocol version constant, monotonic sequence, reasoning→token sequence.
 - **KejiSseSecurityTests** (8 tests): No raw exception leak, tool call parameters stripped, usage no content leak, error formatter no stack/key leak, answer formatter no key leak, error message pass-through.
 
-Total: 165 Provider tests + 140 Streaming tests = 305 tests for this architecture.
+Final TASK-012 gate: 202 Provider tests + 156 Streaming tests; the full solution passes 1958/1958 with zero failures, skips, build warnings, build errors, or known NuGet vulnerabilities.

@@ -4,9 +4,9 @@
 
 - Repository: `dsja-a/newKJ`
 - Branch: `rewrite/csharp-core`
-- Last accepted baseline: `604846119096addaec0268dd85e719b13426ac5c`
+- Last accepted baseline: `ad617eb806e28538182d7d871b3df396f106c9c7`
 - Current task: TASK-012
-- Current status: accepted (hardened)
+- Current status: accepted (final)
 - Formal C# completion: 50%
 - Next task: TASK-013
 
@@ -145,11 +145,11 @@ Host process                          ToolWorker.Client            ToolWorker pr
 ### Changes
 - **ProviderBase.cs**: Complete rewrite for true streaming via `Channel<T>`, eliminating the `StreamAsyncBuffer` pattern. `SseLineReader` enforces 64 KiB max line length. Per-(choiceIndex,toolCallIndex) tool call state tracking with `TooLCallState`. Size limits: content 4 MiB, reasoning 4 MiB, tool args 256 KiB/call, 1 MiB total, 128 max tool calls per choice. Retry on 408, 409, 429, 5xx with Retry-After support. Cancel/Timeout distinction via `OperationCanceledException when (!ct.IsCancellationRequested)`.
 - **ModelProviderRegistry.cs**: Uses `ImmutableDictionary` for frozen configuration after construction.
-- **ModelProviderConfig.cs**: HTTPS enforcement (rejects non-loopback HTTP), loopback IP detection, `WithResolvedSecret` for secret resolution pipeline.
+- **ModelProviderConfig.cs**: HTTPS enforcement, loopback policy, and reference-only Secret configuration; no resolved Secret is stored.
 - **ChatCompletionStreamEvent.cs**: Added `Sequence` and `ToolCallIndex` fields.
-- **KejiSseEvent.cs**: Added `ProtocolVersion` (1.0), `Sequence`, `EventId`, `TimestampUtc`.
+- **KejiSseEvent.cs**: Added integer `ProtocolVersion` (`1`), positive `Sequence`, independent 32-character lowercase hexadecimal `EventId`, and `TimestampUtc`.
 - **KejiSseFormatter.cs**: Wire format includes `protocol_version`, `sequence`, `timestamp_utc`, optional `id:` line, `event:` + `data:` framing per SSE spec.
-- **KejiSseAdapter.cs**: Sequence incrementing across events, `EventId` in `evt_N` format, `TimestampUtc` set per event, `WithCancellation(ct)` support, phase tracking preserved.
+- **KejiSseAdapter.cs**: Sequence incrementing from 1 across events, independent GUID-derived EventIds, `TimestampUtc` set per event, `WithCancellation(ct)` support, phase tracking preserved.
 
 ### Test files and counts
 | File | Count | Key additions |
@@ -161,13 +161,22 @@ Host process                          ToolWorker.Client            ToolWorker pr
 ### Verification
 | Project | Tests | Status |
 |---|---|---|
-| `Keji.Providers.Tests` | **165/165** | passed (+65) |
-| `Keji.Streaming.Tests` | **140/140** | passed (+107) |
-| **Full solution** | **1905/1905** | passed |
+| `Keji.Providers.Tests` | **202/202** | passed |
+| `Keji.Streaming.Tests` | **156/156** | passed |
+| **Full solution** | **1958/1958** | passed |
 | Failed | 0 | |
 | Skipped | 0 | |
 | Build warnings | 0 | |
 | Build errors | 0 | |
+| Known NuGet vulnerabilities | 0 | 27 projects audited |
+
+### Final secret boundary
+
+- `ModelProviderConfig` stores `KejiProviderSecretReference` only; it neither resolves nor stores plaintext provider secrets.
+- OpenAI accepts only `env:OPENAI_API_KEY`; DeepSeek accepts only `env:DEEPSEEK_API_KEY`.
+- OpenAI and DeepSeek resolve the reference once per outbound request and do not cache the resolved value.
+- Missing, oversized, or control-character secrets fail before network activity and produce only safe provider errors.
+- Retry behavior and the accepted SSE protocol were not changed by this closeout.
 
 ## Security decisions and limits
 
@@ -194,4 +203,4 @@ Host process                          ToolWorker.Client            ToolWorker pr
 
 ## Next action
 
-TASK-012 is accepted (hardened). The next task is TASK-013 (Model Provider Implementations). TASK-013 has not started.
+TASK-012 is accepted (final). The next task is TASK-013 (Model Provider Implementations). TASK-013 has not started.
