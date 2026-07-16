@@ -4,11 +4,11 @@
 
 - Repository: `dsja-a/newKJ`
 - Branch: `rewrite/csharp-core`
-- Last accepted baseline: `ad617eb806e28538182d7d871b3df396f106c9c7`
-- Current task: TASK-012
+- Last accepted baseline: `7e2c4d31243f292b8d4ce0ab6abcf6ffbf57e1d5`
+- Current task: TASK-013
 - Current status: accepted (final)
-- Formal C# completion: 50%
-- Next task: TASK-013
+- Formal C# completion: 60%
+- Next task: TASK-014 (`not_started`)
 
 ## TASK-011 (Repair): Isolated ToolWorker
 
@@ -201,6 +201,21 @@ Host process                          ToolWorker.Client            ToolWorker pr
 - No real configuration, secret, SQLite database, user data, log, TRX, ZIP, or temporary review artifact added.
 - No history rewrite performed.
 
+## TASK-013 (Accepted): C# Agent Loop
+
+TASK-013 is accepted (final) at `7e2c4d31243f292b8d4ce0ab6abcf6ffbf57e1d5`.
+
+### TASK-013 acceptance summary
+
+- Added a scoped, strongly typed C# Agent Loop with hard limits on iterations, context size, tool-call count, individual tool results, and aggregate tool results.
+- Treats provider output as untrusted: validates assistant content, tool names, IDs, JSON shape, argument types, duplicate calls, and all configured limits.
+- Advertises only `Executable` tools and executes them serially only through `IToolExecutionPipeline`; no direct executor, shell, web, Host tool, MCP, Python worker, or command path was added.
+- Requires an authenticated user and owned conversation, and rechecks both before provider calls, tool execution, and message persistence.
+- Persists user and final assistant messages only. Tool arguments/results remain bounded in-memory context and are not logged or persisted.
+- Cancellation remains distinct; operational failures expose only bounded status/error codes without raw exception messages or stacks.
+- Verification: Agent 26/26, Providers 202/202, Streaming 156/156, full solution 1983/1983; 0 failed, 0 skipped, 0 build warnings, 0 build errors, 0 known NuGet vulnerabilities.
+- Python and Web are unchanged. TASK-014 is `not_started`.
+
 ## Next action
 
-TASK-012 is accepted (final). The next task is TASK-013 (Model Provider Implementations). TASK-013 has not started.
+TASK-014 is the next task and has not started.

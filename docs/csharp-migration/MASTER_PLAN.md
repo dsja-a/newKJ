@@ -5,8 +5,8 @@
 - Repository: `dsja-a/newKJ`
 - Branch: `rewrite/csharp-core`
 - Python reference: `main` at `aad0afab7181e529a53691a4f2801f295025a2c7`
-- Last accepted C# baseline: `ad617eb806e28538182d7d871b3df396f106c9c7`
-- Accepted solution test baseline: 1958
+- Last accepted C# baseline: `7e2c4d31243f292b8d4ce0ab6abcf6ffbf57e1d5`
+- Accepted solution test baseline: 1983
 - Target: .NET 10 / `net10.0`, ASP.NET Core as the only public API, Python as a controlled internal worker
 
 ## Remaining quality gates
@@ -34,4 +34,4 @@ Python and the web frontend remain unchanged until their explicitly assigned tas
 
 ## Current gate
 
-TASK-012 is finally accepted at `ad617eb806e28538182d7d871b3df396f106c9c7`. Provider configuration stores only secret references; OpenAI and DeepSeek resolve their fixed environment references at request time and never cache resolved secrets. Providers tests pass 202/202, Streaming tests pass 156/156, and the full solution passes 1958/1958 with zero failures, skips, build warnings, build errors, or known NuGet vulnerabilities across 27 projects. The next gate is TASK-013. TASK-013 has not started.
+TASK-013 is accepted at `7e2c4d31243f292b8d4ce0ab6abcf6ffbf57e1d5`. The C# Agent Loop is bounded, validates model and tool-call output, rechecks conversation ownership before side effects, and executes eligible tools sequentially only through `IToolExecutionPipeline`. Agent tests pass 26/26, Providers tests pass 202/202, Streaming tests pass 156/156, and the full solution passes 1983/1983 with zero failures, skips, build warnings, build errors, or known NuGet vulnerabilities across 27 projects. Formal C# completion is 60%. The next gate is TASK-014, which is `not_started`.
