@@ -5,8 +5,8 @@
 - Repository: `dsja-a/newKJ`
 - Branch: `rewrite/csharp-core`
 - Python reference: `main` at `aad0afab7181e529a53691a4f2801f295025a2c7`
-- Last accepted C# baseline: `b09c31010771bfa9afc665dfea1829edf3e40c7d`
-- Accepted solution test baseline: 2176
+- Last accepted C# baseline: `ed52a87966a1754d9eca8a91b9be511368980b87`
+- Accepted solution test baseline: 2189
 - Target: .NET 10 / `net10.0`, ASP.NET Core as the only public API, Python as a controlled internal worker
 
 ## Remaining quality gates
@@ -34,4 +34,4 @@ Python and the web frontend remain unchanged until their explicitly assigned tas
 
 ## Current gate
 
-TASK-013 R3 is accepted at `b09c31010771bfa9afc665dfea1829edf3e40c7d`. The effective run context replaces invalid RunIds before any event, transcript, audit, or SSE boundary and strictly validates request strings without echoing rejected input. Provider iterations enforce content/tool events, `ChoiceFinished`, optional `Usage`, then `Done`. Tool registry, availability, and argument conversion rejections emit a complete `ToolStarted`, failed `ToolCompleted`, `Error`, and `RunCompleted` sequence without entering the execution pipeline. Existing streaming, cancellation, session gate, bounded context, usage, transcript, audit, and TASK-012 SSE behavior remains intact. Agent tests pass 187/187, Integration tests pass 180/180 (including 20 real Agent composition paths), Providers tests pass 202/202, Streaming tests pass 156/156, and the full solution passes 2176/2176 locally with zero failures, skips, build warnings, build errors, or known NuGet vulnerabilities across 27 projects. Remote GitHub CI status was unavailable. Formal C# completion remains 60%. TASK-014 is `not_started`.
+TASK-013 R4 is accepted at `ed52a87966a1754d9eca8a91b9be511368980b87`. `ToolStarted` only means `IToolExecutionPipeline` is about to execute; pre-execution rejection emits only a failed `ToolCompleted` before the Agent terminal pair, and ownership is rechecked before any tool event or audit. Provider `Error` after `ChoiceFinished` or `Usage` preserves its safe mapped classification without requiring `Done`. Existing effective run context, strict UTF-8, streaming, cancellation, session gate, bounded context, usage, transcript, audit, and TASK-012 SSE behavior remains intact. Agent tests pass 196/196, Integration tests pass 184/184 (including 24 real Agent composition paths), Providers tests pass 202/202, Streaming tests pass 156/156, and the full solution passes 2189/2189 locally with zero failures, skips, build warnings, build errors, or known NuGet vulnerabilities across 27 projects. Remote GitHub CI status was unavailable. Formal C# completion remains 60%. TASK-014 is `not_started`.

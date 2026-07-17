@@ -1,6 +1,6 @@
 # C# Agent Loop Contract
 
-TASK-013 R3 accepted baseline: `b09c31010771bfa9afc665dfea1829edf3e40c7d`.
+TASK-013 R4 final accepted baseline: `ed52a87966a1754d9eca8a91b9be511368980b87`.
 
 ## Execution and terminal protocol
 
@@ -26,17 +26,17 @@ Each SSE event receives an independent unique `Guid.NewGuid().ToString("N")` Eve
 
 `KejiAgentContextBuilder` places the configured server system prompt first and fails explicitly on unsupported persisted roles or any message/byte limit; current persistence reconstructs only user and assistant history and does not claim to restore historical tool chains.
 
-Transcripts are deeply immutable summaries with UTC timing, stop reason, iterations, tool count/names, final content, cumulative usage, and safe typed messages. Invalid request fields and invalid user messages never enter failure transcripts or audit metadata. Tools execute serially by ToolCallIndex through `IToolExecutionPipeline` only. Every registry, availability, or argument-conversion rejection emits a matching safe `ToolStarted` and failed `ToolCompleted` before `Error` and `RunCompleted`. Audit lifecycle actions are `agent_run_started`, `agent_tool_started`, `agent_tool_completed`, `agent_run_completed`, `agent_run_failed`, and `agent_run_cancelled`; audit failures do not alter the business result.
+Transcripts are deeply immutable summaries with UTC timing, stop reason, iterations, tool count/names, final content, cumulative usage, and safe typed messages. Invalid request fields and invalid user messages never enter failure transcripts or audit metadata. Tools execute serially by ToolCallIndex through `IToolExecutionPipeline` only. `ToolStarted` means the pipeline is about to execute; every pre-execution rejection emits only one failed `ToolCompleted`, followed by `Error` and `RunCompleted`. Ownership is rechecked before `ToolStarted`, so an ownership failure emits no tool event or tool audit. Except for caller cancellation, every emitted `ToolStarted` has exactly one matching `ToolCompleted`. Audit lifecycle actions are `agent_run_started`, `agent_tool_started`, `agent_tool_completed`, `agent_run_completed`, `agent_run_failed`, and `agent_run_cancelled`; audit failures do not alter the business result.
 
-Provider iterations use the explicit terminal states `BeforeChoiceFinished`, `AfterChoiceFinished`, `AfterUsage`, and `AfterDone`. After `ChoiceFinished`, only optional `Usage` followed by `Done` is accepted; content, reasoning, tool-call, error, duplicate choice, duplicate usage, or post-Done events fail as `ProviderProtocolError`.
+Provider iterations use the explicit terminal states `BeforeChoiceFinished`, `AfterChoiceFinished`, `AfterUsage`, and `AfterDone`. A safe mapped Provider `Error` is accepted in every legal pre-Done state and does not require a subsequent `Done`. After `ChoiceFinished`, content, reasoning, tool-call, duplicate choice, duplicate usage, or post-Done events still fail as `ProviderProtocolError`.
 
 ## Local acceptance evidence
 
-- Keji.Agent.Tests: 187/187
-- Keji.Integration.Tests: 180/180, including 20 real Agent composition paths
+- Keji.Agent.Tests: 196/196
+- Keji.Integration.Tests: 184/184, including 24 real Agent composition paths
 - Keji.Providers.Tests: 202/202
 - Keji.Streaming.Tests: 156/156
-- Full solution: 2176/2176
+- Full solution: 2189/2189
 - Failed/skipped/build warnings/build errors/known NuGet vulnerabilities: 0/0/0/0/0
 
 These are local Gate results. No remote GitHub CI status was available for this acceptance.
