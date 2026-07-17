@@ -1,6 +1,6 @@
 # Safe read-only SmartQuery
 
-TASK-014 R1 accepted functional baseline: `d81609a34fd112711c39808f9232f40dd7776394`.
+TASK-014 R1 accepted functional baseline: `d81609abd1474fd32071c3a2f022764acbaf829c`.
 
 ## Security flow
 

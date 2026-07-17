@@ -2,7 +2,7 @@
   "repository": "dsja-a/newKJ",
   "branch": "rewrite/csharp-core",
   "python_baseline": "aad0afab7181e529a53691a4f2801f295025a2c7",
-  "last_accepted_sha": "d81609a34fd112711c39808f9232f40dd7776394",
+  "last_accepted_sha": "d81609abd1474fd32071c3a2f022764acbaf829c",
   "task006_main_commit_sha": "2bbdce42494d1e0a7eaaa8bd2905785bc4b6941f",
   "task006_edge_fix_commit_sha": "f6a2dc201d5fb4dafdf04988375751b051743f46",
   "task006_test_handoff_commit_sha": "88a6f8ff7b9e87302ad5233c9914914a572a57ec",
@@ -126,9 +126,9 @@
   "task014": {
     "status": "accepted",
     "initial_commit_sha": "fc2b270902bbfc855f49d463872dac1a7988ee0e",
-    "r1_commit_sha": "d81609a34fd112711c39808f9232f40dd7776394",
-    "final_commit_sha": "d81609a34fd112711c39808f9232f40dd7776394",
-    "accepted_sha": "d81609a34fd112711c39808f9232f40dd7776394"
+    "r1_commit_sha": "d81609abd1474fd32071c3a2f022764acbaf829c",
+    "final_commit_sha": "d81609abd1474fd32071c3a2f022764acbaf829c",
+    "accepted_sha": "d81609abd1474fd32071c3a2f022764acbaf829c"
   },
   "task015": {
     "status": "not_started"

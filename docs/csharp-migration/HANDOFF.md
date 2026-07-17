@@ -4,7 +4,7 @@
 
 - Repository: `dsja-a/newKJ`
 - Branch: `rewrite/csharp-core`
-- Last accepted baseline: `d81609a34fd112711c39808f9232f40dd7776394`
+- Last accepted baseline: `d81609abd1474fd32071c3a2f022764acbaf829c`
 - Current task: TASK-014
 - Current status: accepted (final)
 - Formal C# completion: 70%
@@ -242,7 +242,7 @@ TASK-013 R3 is accepted at `b09c31010771bfa9afc665dfea1829edf3e40c7d`.
 
 ## TASK-014 R1 (Accepted): Production safe read-only SmartQuery
 
-TASK-014 R1 is accepted at `d81609a34fd112711c39808f9232f40dd7776394`.
+TASK-014 R1 is accepted at `d81609abd1474fd32071c3a2f022764acbaf829c`.
 
 - Requires authenticated valid user plus both `SmartQueryExecute` and `DatabaseRead`.
 - Resolves only a current-user-accessible data source and administrator-enabled, bounded schema metadata.
