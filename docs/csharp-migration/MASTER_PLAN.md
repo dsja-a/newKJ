@@ -5,7 +5,7 @@
 - Repository: `dsja-a/newKJ`
 - Branch: `rewrite/csharp-core`
 - Python reference: `main` at `aad0afab7181e529a53691a4f2801f295025a2c7`
-- Last accepted C# baseline: `fc2b270902bbfc855f49d463872dac1a7988ee0e`
+- Last accepted C# baseline: `d81609a34fd112711c39808f9232f40dd7776394`
 - Accepted solution test baseline: 2226
 - Target: .NET 10 / `net10.0`, ASP.NET Core as the only public API, Python as a controlled internal worker
 
@@ -34,4 +34,4 @@ Python and the web frontend remain unchanged until their explicitly assigned tas
 
 ## Current gate
 
-TASK-014 is accepted at `fc2b270902bbfc855f49d463872dac1a7988ee0e`. SmartQuery requires dual permissions and user-scoped data-source access, exposes only administrator-enabled bounded schema to the existing model provider, strictly parses a closed QueryPlan, and uses a deterministic compiler to produce quoted parameterized read-only SQL. Execution is behind a read-only connection boundary with SQLite `query_only`; typed results, optional summaries, and safe audit metadata are all bounded. SmartQuery tests pass 31/31, Integration tests pass 189/189 (including 5 real SmartQuery SQLite paths), and the full solution passes 2226/2226 locally with zero failures, skips, build warnings, build errors, or known NuGet vulnerabilities across 28 projects. Remote GitHub CI status was unavailable. Formal C# completion is 70%. TASK-015 is `not_started`.
+TASK-014 R1 is accepted at `d81609a34fd112711c39808f9232f40dd7776394`. SmartQuery now has a server-controlled provider/model/summary policy, a single strongly typed event-stream business path, a persisted user-isolated data-source catalog, per-execution Secret Reference resolution, independent MySQL and PostgreSQL dialects and read-only executors, and query-enabled/sensitive/foreign-key metadata. Its deterministic compiler supports only enabled FK joins, bounded AND/OR filters, projections, aggregates, GroupBy, sorting, and parameterized SELECT statements. SmartQuery tests pass 199/199, Integration tests pass 204/204, and the full solution passes 2409/2409 locally with zero failures, skips, build warnings, build errors, or known NuGet vulnerabilities across 28 projects. Remote GitHub CI status was unavailable. Formal C# completion remains 70%. TASK-015 is `not_started`.
