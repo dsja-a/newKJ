@@ -1,5 +1,7 @@
 # C# Migration State
 
+TASK-015 final accepted functional baseline is `c45f1e78a45e470dd484dadf700f14eeb3671281`. ASP.NET Core owns all 87 compatibility routes and applies bounded request handling, correlation, security headers, bounded concurrency limiting, authentication, authorization, safe lifecycle audit, real accepted C# core endpoints, and fixed authenticated 503 responses for deferred capabilities. No FastAPI proxy or Python process is used. Integration 230/230 and solution 2476/2476 pass locally with zero failures, skips, warnings, errors, or known NuGet vulnerabilities. C# completion is 80%; TASK-016 is `not_started`.
+
 TASK-014 R2 final accepted baseline is `6806886a0baa333ac3b833b6c995c1fef932b2f8`. Final production boundaries cover frozen public contracts, deterministic terminal events, cancellation and timeout separation, normalized versioned persistence, private/shared visibility, strict per-execution Secret Reference resolution, one bounded planner repair, typed deterministic SQL compilation, separate MySQL/PostgreSQL read-only execution, bounded typed results and summaries, and safe lifecycle audit. Local Gate: SmartQuery 230/230, Persistence 181/181, Integration 216/216, solution 2462/2462; failures, skips, warnings, errors, and known NuGet vulnerabilities are all zero. C# completion remains 70%; TASK-015 is `not_started`.
 
 | Field | Value |

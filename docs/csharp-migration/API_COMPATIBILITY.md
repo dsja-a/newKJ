@@ -1,5 +1,11 @@
 # API 兼容性文档
 
+## TASK-015 ASP.NET Core takeover acceptance
+
+Accepted functional baseline: `c45f1e78a45e470dd484dadf700f14eeb3671281`.
+
+All 87 documented HTTP method/path contracts are now explicitly registered and owned by `Keji.Api`. Authentication, explicit permission metadata, bounded request handling, global bounded concurrency limiting, correlation IDs, security headers, safe response handling, and lifecycle audit run in ASP.NET Core. Authentication/current-user, conversations, security status, Agent chat/SSE, and SmartQuery JSON/SSE use the accepted C# services. Capabilities deferred to later migration tasks are still registered in C#, pass through authentication/authorization/rate limiting, and return the fixed safe `503 CAPABILITY_DEFERRED` response. No request is proxied to FastAPI and no Python process is started.
+
 ## 1. 文档目的
 
 - 本文是 Python `main` 分支的 API 行为快照，记录当前所有 HTTP 接口的请求/响应契约、鉴权方式和行为细节

@@ -4,11 +4,23 @@
 
 - Repository: `dsja-a/newKJ`
 - Branch: `rewrite/csharp-core`
-- Last accepted baseline: `6806886a0baa333ac3b833b6c995c1fef932b2f8`
-- Current task: TASK-014
+- Last accepted baseline: `c45f1e78a45e470dd484dadf700f14eeb3671281`
+- Current task: TASK-015
 - Current status: accepted (final)
-- Formal C# completion: 70%
-- Next task: TASK-015 (`not_started`)
+- Formal C# completion: 80%
+- Next task: TASK-016 (`not_started`)
+
+## TASK-015 (Accepted): ASP.NET Core API takeover
+
+- Functional baseline: `c45f1e78a45e470dd484dadf700f14eeb3671281`.
+- `Keji.Api` explicitly owns all 87 compatibility method/path contracts.
+- Agent chat and SmartQuery streaming reuse the accepted C# loops and TASK-012 SSE formatter.
+- Authentication, conversations, security status, Agent, and SmartQuery execute through accepted C# services.
+- Deferred capabilities are registered, authenticated, authorized, rate-limited, audited, and return fixed safe 503 responses.
+- Requests/uploads/JSON, concurrency, correlation IDs, response headers, and audit metadata are bounded.
+- Query-string API keys, FastAPI proxying, Python processes, raw SQL, request secrets, and production OpenAPI are absent.
+- Local Gate: Integration 230/230 and solution 2476/2476; failures, skips, warnings, errors, and known NuGet vulnerabilities are all zero.
+- Python and Web are unchanged. TASK-016 is `not_started`.
 
 ## TASK-014 R2 (Accepted): Final production boundaries
 

@@ -5,8 +5,8 @@
 - Repository: `dsja-a/newKJ`
 - Branch: `rewrite/csharp-core`
 - Python reference: `main` at `aad0afab7181e529a53691a4f2801f295025a2c7`
-- Last accepted C# baseline: `6806886a0baa333ac3b833b6c995c1fef932b2f8`
-- Accepted solution test baseline: 2462
+- Last accepted C# baseline: `c45f1e78a45e470dd484dadf700f14eeb3671281`
+- Accepted solution test baseline: 2476
 - Target: .NET 10 / `net10.0`, ASP.NET Core as the only public API, Python as a controlled internal worker
 
 ## Remaining quality gates
@@ -34,4 +34,4 @@ Python and the web frontend remain unchanged until their explicitly assigned tas
 
 ## Current gate
 
-TASK-014 R2 is accepted at `6806886a0baa333ac3b833b6c995c1fef932b2f8`. SmartQuery now has frozen public contracts, deterministic event terminals, distinct cancellation and timeout handling, a normalized versioned data-source catalog with private/shared visibility, bounded per-execution Secret Reference resolution, one bounded planner repair, independent MySQL and PostgreSQL read-only executors, strict typed compilation, bounded typed results and summaries, and a safe audit lifecycle. SmartQuery tests pass 230/230, Persistence tests pass 181/181, Integration tests pass 216/216, and the full solution passes 2462/2462 locally with zero failures, skips, build warnings, build errors, or known NuGet vulnerabilities across 28 projects. Remote GitHub CI status was unavailable. Formal C# completion remains 70%. TASK-015 is `not_started`.
+TASK-015 is accepted at `c45f1e78a45e470dd484dadf700f14eeb3671281`. ASP.NET Core now explicitly owns all 87 compatibility method/path contracts. The API pipeline provides bounded requests and uploads, correlation IDs, security headers, global bounded concurrency limiting, authentication without query-string API keys, explicit authorization, safe API audit, real C# Agent/SmartQuery/Conversation/Security endpoints, and authenticated fixed-503 ownership for deferred capabilities. There is no FastAPI proxy or Python process. Integration tests pass 230/230 and the full solution passes 2476/2476 locally with zero failures, skips, build warnings, build errors, or known NuGet vulnerabilities across 28 projects. Remote GitHub CI status was unavailable. Formal C# completion is 80%. TASK-016 is `not_started`.
