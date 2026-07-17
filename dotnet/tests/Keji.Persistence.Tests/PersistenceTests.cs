@@ -3158,6 +3158,57 @@ public class PersistenceTests
         return list;
     }
 
+    public static TheoryData<string> SmartQueryNormalizedTables() => new()
+    {
+        "smart_query_data_sources", "smart_query_allowed_schemas", "smart_query_tables",
+        "smart_query_columns", "smart_query_foreign_keys"
+    };
+
+    [Theory]
+    [MemberData(nameof(SmartQueryNormalizedTables))]
+    public async Task SmartQueryMigrationCreatesEachNormalizedTable(string table)
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        await using var connection = await factory.OpenConnectionAsync();
+        var tables = await GetTableNamesAsync(connection);
+        Assert.Contains(table, tables);
+    }
+
+    public static TheoryData<string> SmartQueryForeignKeyTables() => new()
+    {
+        "smart_query_allowed_schemas", "smart_query_tables",
+        "smart_query_columns", "smart_query_foreign_keys"
+    };
+
+    [Theory]
+    [MemberData(nameof(SmartQueryForeignKeyTables))]
+    public async Task SmartQueryChildTableHasForeignKeyConstraint(string table)
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        await CreateInitializerAsync(factory, ctx.FixedTime);
+        await using var connection = await factory.OpenConnectionAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = $"SELECT COUNT(*) FROM pragma_foreign_key_list('{table}')";
+        Assert.True((long)(await command.ExecuteScalarAsync())! > 0);
+    }
+
+    [Fact]
+    public async Task SmartQueryMigrationIsVersionedAndIdempotent()
+    {
+        using var ctx = new TestContext();
+        var factory = CreateFactory(ctx.Options);
+        var initializer = new KejiDatabaseInitializer(factory, ctx.FixedTime);
+        await initializer.InitializeAsync();
+        await initializer.InitializeAsync();
+        await using var connection = await factory.OpenConnectionAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT COUNT(*) FROM schema_migrations WHERE version='003_smart_query_normalized_catalog'";
+        Assert.Equal(1L, await command.ExecuteScalarAsync());
+    }
+
     private static async Task<List<string>> GetIndexNamesAsync(SqliteConnection conn)
     {
         var list = new List<string>();

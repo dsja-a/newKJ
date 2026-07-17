@@ -8,6 +8,7 @@
     <ProjectReference Include="..\Keji.Auditing\Keji.Auditing.csproj" />
     <ProjectReference Include="..\Keji.Providers\Keji.Providers.csproj" />
     <ProjectReference Include="..\Keji.Security\Keji.Security.csproj" />
+    <ProjectReference Include="..\Keji.Persistence\Keji.Persistence.csproj" />
   </ItemGroup>
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>

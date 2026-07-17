@@ -1,4 +1,5 @@
 using Keji.SmartQuery;
+using Keji.Persistence;
 using Microsoft.Data.Sqlite;
 
 namespace Keji.SmartQuery.Tests;
@@ -8,13 +9,16 @@ public sealed class SmartQueryCatalogTests : IAsyncLifetime
     private readonly string _name = "catalog-" + Guid.NewGuid().ToString("N");
     private SqliteConnection _keeper = null!;
     private SqliteKejiSmartQueryDataSourceCatalog _catalog = null!;
+    private TestFactory _factory = null!;
 
     public async ValueTask InitializeAsync()
     {
         var cs = $"Data Source={_name};Mode=Memory;Cache=Shared";
         _keeper = new SqliteConnection(cs);
         await _keeper.OpenAsync(TestContext.Current.CancellationToken);
-        _catalog = new(cs);
+        _factory = new(cs);
+        await new KejiDatabaseInitializer(_factory, new Clock()).InitializeAsync(TestContext.Current.CancellationToken);
+        _catalog = new(_factory);
     }
 
     [Fact]
@@ -87,11 +91,10 @@ public sealed class SmartQueryCatalogTests : IAsyncLifetime
         var source = SmartQueryCompilerTests.Source(KejiSmartQueryDialect.PostgreSql);
         await _catalog.UpsertAsync(source, TestContext.Current.CancellationToken);
         await using var command = _keeper.CreateCommand();
-        command.CommandText = "SELECT secret_reference, metadata_json FROM smart_query_data_sources";
+        command.CommandText = "SELECT password_secret_reference FROM smart_query_data_sources";
         await using var reader = await command.ExecuteReaderAsync(TestContext.Current.CancellationToken);
         Assert.True(await reader.ReadAsync(TestContext.Current.CancellationToken));
-        Assert.Equal("DATABASE_PASSWORD", reader.GetString(0));
-        Assert.DoesNotContain("password", reader.GetString(1), StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("env:DATABASE_PASSWORD", reader.GetString(0));
     }
 
     [Theory]
@@ -108,10 +111,23 @@ public sealed class SmartQueryCatalogTests : IAsyncLifetime
     [Fact]
     public void SecretReferenceOnlyAcceptsBoundedEnvironmentNames()
     {
-        Assert.Equal("env:DATABASE_PASSWORD", new KejiSmartQuerySecretReference("DATABASE_PASSWORD").ToString());
-        Assert.Throws<ArgumentException>(() => new KejiSmartQuerySecretReference("env:DATABASE_PASSWORD"));
+        Assert.Equal("env:DATABASE_PASSWORD", new KejiSmartQuerySecretReference("env:DATABASE_PASSWORD").ToString());
+        Assert.Throws<ArgumentException>(() => new KejiSmartQuerySecretReference("DATABASE_PASSWORD"));
         Assert.Throws<ArgumentException>(() => new KejiSmartQuerySecretReference("PASSWORD\nLEAK"));
     }
 
     public async ValueTask DisposeAsync() => await _keeper.DisposeAsync();
+    private sealed class TestFactory(string connectionString) : ISqliteConnectionFactory
+    {
+        public async Task<SqliteConnection> OpenConnectionAsync(CancellationToken cancellationToken = default)
+        {
+            var connection = new SqliteConnection(connectionString);
+            await connection.OpenAsync(cancellationToken);
+            await using var command = connection.CreateCommand();
+            command.CommandText = "PRAGMA foreign_keys=ON";
+            await command.ExecuteNonQueryAsync(cancellationToken);
+            return connection;
+        }
+    }
+    private sealed class Clock : IUnixTimeProvider { public double Now => 1; }
 }

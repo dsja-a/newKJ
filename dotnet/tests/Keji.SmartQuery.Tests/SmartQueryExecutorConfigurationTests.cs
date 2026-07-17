@@ -23,8 +23,8 @@ public sealed class SmartQueryExecutorConfigurationTests
         var builder = new MySqlConnectionStringBuilder(connection.ConnectionString);
         Assert.Equal(expected, builder.SslMode);
         Assert.False(builder.Pooling);
-        Assert.Equal((uint)15, builder.ConnectionTimeout);
-        Assert.Equal((uint)30, builder.DefaultCommandTimeout);
+        Assert.Equal((uint)10, builder.ConnectionTimeout);
+        Assert.Equal((uint)15, builder.DefaultCommandTimeout);
         Assert.Equal("resolved", builder.Password);
     }
 
@@ -42,8 +42,8 @@ public sealed class SmartQueryExecutorConfigurationTests
         Assert.Equal(expected, builder.SslMode);
         Assert.False(builder.Pooling);
         Assert.False(builder.Multiplexing);
-        Assert.Equal(15, builder.Timeout);
-        Assert.Equal(30, builder.CommandTimeout);
+        Assert.Equal(10, builder.Timeout);
+        Assert.Equal(15, builder.CommandTimeout);
         Assert.Equal("resolved", builder.Password);
     }
 
@@ -52,9 +52,10 @@ public sealed class SmartQueryExecutorConfigurationTests
     {
         var connection = new RecordingConnection();
         await new ExposedMySqlExecutor().Prepare(connection, TestContext.Current.CancellationToken);
-        Assert.Equal("SET TRANSACTION READ ONLY", connection.LastCommand!.CommandText);
-        Assert.Null(connection.LastCommand.Transaction);
-        Assert.True(connection.LastCommand.WasDisposed);
+        Assert.Equal("SET TRANSACTION READ ONLY", connection.Commands[0].CommandText);
+        Assert.Contains("MAX_EXECUTION_TIME", connection.Commands[1].CommandText);
+        Assert.All(connection.Commands, static command => Assert.Null(command.Transaction));
+        Assert.All(connection.Commands, static command => Assert.True(command.WasDisposed));
     }
 
     [Fact]
@@ -64,36 +65,40 @@ public sealed class SmartQueryExecutorConfigurationTests
         var transaction = new RecordingTransaction(connection);
         await new ExposedPostgreSqlExecutor().Configure(
             connection, transaction, TestContext.Current.CancellationToken);
-        Assert.Equal("SET TRANSACTION READ ONLY", connection.LastCommand!.CommandText);
-        Assert.Same(transaction, connection.LastCommand.Transaction);
-        Assert.True(connection.LastCommand.WasDisposed);
+        Assert.Equal("SET TRANSACTION READ ONLY", connection.Commands[0].CommandText);
+        Assert.Contains("statement_timeout", connection.Commands[1].CommandText);
+        Assert.Contains("lock_timeout", connection.Commands[2].CommandText);
+        Assert.All(connection.Commands, command => Assert.Same(transaction, command.Transaction));
+        Assert.All(connection.Commands, static command => Assert.True(command.WasDisposed));
     }
 
     private sealed class Resolver : IKejiSmartQuerySecretResolver
     {
-        public string? Resolve(KejiSmartQuerySecretReference reference) => "not-used";
+        public ValueTask<string?> ResolveAsync(
+            KejiSmartQuerySecretReference reference, CancellationToken cancellationToken = default) =>
+            ValueTask.FromResult<string?>("not-used");
     }
     private sealed class ExposedMySqlExecutor : MySqlSmartQueryExecutor
     {
         public ExposedMySqlExecutor() : base(new Resolver()) { }
         public DbConnection Create(KejiSmartQueryDataSource source, string password) =>
-            base.CreateConnection(source, password);
+            base.CreateConnection(source, password, new());
         public Task Prepare(DbConnection connection, CancellationToken cancellationToken) =>
-            base.PrepareReadOnlyAsync(connection, cancellationToken);
+            base.PrepareReadOnlyAsync(connection, new(), cancellationToken);
     }
     private sealed class ExposedPostgreSqlExecutor : PostgreSqlSmartQueryExecutor
     {
         public ExposedPostgreSqlExecutor() : base(new Resolver()) { }
         public DbConnection Create(KejiSmartQueryDataSource source, string password) =>
-            base.CreateConnection(source, password);
+            base.CreateConnection(source, password, new());
         public Task Configure(DbConnection connection, DbTransaction transaction,
             CancellationToken cancellationToken) =>
-            base.ConfigureReadOnlyAsync(connection, transaction, cancellationToken);
+            base.ConfigureReadOnlyAsync(connection, transaction, new(), cancellationToken);
     }
 
     private sealed class RecordingConnection : DbConnection
     {
-        public RecordingCommand? LastCommand { get; private set; }
+        public List<RecordingCommand> Commands { get; } = [];
         [AllowNull]
         public override string ConnectionString { get; set; } = "";
         public override string Database => "test";
@@ -105,7 +110,12 @@ public sealed class SmartQueryExecutorConfigurationTests
         public override void Open() { }
         protected override DbTransaction BeginDbTransaction(IsolationLevel isolationLevel) =>
             new RecordingTransaction(this);
-        protected override DbCommand CreateDbCommand() => LastCommand = new RecordingCommand(this);
+        protected override DbCommand CreateDbCommand()
+        {
+            var command = new RecordingCommand(this);
+            Commands.Add(command);
+            return command;
+        }
     }
 
     private sealed class RecordingTransaction(DbConnection connection) : DbTransaction

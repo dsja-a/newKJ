@@ -228,6 +228,108 @@ public class KejiDatabaseInitializer : IKejiDatabaseInitializer
             cmd.Parameters.AddWithValue("@t2", _timeProvider.Now);
             await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
 
+            cmd.Parameters.Clear();
+            cmd.CommandText = """
+                CREATE TABLE IF NOT EXISTS smart_query_data_sources (
+                    id TEXT NOT NULL,
+                    owner_user_id TEXT NOT NULL,
+                    display_name TEXT NOT NULL DEFAULT '',
+                    dialect INTEGER NOT NULL CHECK(dialect IN (1,2)),
+                    host TEXT NOT NULL,
+                    port INTEGER NOT NULL CHECK(port BETWEEN 1 AND 65535),
+                    database_name TEXT NOT NULL,
+                    username TEXT NOT NULL,
+                    password_secret_reference TEXT NOT NULL,
+                    tls_mode INTEGER NOT NULL CHECK(tls_mode BETWEEN 1 AND 3),
+                    visibility INTEGER NOT NULL CHECK(visibility IN (1,2)),
+                    enabled INTEGER NOT NULL CHECK(enabled IN (0,1)),
+                    created_at_utc TEXT NOT NULL,
+                    updated_at_utc TEXT NOT NULL,
+                    PRIMARY KEY(id, owner_user_id)
+                );
+                CREATE TABLE IF NOT EXISTS smart_query_allowed_schemas (
+                    data_source_id TEXT NOT NULL,
+                    owner_user_id TEXT NOT NULL,
+                    schema_name TEXT NOT NULL,
+                    ordinal INTEGER NOT NULL CHECK(ordinal >= 0),
+                    PRIMARY KEY(data_source_id, owner_user_id, schema_name),
+                    UNIQUE(data_source_id, owner_user_id, ordinal),
+                    FOREIGN KEY(data_source_id, owner_user_id)
+                      REFERENCES smart_query_data_sources(id, owner_user_id) ON DELETE CASCADE
+                );
+                CREATE TABLE IF NOT EXISTS smart_query_tables (
+                    data_source_id TEXT NOT NULL,
+                    owner_user_id TEXT NOT NULL,
+                    schema_name TEXT NOT NULL,
+                    table_name TEXT NOT NULL,
+                    display_name TEXT NOT NULL DEFAULT '',
+                    description TEXT NOT NULL DEFAULT '',
+                    business_context TEXT NOT NULL DEFAULT '',
+                    qa_enabled INTEGER NOT NULL CHECK(qa_enabled IN (0,1)),
+                    query_enabled INTEGER NOT NULL CHECK(query_enabled IN (0,1)),
+                    estimated_row_count INTEGER NOT NULL DEFAULT 0 CHECK(estimated_row_count >= 0),
+                    ordinal INTEGER NOT NULL CHECK(ordinal >= 0),
+                    PRIMARY KEY(data_source_id, owner_user_id, schema_name, table_name),
+                    UNIQUE(data_source_id, owner_user_id, ordinal),
+                    FOREIGN KEY(data_source_id, owner_user_id)
+                      REFERENCES smart_query_data_sources(id, owner_user_id) ON DELETE CASCADE
+                );
+                CREATE TABLE IF NOT EXISTS smart_query_columns (
+                    data_source_id TEXT NOT NULL,
+                    owner_user_id TEXT NOT NULL,
+                    schema_name TEXT NOT NULL,
+                    table_name TEXT NOT NULL,
+                    column_name TEXT NOT NULL,
+                    data_type INTEGER NOT NULL CHECK(data_type BETWEEN 1 AND 8),
+                    nullable INTEGER NOT NULL CHECK(nullable IN (0,1)),
+                    description TEXT NOT NULL DEFAULT '',
+                    query_enabled INTEGER NOT NULL CHECK(query_enabled IN (0,1)),
+                    sensitive INTEGER NOT NULL CHECK(sensitive IN (0,1)),
+                    ordinal INTEGER NOT NULL CHECK(ordinal >= 0),
+                    PRIMARY KEY(data_source_id, owner_user_id, schema_name, table_name, column_name),
+                    UNIQUE(data_source_id, owner_user_id, schema_name, table_name, ordinal),
+                    FOREIGN KEY(data_source_id, owner_user_id, schema_name, table_name)
+                      REFERENCES smart_query_tables(data_source_id, owner_user_id, schema_name, table_name)
+                      ON DELETE CASCADE
+                );
+                CREATE TABLE IF NOT EXISTS smart_query_foreign_keys (
+                    data_source_id TEXT NOT NULL,
+                    owner_user_id TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    principal_schema TEXT NOT NULL,
+                    principal_table TEXT NOT NULL,
+                    principal_column TEXT NOT NULL,
+                    dependent_schema TEXT NOT NULL,
+                    dependent_table TEXT NOT NULL,
+                    dependent_column TEXT NOT NULL,
+                    query_enabled INTEGER NOT NULL CHECK(query_enabled IN (0,1)),
+                    ordinal INTEGER NOT NULL CHECK(ordinal >= 0),
+                    PRIMARY KEY(data_source_id, owner_user_id, name),
+                    UNIQUE(data_source_id, owner_user_id, ordinal),
+                    FOREIGN KEY(data_source_id, owner_user_id, principal_schema, principal_table, principal_column)
+                      REFERENCES smart_query_columns(data_source_id, owner_user_id, schema_name, table_name, column_name),
+                    FOREIGN KEY(data_source_id, owner_user_id, dependent_schema, dependent_table, dependent_column)
+                      REFERENCES smart_query_columns(data_source_id, owner_user_id, schema_name, table_name, column_name),
+                    FOREIGN KEY(data_source_id, owner_user_id)
+                      REFERENCES smart_query_data_sources(id, owner_user_id) ON DELETE CASCADE
+                );
+                CREATE INDEX IF NOT EXISTS idx_smart_query_sources_access
+                  ON smart_query_data_sources(id, enabled, visibility, owner_user_id);
+                CREATE INDEX IF NOT EXISTS idx_smart_query_tables_source
+                  ON smart_query_tables(data_source_id, owner_user_id, ordinal);
+                CREATE INDEX IF NOT EXISTS idx_smart_query_columns_table
+                  ON smart_query_columns(data_source_id, owner_user_id, schema_name, table_name, ordinal);
+                CREATE INDEX IF NOT EXISTS idx_smart_query_fk_source
+                  ON smart_query_foreign_keys(data_source_id, owner_user_id, ordinal);
+                """;
+            await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+
+            cmd.CommandText = "INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (@v3, @t3)";
+            cmd.Parameters.Clear();
+            cmd.Parameters.AddWithValue("@v3", "003_smart_query_normalized_catalog");
+            cmd.Parameters.AddWithValue("@t3", _timeProvider.Now);
+            await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+
             await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException)

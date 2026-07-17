@@ -2,10 +2,11 @@ using System.Collections.Immutable;
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
+using System.Security.Cryptography;
 
 namespace Keji.SmartQuery;
 
-public abstract class KejiSmartQueryDialectCompiler : IKejiSmartQueryDialectCompiler
+internal abstract class KejiSmartQueryDialectCompiler : IKejiSmartQueryDialectCompiler
 {
     public abstract KejiSmartQueryDialect Dialect { get; }
     protected abstract string Quote(string identifier);
@@ -91,8 +92,10 @@ public abstract class KejiSmartQueryDialectCompiler : IKejiSmartQueryDialectComp
         parameters.Add(new(limitName, checked(plan.Limit + 1)));
         if (parameters.Count > options.MaxParameters) return false;
         sql.Append(Limit(limitName));
-        query = new(sql.ToString(), parameters.ToImmutable(),
-            plan.Select.Select(static p => p.Alias).ToImmutableArray(), plan.Limit);
+        var sqlText = sql.ToString();
+        var fingerprint = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(sqlText)));
+        query = new(sqlText, parameters.ToImmutable(),
+            plan.Select.Select(static p => p.Alias).ToImmutableArray(), plan.Limit, fingerprint);
         return true;
     }
 
@@ -130,19 +133,36 @@ public abstract class KejiSmartQueryDialectCompiler : IKejiSmartQueryDialectComp
                 sql = left + " IN (" + string.Join(", ", names) + ")";
                 return parameters.Count <= options.MaxParameters;
             }
+            if (leaf.Operator == KejiSmartQueryFilterOperator.Between)
+            {
+                if (leaf.Value is not null || !leaf.Values.IsDefaultOrEmpty ||
+                    leaf.LowerValue is null || leaf.UpperValue is null ||
+                    !TryValue(leaf.LowerValue.Value, column.Type, out var lower) ||
+                    !TryValue(leaf.UpperValue.Value, column.Type, out var upper)) return false;
+                var lowerName = Parameter(parameters.Count);
+                parameters.Add(new(lowerName, lower!));
+                var upperName = Parameter(parameters.Count);
+                parameters.Add(new(upperName, upper!));
+                sql = left + " BETWEEN " + lowerName + " AND " + upperName;
+                return parameters.Count <= options.MaxParameters;
+            }
             if (leaf.Value is null || !leaf.Values.IsDefaultOrEmpty ||
+                leaf.LowerValue is not null || leaf.UpperValue is not null ||
                 !TryValue(leaf.Value.Value, column.Type, out var item)) return false;
             if (leaf.Operator is KejiSmartQueryFilterOperator.Contains or
                 KejiSmartQueryFilterOperator.StartsWith or KejiSmartQueryFilterOperator.EndsWith)
                 item = leaf.Operator switch
                 {
-                    KejiSmartQueryFilterOperator.Contains => "%" + item + "%",
-                    KejiSmartQueryFilterOperator.StartsWith => item + "%",
-                    _ => "%" + item
+                    KejiSmartQueryFilterOperator.Contains => "%" + EscapeLike(item!.ToString()!) + "%",
+                    KejiSmartQueryFilterOperator.StartsWith => EscapeLike(item!.ToString()!) + "%",
+                    _ => "%" + EscapeLike(item!.ToString()!)
                 };
             var parameter = Parameter(parameters.Count);
             parameters.Add(new(parameter, item!));
-            sql = left + " " + Operator(leaf.Operator) + " " + parameter;
+            sql = left + " " + Operator(leaf.Operator) + " " + parameter +
+                (leaf.Operator is KejiSmartQueryFilterOperator.Contains or
+                    KejiSmartQueryFilterOperator.StartsWith or KejiSmartQueryFilterOperator.EndsWith
+                    ? " ESCAPE '!'" : "");
             return parameters.Count <= options.MaxParameters;
         }
         var group = node.Group!;
@@ -202,8 +222,14 @@ public abstract class KejiSmartQueryDialectCompiler : IKejiSmartQueryDialectComp
         KejiSmartQueryFilterOperator.LessThan or KejiSmartQueryFilterOperator.LessThanOrEqual or
             KejiSmartQueryFilterOperator.GreaterThan or KejiSmartQueryFilterOperator.GreaterThanOrEqual =>
             type is not KejiSmartQueryColumnType.Boolean and not KejiSmartQueryColumnType.Guid,
+        KejiSmartQueryFilterOperator.Between =>
+            type is not KejiSmartQueryColumnType.Boolean and not KejiSmartQueryColumnType.Guid,
         _ => true
     };
+    private static string EscapeLike(string value) => value
+        .Replace("!", "!!", StringComparison.Ordinal)
+        .Replace("%", "!%", StringComparison.Ordinal)
+        .Replace("_", "!_", StringComparison.Ordinal);
     private static string Operator(KejiSmartQueryFilterOperator op) => op switch
     {
         KejiSmartQueryFilterOperator.Equal => "=",
@@ -226,9 +252,12 @@ public abstract class KejiSmartQueryDialectCompiler : IKejiSmartQueryDialectComp
         switch (type)
         {
             case KejiSmartQueryColumnType.String:
-            case KejiSmartQueryColumnType.Guid:
                 if (value.ValueKind != JsonValueKind.String) return false;
-                result = value.GetString()!; return type != KejiSmartQueryColumnType.Guid || Guid.TryParse((string)result, out _);
+                result = value.GetString()!; return true;
+            case KejiSmartQueryColumnType.Guid:
+                if (value.ValueKind != JsonValueKind.String ||
+                    !System.Guid.TryParseExact(value.GetString(), "D", out var guid)) return false;
+                result = guid; return true;
             case KejiSmartQueryColumnType.Integer:
                 if (!value.TryGetInt64(out var integer)) return false; result = integer; return true;
             case KejiSmartQueryColumnType.Number:
@@ -239,24 +268,29 @@ public abstract class KejiSmartQueryDialectCompiler : IKejiSmartQueryDialectComp
                 if (value.ValueKind is not (JsonValueKind.True or JsonValueKind.False)) return false;
                 result = value.GetBoolean(); return true;
             case KejiSmartQueryColumnType.Date:
+                if (value.ValueKind != JsonValueKind.String ||
+                    !DateOnly.TryParseExact(value.GetString(), "yyyy-MM-dd", CultureInfo.InvariantCulture,
+                        DateTimeStyles.None, out var dateOnly)) return false;
+                result = dateOnly; return true;
             case KejiSmartQueryColumnType.DateTime:
                 if (value.ValueKind != JsonValueKind.String ||
-                    !DateTimeOffset.TryParse(value.GetString(), CultureInfo.InvariantCulture,
-                        DateTimeStyles.AssumeUniversal, out var date)) return false;
-                result = date; return true;
+                    !DateTimeOffset.TryParseExact(value.GetString(),
+                        ["yyyy-MM-dd'T'HH:mm:ssK", "yyyy-MM-dd'T'HH:mm:ss.FFFFFFFK"],
+                        CultureInfo.InvariantCulture, DateTimeStyles.None, out var dateTime)) return false;
+                result = dateTime; return true;
             default: return false;
         }
     }
 }
 
-public sealed class MySqlSmartQueryDialect : KejiSmartQueryDialectCompiler
+internal sealed class MySqlSmartQueryDialect : KejiSmartQueryDialectCompiler
 {
     public override KejiSmartQueryDialect Dialect => KejiSmartQueryDialect.MySql;
     protected override string Quote(string identifier) => "`" + identifier.Replace("`", "``", StringComparison.Ordinal) + "`";
     protected override string Parameter(int index) => "@p" + index.ToString(CultureInfo.InvariantCulture);
 }
 
-public sealed class PostgreSqlSmartQueryDialect : KejiSmartQueryDialectCompiler
+internal sealed class PostgreSqlSmartQueryDialect : KejiSmartQueryDialectCompiler
 {
     public override KejiSmartQueryDialect Dialect => KejiSmartQueryDialect.PostgreSql;
     protected override string Quote(string identifier) => "\"" + identifier.Replace("\"", "\"\"", StringComparison.Ordinal) + "\"";

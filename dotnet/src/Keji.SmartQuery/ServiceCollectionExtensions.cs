@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Keji.Persistence;
 
 namespace Keji.SmartQuery;
 
@@ -17,6 +18,11 @@ public static class ServiceCollectionExtensions
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IKejiSmartQueryDialectCompiler, PostgreSqlSmartQueryDialect>());
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IKejiSmartQueryExecutor, MySqlSmartQueryExecutor>());
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IKejiSmartQueryExecutor, PostgreSqlSmartQueryExecutor>());
+        services.TryAddSingleton<SqliteKejiSmartQueryDataSourceCatalog>();
+        services.TryAddSingleton<IKejiSmartQueryDataSourceCatalog>(
+            static sp => sp.GetRequiredService<SqliteKejiSmartQueryDataSourceCatalog>());
+        services.TryAddSingleton<IKejiSmartQueryDataSourceAdministration>(
+            static sp => sp.GetRequiredService<SqliteKejiSmartQueryDataSourceCatalog>());
         services.TryAddScoped<IKejiSmartQuery, KejiSmartQueryService>();
         return services;
     }

@@ -21,10 +21,12 @@ public sealed class SmartQueryServiceTests
         var fixture = Fixture.Create();
         var events = await Collect(fixture.Service.RunStreamAsync(Request(), TestContext.Current.CancellationToken));
         Assert.Equal([
-            KejiSmartQueryEventType.RunStarted, KejiSmartQueryEventType.PlanAccepted,
-            KejiSmartQueryEventType.QueryCompleted, KejiSmartQueryEventType.RunCompleted
+            KejiSmartQueryEventType.Started, KejiSmartQueryEventType.MetadataLoaded,
+            KejiSmartQueryEventType.PlanningStarted, KejiSmartQueryEventType.PlanValidated,
+            KejiSmartQueryEventType.ExecutionStarted, KejiSmartQueryEventType.ExecutionCompleted,
+            KejiSmartQueryEventType.Completed
         ], events.Select(static e => e.Type));
-        Assert.Equal([1L, 2, 3, 4], events.Select(static e => e.Sequence));
+        Assert.Equal([1L, 2, 3, 4, 5, 6, 7], events.Select(static e => e.Sequence));
         Assert.Equal(KejiSmartQueryStatus.Completed, events[^1].Status);
         Assert.NotNull(events[^1].Result);
     }
@@ -54,7 +56,8 @@ public sealed class SmartQueryServiceTests
         var fixture = Fixture.Create();
         var events = await Collect(fixture.Service.RunStreamAsync(
             Request() with { RunId = runId }, TestContext.Current.CancellationToken));
-        Assert.Equal([KejiSmartQueryEventType.Error, KejiSmartQueryEventType.RunCompleted],
+        Assert.Equal([KejiSmartQueryEventType.Started, KejiSmartQueryEventType.Error,
+            KejiSmartQueryEventType.Completed],
             events.Select(static e => e.Type));
         Assert.All(events, static e => Assert.Equal("", e.RunId));
         Assert.Empty(fixture.Provider.Requests);
@@ -132,7 +135,7 @@ public sealed class SmartQueryServiceTests
         var fixture = Fixture.Create();
         fixture.Provider.Content = output;
         var result = await fixture.Service.RunAsync(Request(), TestContext.Current.CancellationToken);
-        Assert.Equal(KejiSmartQueryStatus.PlanRejected, result.Status);
+        Assert.Equal(KejiSmartQueryStatus.InvalidPlan, result.Status);
         Assert.Equal(0, fixture.Executor.Calls);
     }
 
@@ -200,7 +203,7 @@ public sealed class SmartQueryServiceTests
         fixture.Provider.Success = false;
         fixture.Provider.Content = "provider stack and secret";
         var result = await fixture.Service.RunAsync(Request(), TestContext.Current.CancellationToken);
-        Assert.Equal("SMART_QUERY_PLAN_REJECTED", result.SafeCode);
+        Assert.Equal("SMART_QUERY_INVALID_PLAN", result.SafeCode);
         Assert.DoesNotContain("provider stack", JsonSerializer.Serialize(fixture.Audit.Calls));
     }
 
@@ -210,8 +213,8 @@ public sealed class SmartQueryServiceTests
         var fixture = Fixture.Create(registerProvider: false);
         var events = await Collect(fixture.Service.RunStreamAsync(Request(), TestContext.Current.CancellationToken));
         Assert.Equal(KejiSmartQueryStatus.ProviderNotFound, events[^1].Status);
-        Assert.Equal([KejiSmartQueryEventType.RunStarted, KejiSmartQueryEventType.Error,
-            KejiSmartQueryEventType.RunCompleted], events.Select(static e => e.Type));
+        Assert.Equal([KejiSmartQueryEventType.Started, KejiSmartQueryEventType.MetadataLoaded,
+            KejiSmartQueryEventType.Error, KejiSmartQueryEventType.Completed], events.Select(static e => e.Type));
     }
 
     [Fact]
@@ -247,7 +250,7 @@ public sealed class SmartQueryServiceTests
             await foreach (var item in fixture.Service.RunStreamAsync(Request(), cts.Token))
                 events.Add(item);
         });
-        Assert.DoesNotContain(events, static e => e.Type is KejiSmartQueryEventType.Error or KejiSmartQueryEventType.RunCompleted);
+        Assert.DoesNotContain(events, static e => e.Type is KejiSmartQueryEventType.Error or KejiSmartQueryEventType.Completed);
     }
 
     [Fact]
@@ -257,7 +260,8 @@ public sealed class SmartQueryServiceTests
         fixture.Provider.SecondSuccess = false;
         var result = await fixture.Service.RunAsync(Request(), TestContext.Current.CancellationToken);
         Assert.Equal(KejiSmartQueryStatus.Completed, result.Status);
-        Assert.Null(result.Summary);
+        Assert.Equal("查询完成，共返回1行、1列。", result.Summary);
+        Assert.False(result.SummaryGenerated);
     }
 
     private static async Task<List<KejiSmartQueryEvent>> Collect(IAsyncEnumerable<KejiSmartQueryEvent> stream)
@@ -317,7 +321,8 @@ public sealed class SmartQueryServiceTests
         public int Calls { get; private set; }
         public KejiSmartQueryDataSource? Source { get; set; }
         public Task<KejiSmartQueryDataSource?> GetAccessibleAsync(
-            string dataSourceId, string userId, CancellationToken cancellationToken = default)
+            string dataSourceId, string userId, bool isAdmin = false,
+            CancellationToken cancellationToken = default)
         { Calls++; return Task.FromResult(Source); }
     }
     private sealed class Executor : IKejiSmartQueryExecutor
@@ -336,7 +341,8 @@ public sealed class SmartQueryServiceTests
             if (WaitForCancellation) await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
             return new(runId, KejiSmartQueryStatus.Completed, query.OutputColumns,
                 [new([new(KejiSmartQueryValueKind.String, Text: "alpha")])],
-                false, null, "SMART_QUERY_COMPLETED");
+                1, false, 0, 5, 1, false, "", "SMART_QUERY_COMPLETED",
+                KejiSmartQueryStopReason.Completed);
         }
     }
     private sealed class Provider : IModelProvider

@@ -205,8 +205,8 @@ public sealed class SmartQueryCompilerTests
         KejiSmartQueryDialect dialect, KejiSmartQueryColumnType type = KejiSmartQueryColumnType.String) =>
         new("ds_1", "0123456789abcdef", dialect, "db.example.test",
             dialect == KejiSmartQueryDialect.MySql ? 3306 : 5432, "appdb", "reader",
-            new("DATABASE_PASSWORD"), KejiSmartQueryTlsMode.VerifyFull,
-            [new("items", [new("value", type)])], []);
+            new("env:DATABASE_PASSWORD"), KejiSmartQueryTlsMode.VerifyFull,
+            [new("items", [new("value", type)])], [], AllowedSchemas: ["public"]);
     internal static KejiSmartQueryDataSource JoinedSource(KejiSmartQueryDialect dialect) =>
         Source(dialect) with
         {
