@@ -232,10 +232,11 @@ public sealed class AgentLoop : IAgentLoop, IKejiAgentLoop
                         providerState == ProviderIterationState.AfterDone || item.ChoiceIndex != 0)
                         throw ProtocolFailure();
                     if (providerState == ProviderIterationState.AfterChoiceFinished &&
-                        item.Type is not (KejiProviderStreamEventKind.Usage or KejiProviderStreamEventKind.Done))
+                        item.Type is not (KejiProviderStreamEventKind.Usage or KejiProviderStreamEventKind.Error or
+                            KejiProviderStreamEventKind.Done))
                         throw ProtocolFailure();
                     if (providerState == ProviderIterationState.AfterUsage &&
-                        item.Type is not KejiProviderStreamEventKind.Done)
+                        item.Type is not (KejiProviderStreamEventKind.Error or KejiProviderStreamEventKind.Done))
                         throw ProtocolFailure();
                     switch (item.Type)
                     {
@@ -306,7 +307,6 @@ public sealed class AgentLoop : IAgentLoop, IKejiAgentLoop
                             providerState = ProviderIterationState.AfterUsage;
                             break;
                         case KejiProviderStreamEventKind.Error:
-                            if (providerState != ProviderIterationState.BeforeChoiceFinished) throw ProtocolFailure();
                             throw new AgentFailureException(MapProviderError(item.ErrorCode));
                         case KejiProviderStreamEventKind.Done:
                             if (providerState is not (ProviderIterationState.AfterChoiceFinished or
@@ -349,11 +349,11 @@ public sealed class AgentLoop : IAgentLoop, IKejiAgentLoop
                         await EmitRejectedToolAsync(toolCall, index, "INVALID_INPUT").ConfigureAwait(false);
                         throw new AgentFailureException(KejiAgentErrorCode.ToolRejected);
                     }
+                    if (!await IsStillOwnedAsync(request.ConversationId, userId, cancellationToken).ConfigureAwait(false))
+                        throw new AgentFailureException(KejiAgentErrorCode.ConversationNotFound);
                     await emit(NewEvent(KejiAgentEventType.ToolStarted, iteration) with
                     { ToolCallId = toolCall.Id, ToolName = toolCall.FunctionName, ToolCallIndex = index }).ConfigureAwait(false);
                     await AuditAsync("agent_tool_started", effective, userId, state, null, (toolCall.FunctionName, index, null, null), cancellationToken).ConfigureAwait(false);
-                    if (!await IsStillOwnedAsync(request.ConversationId, userId, cancellationToken).ConfigureAwait(false))
-                        throw new AgentFailureException(KejiAgentErrorCode.ConversationNotFound);
                     var toolStarted = _timeProvider.GetTimestamp();
                     ToolExecutionResult result;
                     try { result = await _toolPipeline.ExecuteAsync(toolCall.FunctionName, inputs, cancellationToken).ConfigureAwait(false); }
@@ -420,12 +420,6 @@ public sealed class AgentLoop : IAgentLoop, IKejiAgentLoop
 
             async Task EmitRejectedToolAsync(ChatToolCall toolCall, int index, string errorCode)
             {
-                await emit(NewEvent(KejiAgentEventType.ToolStarted, iteration) with
-                {
-                    ToolCallId = toolCall.Id, ToolName = toolCall.FunctionName, ToolCallIndex = index,
-                }).ConfigureAwait(false);
-                await AuditAsync("agent_tool_started", effective, userId, state, null,
-                    (toolCall.FunctionName, index, null, null), cancellationToken).ConfigureAwait(false);
                 await emit(NewEvent(KejiAgentEventType.ToolCompleted, iteration) with
                 {
                     ToolCallId = toolCall.Id, ToolName = toolCall.FunctionName, ToolCallIndex = index,

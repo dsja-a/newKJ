@@ -655,7 +655,6 @@ public sealed class AgentLoopTests
     [InlineData("reasoning")]
     [InlineData("tool_begin")]
     [InlineData("choice")]
-    [InlineData("error")]
     public async Task ProviderStream_ChoiceFinishedAllowsOnlyOptionalUsageThenDone(string lateKind)
     {
         var late = lateKind switch
@@ -664,7 +663,7 @@ public sealed class AgentLoopTests
             "reasoning" => ChatCompletionStreamEvent.ReasoningToken("late"),
             "tool_begin" => ChatCompletionStreamEvent.ToolCallBegin("call_1", "calculator"),
             "choice" => ChatCompletionStreamEvent.ChoiceFinished(KejiFinishReason.Stop, false),
-            _ => ChatCompletionStreamEvent.Error(KejiProviderErrorCode.ServerError, "raw"),
+            _ => throw new ArgumentOutOfRangeException(nameof(lateKind)),
         };
         var events = await ProtocolEvents(
             ChatCompletionStreamEvent.ChoiceFinished(KejiFinishReason.Stop, false),
@@ -682,6 +681,30 @@ public sealed class AgentLoopTests
             ChatCompletionStreamEvent.Token("late"),
             ChatCompletionStreamEvent.Done());
         AssertFailureTerminal(events, KejiAgentErrorCode.ProviderProtocolError);
+    }
+
+    [Fact]
+    public async Task ProviderErrorAfterChoiceFinished_PreservesMappedErrorWithoutDone()
+    {
+        var events = await ProtocolEvents(
+            ChatCompletionStreamEvent.ChoiceFinished(KejiFinishReason.Stop, false),
+            ChatCompletionStreamEvent.Error(KejiProviderErrorCode.AuthFailed, "raw-provider-secret"));
+
+        AssertFailureTerminal(events, KejiAgentErrorCode.ProviderRejected);
+        Assert.DoesNotContain("raw-provider-secret", JsonSerializer.Serialize(events), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ProviderErrorAfterUsage_PreservesMappedErrorWithoutDone()
+    {
+        var events = await ProtocolEvents(
+            ChatCompletionStreamEvent.ChoiceFinished(KejiFinishReason.Stop, false),
+            ChatCompletionStreamEvent.UsageEvent(new TokenUsage { PromptTokens = 3, CompletionTokens = 1 }),
+            ChatCompletionStreamEvent.Error(KejiProviderErrorCode.ServiceUnavailable, "raw-provider-secret"));
+
+        AssertFailureTerminal(events, KejiAgentErrorCode.ProviderUnavailable);
+        Assert.Single(events, static item => item.Type == KejiAgentEventType.Usage);
+        Assert.DoesNotContain("raw-provider-secret", JsonSerializer.Serialize(events), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -845,7 +868,7 @@ public sealed class AgentLoopTests
     [Theory]
     [InlineData("unknown")]
     [InlineData("contract_only")]
-    public async Task RegistryToolRejection_EmitsCompleteStartedCompletedErrorDoneSequence(string toolName)
+    public async Task RegistryToolRejection_EmitsCompletedErrorDoneWithoutStarted(string toolName)
     {
         var fixture = Fixture(ToolResponse(ToolCall("call_1", toolName, "{}")));
         var events = await CollectAsync(fixture.Loop.RunStreamAsync(StreamRequest()));
@@ -855,16 +878,107 @@ public sealed class AgentLoopTests
             .Select(static item => item.Type);
         Assert.Equal(new[]
         {
-            KejiAgentEventType.ToolStarted, KejiAgentEventType.ToolCompleted,
-            KejiAgentEventType.Error, KejiAgentEventType.RunCompleted,
+            KejiAgentEventType.ToolCompleted, KejiAgentEventType.Error, KejiAgentEventType.RunCompleted,
         }, terminal);
         var completed = Assert.Single(events, static item => item.Type == KejiAgentEventType.ToolCompleted);
         Assert.False(completed.ToolSucceeded);
         Assert.Equal("TOOL_REJECTED", completed.ToolErrorCode);
         Assert.Empty(fixture.Pipeline.Calls);
-        Assert.Equal(new[] { "agent_tool_started", "agent_tool_completed" },
+        Assert.Equal(new[] { "agent_tool_completed" },
             fixture.Audit.Calls.Where(static call => call.Action.StartsWith("agent_tool_", StringComparison.Ordinal))
                 .Select(static call => call.Action));
+    }
+
+    [Fact]
+    public async Task PreExecutionUnknownTool_HasNoToolStarted()
+    {
+        var events = await CollectAsync(Fixture(ToolResponse(ToolCall("call_unknown", "unknown", "{}")))
+            .Loop.RunStreamAsync(StreamRequest()));
+        Assert.DoesNotContain(events, static item => item.Type == KejiAgentEventType.ToolStarted);
+    }
+
+    [Fact]
+    public async Task PreExecutionContractOnly_HasNoToolStarted()
+    {
+        var events = await CollectAsync(Fixture(ToolResponse(ToolCall("call_contract", "contract_only", "{}")))
+            .Loop.RunStreamAsync(StreamRequest()));
+        Assert.DoesNotContain(events, static item => item.Type == KejiAgentEventType.ToolStarted);
+    }
+
+    [Fact]
+    public async Task InvalidArguments_HasNoToolStarted()
+    {
+        var events = await CollectAsync(Fixture(ToolResponse(
+            ToolCall("call_invalid", "calculator", "{\"expression\":{\"nested\":true}}")))
+            .Loop.RunStreamAsync(StreamRequest()));
+        Assert.DoesNotContain(events, static item => item.Type == KejiAgentEventType.ToolStarted);
+    }
+
+    [Fact]
+    public async Task InvalidArguments_HasOneFailedToolCompleted()
+    {
+        var events = await CollectAsync(Fixture(ToolResponse(
+            ToolCall("call_invalid", "calculator", "{\"expression\":{\"nested\":true}}")))
+            .Loop.RunStreamAsync(StreamRequest()));
+        var completed = Assert.Single(events, static item => item.Type == KejiAgentEventType.ToolCompleted);
+        Assert.False(completed.ToolSucceeded);
+        Assert.Equal("INVALID_INPUT", completed.ToolErrorCode);
+        Assert.Equal(0, completed.ToolDurationMs);
+    }
+
+    [Fact]
+    public async Task OwnershipRevokedBeforeExecution_HasNoToolEventsAndDoesNotCallPipeline()
+    {
+        var fixture = Fixture(ToolResponse(ToolCall("call_1", "calculator", "{\"expression\":\"1\"}")));
+        fixture.Conversations.RevokeAfterSuccessfulChecks = 3;
+
+        var events = await CollectAsync(fixture.Loop.RunStreamAsync(StreamRequest()));
+
+        Assert.DoesNotContain(events, static item => item.Type is KejiAgentEventType.ToolStarted or KejiAgentEventType.ToolCompleted);
+        Assert.Empty(fixture.Pipeline.Calls);
+        AssertFailureTerminal(events, KejiAgentErrorCode.ConversationNotFound);
+    }
+
+    [Fact]
+    public async Task OwnershipRevokedBeforeExecution_WritesNoToolAudit()
+    {
+        var fixture = Fixture(ToolResponse(ToolCall("call_1", "calculator", "{\"expression\":\"1\"}")));
+        fixture.Conversations.RevokeAfterSuccessfulChecks = 3;
+
+        await CollectAsync(fixture.Loop.RunStreamAsync(StreamRequest()));
+
+        Assert.DoesNotContain(fixture.Audit.Calls,
+            static call => call.Action is "agent_tool_started" or "agent_tool_completed");
+    }
+
+    [Fact]
+    public async Task OwnershipCheck_PrecedesToolStarted()
+    {
+        var fixture = Fixture(ToolResponse(ToolCall("call_1", "calculator", "{\"expression\":\"1\"}")));
+        fixture.Conversations.RevokeAfterSuccessfulChecks = 3;
+
+        var events = await CollectAsync(fixture.Loop.RunStreamAsync(StreamRequest()));
+
+        Assert.Equal(KejiAgentErrorCode.ConversationNotFound,
+            Assert.Single(events, static item => item.Type == KejiAgentEventType.Error).ErrorCode);
+        Assert.DoesNotContain(events, static item => item.Type == KejiAgentEventType.ToolStarted);
+    }
+
+    [Fact]
+    public async Task EveryToolStarted_HasExactlyOneMatchingToolCompleted()
+    {
+        var fixture = Fixture(
+            ToolResponse(
+                ToolCall("call_1", "calculator", "{\"expression\":\"1\"}"),
+                ToolCall("call_2", "calculator", "{\"expression\":\"2\"}")),
+            ChatCompletionResponse.Succeeded("done"));
+        var events = await CollectAsync(fixture.Loop.RunStreamAsync(StreamRequest()));
+
+        foreach (var started in events.Where(static item => item.Type == KejiAgentEventType.ToolStarted))
+        {
+            Assert.Single(events, item => item.Type == KejiAgentEventType.ToolCompleted &&
+                item.ToolCallId == started.ToolCallId && item.ToolCallIndex == started.ToolCallIndex);
+        }
     }
 
     private async Task<List<KejiAgentEvent>> ProtocolEvents(params ChatCompletionStreamEvent[] providerEvents)

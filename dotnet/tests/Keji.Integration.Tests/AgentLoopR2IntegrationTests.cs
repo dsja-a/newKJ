@@ -224,7 +224,7 @@ public sealed class AgentLoopR2IntegrationTests
     }
 
     [Fact]
-    public async Task ContractOnlyTool_RejectionHasCompleteToolAndTerminalEvents()
+    public async Task ContractOnly_RejectionHasToolCompletedButNoToolStarted()
     {
         var fixture = Fixture(ToolRound("call_1", "contract_only", 0));
 
@@ -232,12 +232,74 @@ public sealed class AgentLoopR2IntegrationTests
 
         Assert.Equal(new[]
         {
-            KejiAgentEventType.ToolStarted, KejiAgentEventType.ToolCompleted,
-            KejiAgentEventType.Error, KejiAgentEventType.RunCompleted,
+            KejiAgentEventType.ToolCompleted, KejiAgentEventType.Error, KejiAgentEventType.RunCompleted,
         }, events.Where(static item => item.Type is KejiAgentEventType.ToolStarted or
                 KejiAgentEventType.ToolCompleted or KejiAgentEventType.Error or KejiAgentEventType.RunCompleted)
             .Select(static item => item.Type));
         Assert.Empty(fixture.Pipeline.Calls);
+    }
+
+    [Fact]
+    public async Task InvalidArguments_RejectionHasToolCompletedErrorDone()
+    {
+        var fixture = Fixture(ToolRound("call_1", "calculator", 0, "{\"nested\":{\"value\":1}}"));
+
+        var events = await CollectAsync(fixture.Loop.RunStreamAsync(Request()));
+
+        Assert.DoesNotContain(events, static item => item.Type == KejiAgentEventType.ToolStarted);
+        Assert.Equal(new[]
+        {
+            KejiAgentEventType.ToolCompleted, KejiAgentEventType.Error, KejiAgentEventType.RunCompleted,
+        }, events.Where(static item => item.Type is KejiAgentEventType.ToolCompleted or
+                KejiAgentEventType.Error or KejiAgentEventType.RunCompleted)
+            .Select(static item => item.Type));
+        Assert.Empty(fixture.Pipeline.Calls);
+    }
+
+    [Fact]
+    public async Task OwnershipRevokedBeforeTool_HasNoToolEventsAndNoPipeline()
+    {
+        var fixture = Fixture(ToolRound("call_1", "calculator", 0));
+        fixture.Conversations.RevokeAfterSuccessfulChecks = 3;
+
+        var events = await CollectAsync(fixture.Loop.RunStreamAsync(Request()));
+
+        Assert.DoesNotContain(events, static item => item.Type is KejiAgentEventType.ToolStarted or KejiAgentEventType.ToolCompleted);
+        Assert.Empty(fixture.Pipeline.Calls);
+        Assert.Equal(KejiAgentErrorCode.ConversationNotFound, events[^2].ErrorCode);
+    }
+
+    [Fact]
+    public async Task ProviderErrorAfterChoiceFinished_ProducesMappedErrorAndDone()
+    {
+        var fixture = Fixture(new[]
+        {
+            Finish(), ChatCompletionStreamEvent.Error(KejiProviderErrorCode.AuthFailed, "raw-secret"),
+        });
+
+        var events = await CollectAsync(fixture.Loop.RunStreamAsync(Request()));
+
+        Assert.Equal(KejiAgentErrorCode.ProviderRejected, events[^2].ErrorCode);
+        Assert.Equal(KejiAgentEventType.RunCompleted, events[^1].Type);
+        Assert.DoesNotContain("raw-secret", JsonSerializer.Serialize(events), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ProviderErrorAfterUsage_ProducesUsageMappedErrorDone()
+    {
+        var fixture = Fixture(new[]
+        {
+            Finish(), ChatCompletionStreamEvent.UsageEvent(new TokenUsage { PromptTokens = 2, CompletionTokens = 1 }),
+            ChatCompletionStreamEvent.Error(KejiProviderErrorCode.ServiceUnavailable, "raw-secret"),
+        });
+
+        var events = await CollectAsync(fixture.Loop.RunStreamAsync(Request()));
+
+        Assert.Equal(new[]
+        {
+            KejiAgentEventType.Usage, KejiAgentEventType.Error, KejiAgentEventType.RunCompleted,
+        }, events.TakeLast(3).Select(static item => item.Type));
+        Assert.Equal(KejiAgentErrorCode.ProviderUnavailable, events[^2].ErrorCode);
     }
 
     private static KejiAgentRunRequest Request() => new()
@@ -315,8 +377,13 @@ public sealed class AgentLoopR2IntegrationTests
     private sealed class ConversationRepo : IConversationRepository
     {
         public bool Owned { get; set; } = true;
+        public int Checks { get; private set; }
+        public int? RevokeAfterSuccessfulChecks { get; set; }
         public Task<ConversationRecord?> GetOwnedAsync(string id, string user, CancellationToken ct = default) =>
-            Task.FromResult<ConversationRecord?>(Owned ? new ConversationRecord { Id = id, OwnerUserId = user } : null);
+            Task.FromResult<ConversationRecord?>(Owned &&
+                (!RevokeAfterSuccessfulChecks.HasValue || ++Checks <= RevokeAfterSuccessfulChecks.Value)
+                ? new ConversationRecord { Id = id, OwnerUserId = user }
+                : null);
         public Task<ConversationRecord> CreateOwnedAsync(string a, string b, string c = "New", CancellationToken d = default) => throw new NotSupportedException();
         public Task<(ConversationRecord Record, ConversationOwnershipResult Result)> EnsureOwnedAsync(string a, string b, string c = "New", CancellationToken d = default) => throw new NotSupportedException();
         public Task<List<ConversationRecord>> ListOwnedAsync(string a, int b = 50, CancellationToken c = default) => throw new NotSupportedException();
