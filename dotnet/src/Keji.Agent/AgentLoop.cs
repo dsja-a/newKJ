@@ -122,7 +122,9 @@ public sealed class AgentLoop : IAgentLoop, IKejiAgentLoop
             if (lease is null) throw new AgentFailureException(KejiAgentErrorCode.SessionBusy, KejiAgentStopReason.SessionBusy);
             await AuditAsync("agent_run_started", effective, userId, state, null, null, runToken).ConfigureAwait(false);
             await EmitAsync(Event(KejiAgentEventType.RunStarted), runToken).ConfigureAwait(false);
-            await RunCoreStreamAsync(request, effective, userId, started, state, item => EmitAsync(item, runToken), runToken).ConfigureAwait(false);
+            await RunCoreStreamAsync(request, effective, userId, started, state,
+                item => EmitAsync(item, runToken), item => EmitAsync(item, terminalToken),
+                callerToken, runToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (callerToken.IsCancellationRequested)
         {
@@ -180,7 +182,9 @@ public sealed class AgentLoop : IAgentLoop, IKejiAgentLoop
 
     private async Task RunCoreStreamAsync(KejiAgentRunRequest request, KejiAgentEffectiveRunContext effective,
         string userId, DateTimeOffset started,
-        RunState state, Func<KejiAgentEvent, ValueTask> emit, CancellationToken cancellationToken)
+        RunState state, Func<KejiAgentEvent, ValueTask> emit,
+        Func<KejiAgentEvent, ValueTask> emitTerminal, CancellationToken callerToken,
+        CancellationToken cancellationToken)
     {
         if (!await IsStillOwnedAsync(request.ConversationId, userId, cancellationToken).ConfigureAwait(false))
             throw new AgentFailureException(KejiAgentErrorCode.ConversationNotFound);
@@ -357,6 +361,24 @@ public sealed class AgentLoop : IAgentLoop, IKejiAgentLoop
                     var toolStarted = _timeProvider.GetTimestamp();
                     ToolExecutionResult result;
                     try { result = await _toolPipeline.ExecuteAsync(toolCall.FunctionName, inputs, cancellationToken).ConfigureAwait(false); }
+                    catch (OperationCanceledException) when (!callerToken.IsCancellationRequested)
+                    {
+                        var timeoutDurationMs = Math.Max(0,
+                            (long)_timeProvider.GetElapsedTime(toolStarted).TotalMilliseconds);
+                        state.ToolCalls++;
+                        state.ToolsUsed.Add(toolCall.FunctionName);
+                        await emitTerminal(NewEvent(KejiAgentEventType.ToolCompleted, iteration) with
+                        {
+                            ToolCallId = toolCall.Id, ToolName = toolCall.FunctionName,
+                            ToolCallIndex = index, ToolSucceeded = false,
+                            ToolErrorCode = "TOOL_TIMEOUT", ToolDurationMs = timeoutDurationMs,
+                        }).ConfigureAwait(false);
+                        await AuditAsync("agent_tool_completed", effective, userId, state,
+                            KejiAgentErrorCode.ToolFailed,
+                            (toolCall.FunctionName, index, false, timeoutDurationMs),
+                            CancellationToken.None).ConfigureAwait(false);
+                        throw;
+                    }
                     catch (OperationCanceledException) { throw; }
                     catch (Exception) { result = ToolExecutionResult.Failed("Tool execution failed.", "TOOL_FAILED", TimeSpan.Zero); }
                     var durationMs = Math.Max(0, (long)_timeProvider.GetElapsedTime(toolStarted).TotalMilliseconds);

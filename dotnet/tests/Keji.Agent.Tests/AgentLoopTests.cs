@@ -981,6 +981,41 @@ public sealed class AgentLoopTests
         }
     }
 
+    [Fact]
+    public async Task RunTimeoutAfterToolStarted_EmitsMatchingToolCompleted()
+    {
+        var time = new ManualTimeProvider();
+        var fixture = FixtureWithTimeProvider(
+            new AgentLoopOptions(runTimeout: TimeSpan.FromSeconds(1)),
+            time,
+            ToolResponse(ToolCall("call_timeout", "calculator", "{\"expression\":\"1\"}")));
+        fixture.Pipeline.Handler = async (_, _, ct) =>
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, ct);
+            return ToolExecutionResult.Successful("{}", TimeSpan.Zero);
+        };
+        var events = new List<KejiAgentEvent>();
+        await using var enumerator = fixture.Loop.RunStreamAsync(StreamRequest()).GetAsyncEnumerator();
+        while (await enumerator.MoveNextAsync())
+        {
+            events.Add(enumerator.Current);
+            if (enumerator.Current.Type == KejiAgentEventType.ToolStarted)
+            {
+                time.Advance(TimeSpan.FromSeconds(2));
+                break;
+            }
+        }
+        while (await enumerator.MoveNextAsync()) events.Add(enumerator.Current);
+
+        var started = Assert.Single(events, static item => item.Type == KejiAgentEventType.ToolStarted);
+        var completed = Assert.Single(events, item => item.Type == KejiAgentEventType.ToolCompleted &&
+            item.ToolCallId == started.ToolCallId);
+        Assert.False(completed.ToolSucceeded);
+        Assert.Equal("TOOL_TIMEOUT", completed.ToolErrorCode);
+        Assert.Equal(KejiAgentErrorCode.RunTimedOut,
+            Assert.Single(events, static item => item.Type == KejiAgentEventType.Error).ErrorCode);
+    }
+
     private async Task<List<KejiAgentEvent>> ProtocolEvents(params ChatCompletionStreamEvent[] providerEvents)
     {
         var fixture = Fixture(ChatCompletionResponse.Succeeded("unused"));
