@@ -11,7 +11,12 @@ public static class ServiceCollectionExtensions
     {
         ArgumentNullException.ThrowIfNull(services);
         services.TryAddSingleton(options ?? new KejiSmartQueryOptions());
-        services.TryAddSingleton<KejiSmartQueryCompiler>();
+        services.TryAddSingleton<TimeProvider>(TimeProvider.System);
+        services.TryAddSingleton<IKejiSmartQuerySecretResolver, EnvironmentKejiSmartQuerySecretResolver>();
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<IKejiSmartQueryDialectCompiler, MySqlSmartQueryDialect>());
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<IKejiSmartQueryDialectCompiler, PostgreSqlSmartQueryDialect>());
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<IKejiSmartQueryExecutor, MySqlSmartQueryExecutor>());
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<IKejiSmartQueryExecutor, PostgreSqlSmartQueryExecutor>());
         services.TryAddScoped<IKejiSmartQuery, KejiSmartQueryService>();
         return services;
     }
