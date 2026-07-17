@@ -61,6 +61,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Keji.Providers.Tests", "tes
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Keji.Streaming.Tests", "tests\Keji.Streaming.Tests\Keji.Streaming.Tests.csproj", "{34C443F8-3273-4616-B507-D9C5EB5FDF53}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Keji.SmartQuery.Tests", "tests\Keji.SmartQuery.Tests\Keji.SmartQuery.Tests.csproj", "{95D7F6E4-E75E-4A08-A36F-B7F98965FC81}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -395,6 +397,18 @@ Global
 		{34C443F8-3273-4616-B507-D9C5EB5FDF53}.Release|x64.Build.0 = Release|Any CPU
 		{34C443F8-3273-4616-B507-D9C5EB5FDF53}.Release|x86.ActiveCfg = Release|Any CPU
 		{34C443F8-3273-4616-B507-D9C5EB5FDF53}.Release|x86.Build.0 = Release|Any CPU
+		{95D7F6E4-E75E-4A08-A36F-B7F98965FC81}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{95D7F6E4-E75E-4A08-A36F-B7F98965FC81}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{95D7F6E4-E75E-4A08-A36F-B7F98965FC81}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{95D7F6E4-E75E-4A08-A36F-B7F98965FC81}.Debug|x64.Build.0 = Debug|Any CPU
+		{95D7F6E4-E75E-4A08-A36F-B7F98965FC81}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{95D7F6E4-E75E-4A08-A36F-B7F98965FC81}.Debug|x86.Build.0 = Debug|Any CPU
+		{95D7F6E4-E75E-4A08-A36F-B7F98965FC81}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{95D7F6E4-E75E-4A08-A36F-B7F98965FC81}.Release|Any CPU.Build.0 = Release|Any CPU
+		{95D7F6E4-E75E-4A08-A36F-B7F98965FC81}.Release|x64.ActiveCfg = Release|Any CPU
+		{95D7F6E4-E75E-4A08-A36F-B7F98965FC81}.Release|x64.Build.0 = Release|Any CPU
+		{95D7F6E4-E75E-4A08-A36F-B7F98965FC81}.Release|x86.ActiveCfg = Release|Any CPU
+		{95D7F6E4-E75E-4A08-A36F-B7F98965FC81}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -427,5 +441,6 @@ Global
 		{1CF5D668-BAD6-49D7-8638-91C923FD73E9} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 		{505780CA-C19D-4878-8287-E3B0D6CCF85F} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 		{34C443F8-3273-4616-B507-D9C5EB5FDF53} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
+		{95D7F6E4-E75E-4A08-A36F-B7F98965FC81} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 	EndGlobalSection
 EndGlobal
