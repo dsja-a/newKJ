@@ -1,5 +1,7 @@
 # C# Migration State
 
+TASK-014 R2 final accepted baseline is `6806886a0baa333ac3b833b6c995c1fef932b2f8`. Final production boundaries cover frozen public contracts, deterministic terminal events, cancellation and timeout separation, normalized versioned persistence, private/shared visibility, strict per-execution Secret Reference resolution, one bounded planner repair, typed deterministic SQL compilation, separate MySQL/PostgreSQL read-only execution, bounded typed results and summaries, and safe lifecycle audit. Local Gate: SmartQuery 230/230, Persistence 181/181, Integration 216/216, solution 2462/2462; failures, skips, warnings, errors, and known NuGet vulnerabilities are all zero. C# completion remains 70%; TASK-015 is `not_started`.
+
 | Field | Value |
 |---|---|
 | 当前任务 | TASK-014 |

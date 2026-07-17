@@ -4,11 +4,24 @@
 
 - Repository: `dsja-a/newKJ`
 - Branch: `rewrite/csharp-core`
-- Last accepted baseline: `d81609abd1474fd32071c3a2f022764acbaf829c`
+- Last accepted baseline: `6806886a0baa333ac3b833b6c995c1fef932b2f8`
 - Current task: TASK-014
 - Current status: accepted (final)
 - Formal C# completion: 70%
 - Next task: TASK-015 (`not_started`)
+
+## TASK-014 R2 (Accepted): Final production boundaries
+
+TASK-014 R2 is accepted at `6806886a0baa333ac3b833b6c995c1fef932b2f8`.
+
+- Public enums have explicit `Invalid = 0`; compiled SQL and database parameter objects are internal.
+- `RunStreamAsync` remains the only business chain, with deterministic phase events, adjacent `Error`/`Completed`, caller-cancellation propagation, and bounded internal timeouts.
+- Keji.Persistence owns normalized, versioned SmartQuery catalog migrations and private/shared/disabled visibility enforcement.
+- Secrets use strict `env:NAME`, resolve per execution without caching, and are validated for size, UTF-8, and control characters.
+- Planner repair is bounded to one retry; MySQL and PostgreSQL retain separate safe dialects and read-only executors.
+- Results, summaries, and audit metadata are strongly typed and bounded; sensitive inputs, SQL, parameters, rows, secrets, exceptions, and connection details are excluded from events and audit.
+- Local Gate: SmartQuery 230/230, Persistence 181/181, Integration 216/216, full solution 2462/2462; zero failures, skips, warnings, errors, and known NuGet vulnerabilities.
+- Python and Web are unchanged. TASK-015 is `not_started`.
 
 ## TASK-011 (Repair): Isolated ToolWorker
 
