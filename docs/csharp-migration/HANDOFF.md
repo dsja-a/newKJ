@@ -4,7 +4,7 @@
 
 - Repository: `dsja-a/newKJ`
 - Branch: `rewrite/csharp-core`
-- Last accepted baseline: `6f840c6d077bb424f2a1ab5e8d2e510c2af76bcf`
+- Last accepted baseline: `b09c3107ab439399c95176af4967badbde84021b`
 - Current task: TASK-013
 - Current status: accepted (final)
 - Formal C# completion: 60%
@@ -227,3 +227,15 @@ TASK-013 R2 is accepted (final) at `6f840c6d077bb424f2a1ab5e8d2e510c2af76bcf`.
 ## Next action
 
 TASK-014 is the next task and has not started.
+
+## TASK-013 R3 (Accepted): Safe request and provider terminal closeout
+
+TASK-013 R3 is accepted at `b09c3107ab439399c95176af4967badbde84021b`.
+
+- Invalid RunIds are replaced with a fresh lowercase 32-character hexadecimal effective RunId before events, transcripts, audit, or SSE; valid RunIds are preserved exactly.
+- Conversation, provider, model, user message, and system prompt boundaries use strict UTF-8 validation. Unpaired surrogates are `InvalidRequest`, never `ContextLimit`.
+- Invalid request values and user messages are absent from failure transcripts and audit metadata.
+- Provider iteration order is explicit: content/reasoning/tool calls, `ChoiceFinished`, optional `Usage`, then `Done`; any late or duplicate event is `ProviderProtocolError`.
+- Tool registry, availability, and input conversion rejections emit `ToolStarted`, failed `ToolCompleted`, `Error`, and `RunCompleted`, while never entering `IToolExecutionPipeline`.
+- Verification: Agent 187/187, Integration 180/180 (20 real Agent composition paths), Providers 202/202, Streaming 156/156, full solution 2176/2176; 0 failed, 0 skipped, 0 build warnings, 0 build errors, and 0 known NuGet vulnerabilities.
+- Python and Web are unchanged. TASK-014 remains `not_started`.
