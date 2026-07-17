@@ -1,4 +1,6 @@
 using Keji.Agent;
+using Keji.Auditing.Abstractions;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace Microsoft.Extensions.DependencyInjection;
 
@@ -10,6 +12,9 @@ public static class KejiAgentServiceCollectionExtensions
     {
         ArgumentNullException.ThrowIfNull(services);
         services.AddSingleton(options ?? new AgentLoopOptions());
+        services.TryAddSingleton(TimeProvider.System);
+        services.TryAddScoped<IKejiAuditService, NoOpKejiAgentAuditService>();
+        services.AddScoped<KejiAgentContextBuilder>();
         services.AddScoped<IAgentLoop, AgentLoop>();
         services.AddScoped<IKejiAgentLoop>(provider => provider.GetRequiredService<IAgentLoop>() as IKejiAgentLoop
             ?? throw new InvalidOperationException("Agent loop does not support streaming."));

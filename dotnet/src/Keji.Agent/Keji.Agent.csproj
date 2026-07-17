@@ -7,6 +7,7 @@
     <ProjectReference Include="..\Keji.Auditing\Keji.Auditing.csproj" />
     <ProjectReference Include="..\Keji.Persistence\Keji.Persistence.csproj" />
     <ProjectReference Include="..\Keji.Providers\Keji.Providers.csproj" />
+    <ProjectReference Include="..\Keji.Streaming\Keji.Streaming.csproj" />
   </ItemGroup>
 
   <PropertyGroup>

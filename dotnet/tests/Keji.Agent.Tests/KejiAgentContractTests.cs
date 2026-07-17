@@ -13,13 +13,13 @@ public sealed class KejiAgentContractTests
     [InlineData(10, 20, 5)]
     [InlineData(100, 200, 50)]
     [InlineData(1000, 2000, 500)]
-    [InlineData(7, 11, 13)]
+    [InlineData(7, 11, 4)]
     [InlineData(99, 1, 2)]
     [InlineData(123, 456, 78)]
     [InlineData(4096, 8192, 1024)]
-    [InlineData(31, 37, 41)]
-    [InlineData(2, 3, 5)]
-    [InlineData(13, 17, 19)]
+    [InlineData(31, 37, 20)]
+    [InlineData(2, 3, 1)]
+    [InlineData(13, 17, 7)]
     [InlineData(9999, 8888, 7777)]
     [InlineData(64, 128, 32)]
     [InlineData(256, 512, 128)]
@@ -36,19 +36,22 @@ public sealed class KejiAgentContractTests
     }
 
     [Theory]
+    [InlineData(KejiAgentEventType.Invalid, 0)]
     [InlineData(KejiAgentEventType.RunStarted, 1)]
-    [InlineData(KejiAgentEventType.IterationStarted, 2)]
-    [InlineData(KejiAgentEventType.AssistantDelta, 3)]
-    [InlineData(KejiAgentEventType.ToolStarted, 4)]
-    [InlineData(KejiAgentEventType.ToolCompleted, 5)]
-    [InlineData(KejiAgentEventType.Usage, 6)]
-    [InlineData(KejiAgentEventType.RunCompleted, 7)]
-    [InlineData(KejiAgentEventType.Error, 8)]
+    [InlineData(KejiAgentEventType.ThinkingStarted, 2)]
+    [InlineData(KejiAgentEventType.ThinkingDelta, 3)]
+    [InlineData(KejiAgentEventType.AnsweringStarted, 4)]
+    [InlineData(KejiAgentEventType.AnswerDelta, 5)]
+    [InlineData(KejiAgentEventType.ToolStarted, 6)]
+    [InlineData(KejiAgentEventType.ToolCompleted, 7)]
+    [InlineData(KejiAgentEventType.Usage, 8)]
+    [InlineData(KejiAgentEventType.Error, 9)]
+    [InlineData(KejiAgentEventType.RunCompleted, 10)]
     public void EventTypeWireValuesAreStable(KejiAgentEventType value, int expected) =>
         Assert.Equal(expected, (int)value);
 
     [Theory]
-    [InlineData(KejiAgentStopReason.None, 0)]
+    [InlineData(KejiAgentStopReason.Invalid, 0)]
     [InlineData(KejiAgentStopReason.Completed, 1)]
     [InlineData(KejiAgentStopReason.Length, 2)]
     [InlineData(KejiAgentStopReason.ContentFiltered, 3)]
@@ -62,25 +65,24 @@ public sealed class KejiAgentContractTests
         Assert.Equal(expected, (int)value);
 
     [Theory]
-    [InlineData(KejiAgentErrorCode.None, 0)]
+    [InlineData(KejiAgentErrorCode.Invalid, 0)]
     [InlineData(KejiAgentErrorCode.InvalidRequest, 1)]
     [InlineData(KejiAgentErrorCode.Unauthenticated, 2)]
     [InlineData(KejiAgentErrorCode.ConversationNotFound, 3)]
-    [InlineData(KejiAgentErrorCode.ProviderNotFound, 4)]
-    [InlineData(KejiAgentErrorCode.ProviderTimeout, 5)]
-    [InlineData(KejiAgentErrorCode.ProviderRejected, 6)]
-    [InlineData(KejiAgentErrorCode.ProviderUnavailable, 7)]
-    [InlineData(KejiAgentErrorCode.ProviderProtocolError, 8)]
-    [InlineData(KejiAgentErrorCode.ToolRejected, 9)]
-    [InlineData(KejiAgentErrorCode.ToolFailed, 10)]
-    [InlineData(KejiAgentErrorCode.LimitExceeded, 11)]
-    [InlineData(KejiAgentErrorCode.SessionBusy, 12)]
-    [InlineData(KejiAgentErrorCode.PersistenceFailed, 13)]
-    [InlineData(KejiAgentErrorCode.AuditFailed, 14)]
-    [InlineData(KejiAgentErrorCode.InternalFailure, 15)]
-    [InlineData(KejiAgentErrorCode.ContextLimit, 16)]
-    [InlineData(KejiAgentErrorCode.ToolCallLimit, 17)]
-    [InlineData(KejiAgentErrorCode.RunTimedOut, 18)]
+    [InlineData(KejiAgentErrorCode.SessionBusy, 4)]
+    [InlineData(KejiAgentErrorCode.ProviderNotFound, 5)]
+    [InlineData(KejiAgentErrorCode.ProviderTimeout, 6)]
+    [InlineData(KejiAgentErrorCode.ProviderRejected, 7)]
+    [InlineData(KejiAgentErrorCode.ProviderUnavailable, 8)]
+    [InlineData(KejiAgentErrorCode.ProviderProtocolError, 9)]
+    [InlineData(KejiAgentErrorCode.ToolRejected, 10)]
+    [InlineData(KejiAgentErrorCode.ToolFailed, 11)]
+    [InlineData(KejiAgentErrorCode.ContextLimit, 12)]
+    [InlineData(KejiAgentErrorCode.ToolCallLimit, 13)]
+    [InlineData(KejiAgentErrorCode.IterationLimit, 14)]
+    [InlineData(KejiAgentErrorCode.RunTimedOut, 15)]
+    [InlineData(KejiAgentErrorCode.PersistenceFailed, 16)]
+    [InlineData(KejiAgentErrorCode.InternalFailure, 17)]
     public void ErrorCodeWireValuesAreStable(KejiAgentErrorCode value, int expected) =>
         Assert.Equal(expected, (int)value);
 
@@ -108,14 +110,16 @@ public sealed class KejiAgentContractTests
     }
 
     [Theory]
-    [InlineData(KejiAgentEventType.RunStarted, "agent_run_started")]
-    [InlineData(KejiAgentEventType.IterationStarted, "agent_iteration_started")]
-    [InlineData(KejiAgentEventType.AssistantDelta, "agent_delta")]
-    [InlineData(KejiAgentEventType.ToolStarted, "agent_tool_started")]
-    [InlineData(KejiAgentEventType.ToolCompleted, "agent_tool_completed")]
-    [InlineData(KejiAgentEventType.Usage, "agent_usage")]
-    [InlineData(KejiAgentEventType.RunCompleted, "agent_done")]
-    [InlineData(KejiAgentEventType.Error, "agent_error")]
+    [InlineData(KejiAgentEventType.RunStarted, "system_notice")]
+    [InlineData(KejiAgentEventType.ThinkingStarted, "thinking")]
+    [InlineData(KejiAgentEventType.ThinkingDelta, "think_token")]
+    [InlineData(KejiAgentEventType.AnsweringStarted, "answering")]
+    [InlineData(KejiAgentEventType.AnswerDelta, "answer")]
+    [InlineData(KejiAgentEventType.ToolStarted, "tool_call")]
+    [InlineData(KejiAgentEventType.ToolCompleted, "tool_result")]
+    [InlineData(KejiAgentEventType.Usage, "usage")]
+    [InlineData(KejiAgentEventType.RunCompleted, "done")]
+    [InlineData(KejiAgentEventType.Error, "error")]
     public async Task SseAdapterEmitsVersionedBoundedFrame(KejiAgentEventType type, string eventName)
     {
         var frame = Assert.Single(await CollectAsync(new KejiAgentSseAdapter().AdaptAsync(OneEvent(type))));
@@ -152,6 +156,7 @@ public sealed class KejiAgentContractTests
     }
 
     [Theory]
+    [InlineData(nameof(KejiAgentRunRequest.RunId), typeof(string))]
     [InlineData(nameof(KejiAgentRunRequest.ConversationId), typeof(string))]
     [InlineData(nameof(KejiAgentRunRequest.ProviderName), typeof(string))]
     [InlineData(nameof(KejiAgentRunRequest.Model), typeof(string))]
@@ -169,6 +174,11 @@ public sealed class KejiAgentContractTests
             Sequence = 1,
             Type = type,
             TimestampUtc = DateTimeOffset.UnixEpoch,
+            ContentDelta = type is KejiAgentEventType.ThinkingDelta or KejiAgentEventType.AnswerDelta ? "delta" : null,
+            ToolCallId = type is KejiAgentEventType.ToolStarted or KejiAgentEventType.ToolCompleted ? "call_1" : null,
+            ToolName = type is KejiAgentEventType.ToolStarted or KejiAgentEventType.ToolCompleted ? "calculator" : null,
+            ToolCallIndex = type is KejiAgentEventType.ToolStarted or KejiAgentEventType.ToolCompleted ? 0 : null,
+            Usage = type == KejiAgentEventType.Usage ? new KejiAgentUsage(1, 1, 0) : null,
         };
         await Task.CompletedTask;
     }

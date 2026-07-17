@@ -4,19 +4,22 @@ namespace Keji.Agent;
 
 public enum KejiAgentEventType
 {
+    Invalid = 0,
     RunStarted = 1,
-    IterationStarted = 2,
-    AssistantDelta = 3,
-    ToolStarted = 4,
-    ToolCompleted = 5,
-    Usage = 6,
-    RunCompleted = 7,
-    Error = 8,
+    ThinkingStarted = 2,
+    ThinkingDelta = 3,
+    AnsweringStarted = 4,
+    AnswerDelta = 5,
+    ToolStarted = 6,
+    ToolCompleted = 7,
+    Usage = 8,
+    Error = 9,
+    RunCompleted = 10,
 }
 
 public enum KejiAgentStopReason
 {
-    None = 0,
+    Invalid = 0,
     Completed = 1,
     Length = 2,
     ContentFiltered = 3,
@@ -26,42 +29,70 @@ public enum KejiAgentStopReason
     Cancelled = 7,
     TimedOut = 8,
     Failed = 9,
+    SessionBusy = 10,
+    EmptyResponse = 11,
 }
 
 public enum KejiAgentErrorCode
 {
-    None = 0,
+    Invalid = 0,
     InvalidRequest = 1,
     Unauthenticated = 2,
     ConversationNotFound = 3,
-    ProviderNotFound = 4,
-    ProviderTimeout = 5,
-    ProviderRejected = 6,
-    ProviderUnavailable = 7,
-    ProviderProtocolError = 8,
-    ToolRejected = 9,
-    ToolFailed = 10,
-    LimitExceeded = 11,
-    SessionBusy = 12,
-    PersistenceFailed = 13,
-    AuditFailed = 14,
-    InternalFailure = 15,
-    ContextLimit = 16,
-    ToolCallLimit = 17,
-    RunTimedOut = 18,
+    SessionBusy = 4,
+    ProviderNotFound = 5,
+    ProviderTimeout = 6,
+    ProviderRejected = 7,
+    ProviderUnavailable = 8,
+    ProviderProtocolError = 9,
+    ToolRejected = 10,
+    ToolFailed = 11,
+    ContextLimit = 12,
+    ToolCallLimit = 13,
+    IterationLimit = 14,
+    RunTimedOut = 15,
+    PersistenceFailed = 16,
+    InternalFailure = 17,
 }
 
-public sealed record KejiAgentUsage(
-    long PromptTokens = 0,
-    long CompletionTokens = 0,
-    long CachedTokens = 0)
+public sealed record KejiAgentUsage
 {
+    public const long MaxTokenCount = 1_000_000_000;
+    public long PromptTokens { get; }
+    public long CompletionTokens { get; }
+    public long CachedTokens { get; }
     public long TotalTokens => checked(PromptTokens + CompletionTokens);
+
+    public KejiAgentUsage(long promptTokens = 0, long completionTokens = 0, long cachedTokens = 0)
+    {
+        if (promptTokens is < 0 or > MaxTokenCount || completionTokens is < 0 or > MaxTokenCount ||
+            cachedTokens is < 0 or > MaxTokenCount || cachedTokens > promptTokens)
+            throw new ArgumentOutOfRangeException(nameof(promptTokens), "Agent usage is invalid.");
+        _ = checked(promptTokens + completionTokens);
+        PromptTokens = promptTokens;
+        CompletionTokens = completionTokens;
+        CachedTokens = cachedTokens;
+    }
 
     public KejiAgentUsage Add(long promptTokens, long completionTokens, long cachedTokens) =>
         new(checked(PromptTokens + promptTokens), checked(CompletionTokens + completionTokens),
             checked(CachedTokens + cachedTokens));
 }
+
+public enum KejiAgentTranscriptRole
+{
+    Invalid = 0,
+    System = 1,
+    User = 2,
+    Assistant = 3,
+    Tool = 4,
+}
+
+public sealed record KejiAgentTranscriptMessage(
+    KejiAgentTranscriptRole Role,
+    string? Content = null,
+    string? ToolCallId = null,
+    string? ToolName = null);
 
 public sealed record KejiAgentTranscript(
     string RunId,
@@ -70,9 +101,15 @@ public sealed record KejiAgentTranscript(
     DateTimeOffset CompletedAtUtc,
     KejiAgentStopReason StopReason,
     int Iterations,
-    int ToolCalls,
-    string AssistantContent,
-    KejiAgentUsage Usage);
+    int ToolCallCount,
+    ImmutableArray<string> ToolsUsed,
+    string FinalContent,
+    KejiAgentUsage Usage,
+    ImmutableArray<KejiAgentTranscriptMessage> Messages)
+{
+    public int ToolCalls => ToolCallCount;
+    public string AssistantContent => FinalContent;
+}
 
 public sealed record KejiAgentEvent
 {
@@ -81,11 +118,15 @@ public sealed record KejiAgentEvent
     public required KejiAgentEventType Type { get; init; }
     public required DateTimeOffset TimestampUtc { get; init; }
     public int Iteration { get; init; }
+    public int ChoiceIndex { get; init; }
+    public int? ToolCallIndex { get; init; }
+    public long? ToolDurationMs { get; init; }
     public string? ContentDelta { get; init; }
     public string? ToolCallId { get; init; }
     public string? ToolName { get; init; }
     public bool? ToolSucceeded { get; init; }
     public string? ToolErrorCode { get; init; }
+    public string? SafeErrorMessage { get; init; }
     public KejiAgentUsage? Usage { get; init; }
     public KejiAgentStopReason StopReason { get; init; }
     public KejiAgentErrorCode ErrorCode { get; init; }
@@ -94,6 +135,7 @@ public sealed record KejiAgentEvent
 
 public sealed class KejiAgentRunRequest
 {
+    public string RunId { get; init; } = string.Empty;
     public string ConversationId { get; init; } = string.Empty;
     public string ProviderName { get; init; } = string.Empty;
     public string Model { get; init; } = string.Empty;

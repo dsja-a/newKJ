@@ -22,6 +22,9 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Keji.Api\Keji.Api.csproj" />
+    <ProjectReference Include="..\..\src\Keji.Agent\Keji.Agent.csproj" />
+    <ProjectReference Include="..\..\src\Keji.Providers\Keji.Providers.csproj" />
+    <ProjectReference Include="..\..\src\Keji.Tools\Keji.Tools.csproj" />
   </ItemGroup>
 
 </Project>

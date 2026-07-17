@@ -24,7 +24,7 @@ public sealed class AgentLoop : IAgentLoop, IKejiAgentLoop
     private const int MaxModelLength = 256;
     private const int MaxUserMessageBytes = 64 * 1024;
     private const int MaxAssistantBytes = 256 * 1024;
-    private const int MaxToolArgumentsBytes = 64 * 1024;
+    private const int MaxReasoningBytes = 4 * 1024 * 1024;
     private const int MaxToolArgumentProperties = 64;
 
     private readonly ICurrentUserAccessor _userAccessor;
@@ -34,8 +34,10 @@ public sealed class AgentLoop : IAgentLoop, IKejiAgentLoop
     private readonly IKejiToolRegistry _tools;
     private readonly IToolExecutionPipeline _toolPipeline;
     private readonly AgentLoopOptions _options;
-    private readonly IKejiAuditService? _audit;
+    private readonly IKejiAuditService _audit;
     private readonly IKejiAgentSessionGate _sessionGate;
+    private readonly KejiAgentContextBuilder _contextBuilder;
+    private readonly TimeProvider _timeProvider;
 
     public AgentLoop(
         ICurrentUserAccessor userAccessor,
@@ -45,8 +47,10 @@ public sealed class AgentLoop : IAgentLoop, IKejiAgentLoop
         IKejiToolRegistry tools,
         IToolExecutionPipeline toolPipeline,
         AgentLoopOptions options,
-        IKejiAuditService? audit = null,
-        IKejiAgentSessionGate? sessionGate = null)
+        IKejiAuditService audit,
+        IKejiAgentSessionGate sessionGate,
+        KejiAgentContextBuilder? contextBuilder = null,
+        TimeProvider? timeProvider = null)
     {
         _userAccessor = userAccessor ?? throw new ArgumentNullException(nameof(userAccessor));
         _conversations = conversations ?? throw new ArgumentNullException(nameof(conversations));
@@ -55,104 +59,95 @@ public sealed class AgentLoop : IAgentLoop, IKejiAgentLoop
         _tools = tools ?? throw new ArgumentNullException(nameof(tools));
         _toolPipeline = toolPipeline ?? throw new ArgumentNullException(nameof(toolPipeline));
         _options = options ?? throw new ArgumentNullException(nameof(options));
-        _audit = audit;
-        _sessionGate = sessionGate ?? new KejiAgentSessionGate();
+        _audit = audit ?? throw new ArgumentNullException(nameof(audit));
+        _sessionGate = sessionGate ?? throw new ArgumentNullException(nameof(sessionGate));
+        _contextBuilder = contextBuilder ?? new KejiAgentContextBuilder(options);
+        _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
-    public async Task<AgentRunResult> RunAsync(
-        AgentRunRequest request,
-        CancellationToken cancellationToken = default)
+    public async Task<AgentRunResult> RunAsync(AgentRunRequest request, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
-        cancellationToken.ThrowIfCancellationRequested();
-
-        KejiAgentEvent? terminal = null;
-        var iterations = 0;
-        var toolCalls = 0;
+        KejiAgentEvent? error = null;
+        KejiAgentEvent? completed = null;
         await foreach (var item in RunStreamAsync(ToKejiRequest(request), cancellationToken).ConfigureAwait(false))
         {
-            iterations = Math.Max(iterations, item.Iteration);
-            if (item.Type == KejiAgentEventType.ToolCompleted)
-                toolCalls++;
-            if (item.Type is KejiAgentEventType.RunCompleted or KejiAgentEventType.Error)
-                terminal = item;
+            if (item.Type == KejiAgentEventType.Error) error = item;
+            if (item.Type == KejiAgentEventType.RunCompleted) completed = item;
         }
-        if (terminal?.Type == KejiAgentEventType.RunCompleted && terminal.Transcript is { } transcript)
-            return AgentRunResult.Completed(transcript.AssistantContent, transcript.Iterations, transcript.ToolCalls);
-        return AgentRunResult.Failed(MapLegacyStatus(terminal?.ErrorCode ?? KejiAgentErrorCode.InternalFailure), iterations, toolCalls);
+        if (error is null && completed?.Transcript is { } transcript)
+            return AgentRunResult.Completed(transcript.FinalContent, transcript.Iterations, transcript.ToolCallCount);
+        var summary = completed?.Transcript;
+        return AgentRunResult.Failed(MapLegacyStatus(error?.ErrorCode ?? KejiAgentErrorCode.InternalFailure),
+            summary?.Iterations ?? 0, summary?.ToolCallCount ?? 0);
     }
 
-    public IAsyncEnumerable<KejiAgentEvent> RunStreamAsync(
-        KejiAgentRunRequest request,
-        CancellationToken cancellationToken = default)
+    public IAsyncEnumerable<KejiAgentEvent> RunStreamAsync(KejiAgentRunRequest request, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
         cancellationToken.ThrowIfCancellationRequested();
         var channel = Channel.CreateBounded<KejiAgentEvent>(new BoundedChannelOptions(_options.EventBufferCapacity)
         {
-            FullMode = BoundedChannelFullMode.Wait,
-            SingleReader = true,
-            SingleWriter = true,
+            FullMode = BoundedChannelFullMode.Wait, SingleReader = true, SingleWriter = true,
         });
-        var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        linked.CancelAfter(_options.RunTimeout);
-        var producer = ProduceAsync(request, channel.Writer, cancellationToken, linked.Token);
-        return ReadEventsAsync(channel.Reader, producer, linked, cancellationToken);
+        var runCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var stoppedCts = new CancellationTokenSource();
+        var terminalCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, stoppedCts.Token);
+        var timer = _timeProvider.CreateTimer(static state => ((CancellationTokenSource)state!).Cancel(), runCts,
+            _options.RunTimeout, Timeout.InfiniteTimeSpan);
+        var producer = ProduceAsync(request, channel.Writer, cancellationToken, runCts.Token, terminalCts.Token);
+        return ReadEventsAsync(channel.Reader, producer, runCts, stoppedCts, terminalCts, timer, cancellationToken);
     }
 
-    private async Task ProduceAsync(
-        KejiAgentRunRequest request,
-        ChannelWriter<KejiAgentEvent> writer,
-        CancellationToken callerToken,
-        CancellationToken runToken)
+    private async Task ProduceAsync(KejiAgentRunRequest request, ChannelWriter<KejiAgentEvent> writer,
+        CancellationToken callerToken, CancellationToken runToken, CancellationToken terminalToken)
     {
-        var runId = Guid.NewGuid().ToString("N");
-        var started = DateTimeOffset.UtcNow;
+        var runId = request.RunId;
+        var started = _timeProvider.GetUtcNow();
         var state = new RunState();
         long sequence = 0;
         IDisposable? lease = null;
-        async ValueTask EmitAsync(KejiAgentEvent item) =>
+        string userId = string.Empty;
+
+        async ValueTask EmitAsync(KejiAgentEvent item, CancellationToken token) =>
             await writer.WriteAsync(item with
             {
-                RunId = runId,
-                Sequence = ++sequence,
-                TimestampUtc = DateTimeOffset.UtcNow,
-            }, runToken).ConfigureAwait(false);
+                RunId = runId, Sequence = checked(++sequence), TimestampUtc = _timeProvider.GetUtcNow(),
+            }, token).ConfigureAwait(false);
 
         try
         {
-            if (!TryValidateRequest(request))
-                throw new AgentFailureException(KejiAgentErrorCode.InvalidRequest);
-
+            if (!TryValidateRequest(request)) throw new AgentFailureException(KejiAgentErrorCode.InvalidRequest);
             var user = _userAccessor.CurrentUser;
-            if (!IsValidUser(user))
-                throw new AgentFailureException(KejiAgentErrorCode.Unauthenticated);
-            lease = _sessionGate.TryEnter(user!.Id, request.ConversationId);
-            if (lease is null)
-                throw new AgentFailureException(KejiAgentErrorCode.SessionBusy);
-            await EmitAsync(new KejiAgentEvent { RunId = runId, Sequence = 0, Type = KejiAgentEventType.RunStarted, TimestampUtc = started });
-            await RunCoreStreamAsync(request, user.Id, runId, started, state, EmitAsync, runToken).ConfigureAwait(false);
+            if (!IsValidUser(user)) throw new AgentFailureException(KejiAgentErrorCode.Unauthenticated);
+            userId = user!.Id;
+            lease = _sessionGate.TryEnter(userId, request.ConversationId);
+            if (lease is null) throw new AgentFailureException(KejiAgentErrorCode.SessionBusy, KejiAgentStopReason.SessionBusy);
+            await AuditAsync("agent_run_started", request, userId, state, null, null, runToken).ConfigureAwait(false);
+            await EmitAsync(Event(KejiAgentEventType.RunStarted), runToken).ConfigureAwait(false);
+            await RunCoreStreamAsync(request, userId, started, state, item => EmitAsync(item, runToken), runToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (callerToken.IsCancellationRequested)
         {
+            await AuditAsync("agent_run_cancelled", request, userId, state, null, null, CancellationToken.None).ConfigureAwait(false);
             writer.TryComplete(new OperationCanceledException(callerToken));
             return;
         }
         catch (OperationCanceledException)
         {
-            await TryEmitTerminalErrorAsync(KejiAgentErrorCode.RunTimedOut, KejiAgentStopReason.TimedOut).ConfigureAwait(false);
+            await EmitFailureTerminalAsync(KejiAgentErrorCode.RunTimedOut, KejiAgentStopReason.TimedOut).ConfigureAwait(false);
         }
         catch (AgentFailureException exception)
         {
-            await TryEmitTerminalErrorAsync(exception.Code, exception.StopReason ?? StopReasonFor(exception.Code)).ConfigureAwait(false);
+            await EmitFailureTerminalAsync(exception.Code, exception.StopReason ?? StopReasonFor(exception.Code)).ConfigureAwait(false);
         }
         catch (Persistence.KejiPersistenceException)
         {
-            await TryEmitTerminalErrorAsync(KejiAgentErrorCode.PersistenceFailed, KejiAgentStopReason.Failed).ConfigureAwait(false);
+            await EmitFailureTerminalAsync(KejiAgentErrorCode.PersistenceFailed, KejiAgentStopReason.Failed).ConfigureAwait(false);
         }
         catch (Exception)
         {
-            await TryEmitTerminalErrorAsync(KejiAgentErrorCode.InternalFailure, KejiAgentStopReason.Failed).ConfigureAwait(false);
+            await EmitFailureTerminalAsync(KejiAgentErrorCode.InternalFailure, KejiAgentStopReason.Failed).ConfigureAwait(false);
         }
         finally
         {
@@ -160,150 +155,158 @@ public sealed class AgentLoop : IAgentLoop, IKejiAgentLoop
             writer.TryComplete();
         }
 
-        async Task TryEmitTerminalErrorAsync(KejiAgentErrorCode code, KejiAgentStopReason reason)
+        KejiAgentEvent Event(KejiAgentEventType type) => new()
+        { RunId = runId, Sequence = 0, Type = type, TimestampUtc = default };
+
+        async Task EmitFailureTerminalAsync(KejiAgentErrorCode code, KejiAgentStopReason reason)
         {
-            try
+            if (state.HasUsage && !state.UsageEmitted)
             {
-                var completedAt = DateTimeOffset.UtcNow;
-                var transcript = new KejiAgentTranscript(runId, request.ConversationId, started, completedAt,
-                    reason, state.Iterations, state.ToolCalls, state.Content.ToString(), state.Usage);
-                writer.TryWrite(new KejiAgentEvent
-                {
-                    RunId = runId,
-                    Sequence = ++sequence,
-                    Type = KejiAgentEventType.Error,
-                    TimestampUtc = completedAt,
-                    Iteration = state.Iterations,
-                    ErrorCode = code,
-                    StopReason = reason,
-                    Usage = state.Usage,
-                    Transcript = transcript,
-                });
-                await WriteAuditAsync(request.ConversationId, runId, false, code, CancellationToken.None).ConfigureAwait(false);
+                await EmitAsync(Event(KejiAgentEventType.Usage) with { Usage = state.Usage, Iteration = state.Iterations }, terminalToken).ConfigureAwait(false);
+                state.UsageEmitted = true;
             }
-            catch (ChannelClosedException) { }
+            var completedAt = _timeProvider.GetUtcNow();
+            var transcript = BuildTranscript(request, started, completedAt, reason, state);
+            await EmitAsync(Event(KejiAgentEventType.Error) with
+            {
+                ErrorCode = code, StopReason = reason, Iteration = state.Iterations,
+                SafeErrorMessage = SafeError(code),
+            }, terminalToken).ConfigureAwait(false);
+            await AuditAsync("agent_run_failed", request, userId, state, code, null, terminalToken).ConfigureAwait(false);
+            await EmitAsync(Event(KejiAgentEventType.RunCompleted) with
+            {
+                StopReason = reason, Iteration = state.Iterations, Usage = state.Usage, Transcript = transcript,
+            }, terminalToken).ConfigureAwait(false);
+            await AuditAsync("agent_run_completed", request, userId, state, code, null, terminalToken).ConfigureAwait(false);
         }
     }
 
-    private async Task RunCoreStreamAsync(
-        KejiAgentRunRequest request,
-        string userId,
-        string runId,
-        DateTimeOffset started,
-        RunState state,
-        Func<KejiAgentEvent, ValueTask> emit,
-        CancellationToken cancellationToken)
+    private async Task RunCoreStreamAsync(KejiAgentRunRequest request, string userId, DateTimeOffset started,
+        RunState state, Func<KejiAgentEvent, ValueTask> emit, CancellationToken cancellationToken)
     {
         if (!await IsStillOwnedAsync(request.ConversationId, userId, cancellationToken).ConfigureAwait(false))
             throw new AgentFailureException(KejiAgentErrorCode.ConversationNotFound);
-
-        var provider = _providers.GetProvider(request.ProviderName);
-        if (provider is null)
+        var provider = _providers.GetProvider(request.ProviderName) ??
             throw new AgentFailureException(KejiAgentErrorCode.ProviderNotFound);
-
-        var history = await _messages.ListOwnedMessagesAsync(
-            request.ConversationId,
-            userId,
-            _options.MaxContextMessages + 1,
-            cancellationToken).ConfigureAwait(false);
-        if (!TryBuildContext(history, request.UserMessage, out var context))
-            throw new AgentFailureException(KejiAgentErrorCode.ContextLimit);
-
+        var history = await _messages.ListOwnedMessagesAsync(request.ConversationId, userId,
+            _options.MaxContextMessages + 1, cancellationToken).ConfigureAwait(false);
+        if (!_contextBuilder.TryBuild(history, request.UserMessage, out var context))
+            throw new AgentFailureException(KejiAgentErrorCode.ContextLimit, KejiAgentStopReason.ContextLimit);
+        state.Messages.AddRange(history.Select(static record => new KejiAgentTranscriptMessage(
+            record.Role == "user" ? KejiAgentTranscriptRole.User : KejiAgentTranscriptRole.Assistant, record.Content)));
+        state.Messages.Add(new KejiAgentTranscriptMessage(KejiAgentTranscriptRole.User, request.UserMessage));
         if (!await IsStillOwnedAsync(request.ConversationId, userId, cancellationToken).ConfigureAwait(false))
             throw new AgentFailureException(KejiAgentErrorCode.ConversationNotFound);
-        await _messages.AddOwnedAsync(
-            request.ConversationId,
-            userId,
-            "user",
-            request.UserMessage,
-            cancellationToken).ConfigureAwait(false);
+        await _messages.AddOwnedAsync(request.ConversationId, userId, "user", request.UserMessage, cancellationToken).ConfigureAwait(false);
 
         var advertisedTools = BuildAdvertisedTools();
-        var toolCalls = 0;
-        var totalToolResultBytes = 0;
-        var iterations = 0;
         var recoveryAttempts = 0;
-        var finalContent = new StringBuilder();
-        var usage = new KejiAgentUsage();
+        var failedToolContinuations = 0;
+        var totalToolArgumentBytes = 0;
+        var totalToolResultBytes = 0;
 
-        while (++iterations <= _options.MaxIterations)
+        for (var iteration = 1; iteration <= _options.MaxIterations; iteration++)
         {
-            state.Iterations = iterations;
+            state.Iterations = iteration;
             cancellationToken.ThrowIfCancellationRequested();
             if (!await IsStillOwnedAsync(request.ConversationId, userId, cancellationToken).ConfigureAwait(false))
                 throw new AgentFailureException(KejiAgentErrorCode.ConversationNotFound);
-            await emit(new KejiAgentEvent { RunId = runId, Sequence = 0, Type = KejiAgentEventType.IterationStarted, TimestampUtc = default, Iteration = iterations });
             var iterationContent = new StringBuilder();
-            var streamedCalls = new SortedDictionary<int, StreamedToolCall>();
+            var iterationContentBytes = 0;
+            var calls = new SortedDictionary<int, StreamedToolCall>();
+            var ids = new HashSet<string>(StringComparer.Ordinal);
             var finishReason = KejiFinishReason.Invalid;
-            var hasToolCalls = false;
+            var declaredTools = false;
+            var sawUsage = false;
             var sawDone = false;
+            var eventCount = 0;
 
-            var providerRequest = new ChatCompletionRequest
-            {
-                Model = request.Model,
-                Messages = context.ToImmutableArray(),
-                Tools = advertisedTools,
-                Temperature = request.Temperature,
-                MaxTokens = request.MaxTokens,
-            };
             try
             {
+                var providerRequest = new ChatCompletionRequest
+                {
+                    Model = request.Model, Messages = context.ToImmutableArray(), Tools = advertisedTools,
+                    Temperature = request.Temperature, MaxTokens = request.MaxTokens,
+                };
                 await foreach (var item in provider.StreamAsync(providerRequest, cancellationToken)
                                    .WithCancellation(cancellationToken).ConfigureAwait(false))
                 {
+                    if (checked(++eventCount) > _options.MaxProviderEventsPerIteration || sawDone || item.ChoiceIndex != 0)
+                        throw ProtocolFailure();
+                    if (sawUsage && item.Type is not KejiProviderStreamEventKind.Done)
+                        throw ProtocolFailure();
                     switch (item.Type)
                     {
                         case KejiProviderStreamEventKind.ReasoningToken:
+                            if (string.IsNullOrEmpty(item.Content)) throw ProtocolFailure();
+                            var reasoningBytes = StrictByteCount(item.Content);
+                            state.ReasoningBytes = checked(state.ReasoningBytes + reasoningBytes);
+                            if (state.ReasoningBytes > MaxReasoningBytes) throw ProtocolFailure();
+                            if (!state.ThinkingStarted)
+                            {
+                                state.ThinkingStarted = true;
+                                await emit(NewEvent(KejiAgentEventType.ThinkingStarted, iteration)).ConfigureAwait(false);
+                            }
+                            await emit(NewEvent(KejiAgentEventType.ThinkingDelta, iteration) with { ContentDelta = item.Content }).ConfigureAwait(false);
                             break;
                         case KejiProviderStreamEventKind.Token:
-                            if (item.ChoiceIndex != 0 || string.IsNullOrEmpty(item.Content) || item.Content.Contains('\0') ||
-                                Encoding.UTF8.GetByteCount(iterationContent.ToString()) + Encoding.UTF8.GetByteCount(item.Content) > MaxAssistantBytes)
-                                throw new AgentFailureException(KejiAgentErrorCode.ProviderProtocolError);
+                            if (string.IsNullOrEmpty(item.Content)) throw ProtocolFailure();
+                            var answerBytes = StrictByteCount(item.Content);
+                            iterationContentBytes = checked(iterationContentBytes + answerBytes);
+                            state.AnswerBytes = checked(state.AnswerBytes + answerBytes);
+                            if (iterationContentBytes > MaxAssistantBytes || state.AnswerBytes > MaxAssistantBytes) throw ProtocolFailure();
+                            if (!state.AnsweringStarted)
+                            {
+                                state.AnsweringStarted = true;
+                                await emit(NewEvent(KejiAgentEventType.AnsweringStarted, iteration)).ConfigureAwait(false);
+                            }
                             iterationContent.Append(item.Content);
-                            finalContent.Append(item.Content);
                             state.Content.Append(item.Content);
-                            await emit(new KejiAgentEvent { RunId = runId, Sequence = 0, Type = KejiAgentEventType.AssistantDelta, TimestampUtc = default, Iteration = iterations, ContentDelta = item.Content });
+                            await emit(NewEvent(KejiAgentEventType.AnswerDelta, iteration) with { ContentDelta = item.Content }).ConfigureAwait(false);
                             break;
                         case KejiProviderStreamEventKind.ToolCallBegin:
-                            if (item.ChoiceIndex != 0 || streamedCalls.ContainsKey(item.ToolCallIndex) ||
-                                !IsSafeIdentifier(item.ToolCallId ?? string.Empty, 256) ||
-                                !IsSafeIdentifier(item.ToolName ?? string.Empty, 64))
-                                throw new AgentFailureException(KejiAgentErrorCode.ProviderProtocolError);
-                            streamedCalls.Add(item.ToolCallIndex, new StreamedToolCall(item.ToolCallId!, item.ToolName!));
-                            await emit(new KejiAgentEvent { RunId = runId, Sequence = 0, Type = KejiAgentEventType.ToolStarted, TimestampUtc = default, Iteration = iterations, ToolCallId = item.ToolCallId, ToolName = item.ToolName });
+                            if (item.ToolCallIndex is < 0 or >= 1024 || calls.ContainsKey(item.ToolCallIndex) ||
+                                !IsSafeIdentifier(item.ToolCallId ?? string.Empty, 256) || !ids.Add(item.ToolCallId!) ||
+                                !IsSafeIdentifier(item.ToolName ?? string.Empty, 64)) throw ProtocolFailure();
+                            calls.Add(item.ToolCallIndex, new StreamedToolCall(item.ToolCallId!, item.ToolName!));
                             break;
                         case KejiProviderStreamEventKind.ToolCallDelta:
-                            if (!streamedCalls.TryGetValue(item.ToolCallIndex, out var streamed) || item.ChoiceIndex != 0 || item.ToolArguments is null)
-                                throw new AgentFailureException(KejiAgentErrorCode.ProviderProtocolError);
-                            streamed.Append(item.ToolArguments, MaxToolArgumentsBytes);
+                            if (!calls.TryGetValue(item.ToolCallIndex, out var call) || call.Ended || item.ToolArguments is null ||
+                                item.ToolCallId is not null && !string.Equals(item.ToolCallId, call.Id, StringComparison.Ordinal)) throw ProtocolFailure();
+                            var added = call.Append(item.ToolArguments, _options.MaxToolArgumentBytesPerCall);
+                            totalToolArgumentBytes = checked(totalToolArgumentBytes + added);
+                            if (totalToolArgumentBytes > _options.MaxToolArgumentBytesTotal) throw ProtocolFailure();
                             break;
                         case KejiProviderStreamEventKind.ToolCallEnd:
-                            if (!streamedCalls.TryGetValue(item.ToolCallIndex, out var ended) || ended.Ended ||
-                                item.ToolCallId is not null && !string.Equals(item.ToolCallId, ended.Id, StringComparison.Ordinal))
-                                throw new AgentFailureException(KejiAgentErrorCode.ProviderProtocolError);
+                            if (!calls.TryGetValue(item.ToolCallIndex, out var ended) || ended.Ended ||
+                                item.ToolCallId is not null && !string.Equals(item.ToolCallId, ended.Id, StringComparison.Ordinal)) throw ProtocolFailure();
                             ended.Ended = true;
                             break;
                         case KejiProviderStreamEventKind.ChoiceFinished:
-                            if (item.ChoiceIndex != 0 || finishReason != KejiFinishReason.Invalid)
-                                throw new AgentFailureException(KejiAgentErrorCode.ProviderProtocolError);
+                            if (finishReason != KejiFinishReason.Invalid || calls.Values.Any(static call => !call.Ended)) throw ProtocolFailure();
                             finishReason = item.FinishReason;
-                            hasToolCalls = item.HasToolCalls;
+                            declaredTools = item.HasToolCalls;
                             break;
                         case KejiProviderStreamEventKind.Usage:
-                            if (item.Usage is null || item.Usage.PromptTokens < 0 || item.Usage.CompletionTokens < 0 || item.Usage.CachedTokens < 0)
-                                throw new AgentFailureException(KejiAgentErrorCode.ProviderProtocolError);
-                            usage = usage.Add(item.Usage.PromptTokens, item.Usage.CompletionTokens, item.Usage.CachedTokens);
-                            state.Usage = usage;
-                            await emit(new KejiAgentEvent { RunId = runId, Sequence = 0, Type = KejiAgentEventType.Usage, TimestampUtc = default, Iteration = iterations, Usage = usage });
+                            if (sawUsage || finishReason == KejiFinishReason.Invalid || item.Usage is null) throw ProtocolFailure();
+                            try
+                            {
+                                var current = new KejiAgentUsage(item.Usage.PromptTokens, item.Usage.CompletionTokens, item.Usage.CachedTokens);
+                                state.Usage = state.Usage.Add(current.PromptTokens, current.CompletionTokens, current.CachedTokens);
+                                state.HasUsage = true;
+                            }
+                            catch (Exception exception) when (exception is ArgumentOutOfRangeException or OverflowException)
+                            { throw ProtocolFailure(); }
+                            sawUsage = true;
                             break;
                         case KejiProviderStreamEventKind.Error:
                             throw new AgentFailureException(MapProviderError(item.ErrorCode));
                         case KejiProviderStreamEventKind.Done:
+                            if (finishReason == KejiFinishReason.Invalid) throw ProtocolFailure();
                             sawDone = true;
                             break;
                         default:
-                            throw new AgentFailureException(KejiAgentErrorCode.ProviderProtocolError);
+                            throw ProtocolFailure();
                     }
                 }
             }
@@ -311,136 +314,167 @@ public sealed class AgentLoop : IAgentLoop, IKejiAgentLoop
             catch (OperationCanceledException) { throw; }
             catch (Exception) { throw new AgentFailureException(KejiAgentErrorCode.ProviderUnavailable); }
 
-            if (!sawDone || finishReason == KejiFinishReason.Invalid)
-                throw new AgentFailureException(KejiAgentErrorCode.ProviderProtocolError);
-
-            var responseToolCalls = BuildToolCalls(streamedCalls);
-            if (!hasToolCalls)
+            if (!sawDone || finishReason == KejiFinishReason.Invalid || declaredTools != (calls.Count > 0) ||
+                calls.Count > _options.MaxToolCallsPerIteration) throw ProtocolFailure();
+            var responseToolCalls = BuildToolCalls(calls);
+            if (calls.Count > 0)
             {
-                if (!responseToolCalls.IsDefaultOrEmpty)
-                    throw new AgentFailureException(KejiAgentErrorCode.ProviderProtocolError);
-                if ((finishReason == KejiFinishReason.Length || string.IsNullOrWhiteSpace(iterationContent.ToString())) &&
-                    recoveryAttempts++ < _options.MaxRecoveryAttempts)
+                if (finishReason != KejiFinishReason.ToolCalls || state.ToolCalls + calls.Count > _options.MaxToolCalls)
+                    throw new AgentFailureException(KejiAgentErrorCode.ToolCallLimit, KejiAgentStopReason.ToolCallLimit);
+                if (!TryValidateToolCalls(responseToolCalls))
                 {
-                    if (iterationContent.Length > 0)
-                        context.Add(new ChatMessage { Role = KejiChatRole.Assistant, Content = iterationContent.ToString() });
-                    context.Add(new ChatMessage { Role = KejiChatRole.User, Content = "Continue the answer without repeating prior content." });
-                    if (!TryEnforceContextBounds(context))
-                        throw new AgentFailureException(KejiAgentErrorCode.ContextLimit);
-                    continue;
-                }
-                if (finishReason == KejiFinishReason.Length)
-                    throw new AgentFailureException(KejiAgentErrorCode.LimitExceeded, KejiAgentStopReason.Length);
-                if (finishReason == KejiFinishReason.ContentFilter)
-                    throw new AgentFailureException(KejiAgentErrorCode.ProviderRejected);
-                if (!TryValidateAssistantContent(finalContent.ToString(), out var content))
-                    throw new AgentFailureException(KejiAgentErrorCode.ProviderProtocolError);
-                if (!await IsStillOwnedAsync(request.ConversationId, userId, cancellationToken).ConfigureAwait(false))
-                    throw new AgentFailureException(KejiAgentErrorCode.ConversationNotFound);
-                await _messages.AddOwnedAsync(request.ConversationId, userId, "assistant", content, cancellationToken).ConfigureAwait(false);
-                var completedAt = DateTimeOffset.UtcNow;
-                var transcript = new KejiAgentTranscript(runId, request.ConversationId, started, completedAt,
-                    KejiAgentStopReason.Completed, iterations, toolCalls, content, usage);
-                await WriteAuditAsync(request.ConversationId, runId, true, KejiAgentErrorCode.None, cancellationToken).ConfigureAwait(false);
-                await emit(new KejiAgentEvent { RunId = runId, Sequence = 0, Type = KejiAgentEventType.RunCompleted, TimestampUtc = completedAt, Iteration = iterations, StopReason = KejiAgentStopReason.Completed, Usage = usage, Transcript = transcript });
-                return;
-            }
-
-            if (finishReason is not (KejiFinishReason.ToolCalls or KejiFinishReason.Stop) ||
-                responseToolCalls.IsDefaultOrEmpty || responseToolCalls.Length > _options.MaxToolCalls - toolCalls)
-                throw new AgentFailureException(KejiAgentErrorCode.ToolCallLimit);
-            if (!TryValidateToolCalls(responseToolCalls))
-                throw new AgentFailureException(KejiAgentErrorCode.ToolRejected);
-
-            context.Add(new ChatMessage
-            {
-                Role = KejiChatRole.Assistant,
-                Content = iterationContent.Length == 0 ? null : iterationContent.ToString(),
-                ToolCalls = responseToolCalls,
-            });
-
-            foreach (var toolCall in responseToolCalls)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                if (!await IsStillOwnedAsync(request.ConversationId, userId, cancellationToken).ConfigureAwait(false))
-                    throw new AgentFailureException(KejiAgentErrorCode.ConversationNotFound);
-                if (!TryConvertArguments(toolCall.FunctionArguments, out var inputs))
+                    var rejected = responseToolCalls[0];
+                    await emit(NewEvent(KejiAgentEventType.ToolCompleted, iteration) with
+                    { ToolCallId = rejected.Id, ToolName = rejected.FunctionName, ToolCallIndex = calls.Keys.First(), ToolSucceeded = false, ToolErrorCode = "TOOL_REJECTED" }).ConfigureAwait(false);
                     throw new AgentFailureException(KejiAgentErrorCode.ToolRejected);
-
-                ToolExecutionResult result;
-                try { result = await _toolPipeline.ExecuteAsync(toolCall.FunctionName, inputs, cancellationToken).ConfigureAwait(false); }
-                catch (OperationCanceledException) { throw; }
-                catch (Exception) { throw new AgentFailureException(KejiAgentErrorCode.ToolFailed); }
-                toolCalls++;
-                state.ToolCalls = toolCalls;
-
-                if (!TryFormatToolResult(result, out var toolContent, out var resultBytes) ||
-                    resultBytes > _options.MaxTotalToolResultBytes - totalToolResultBytes)
-                    throw new AgentFailureException(KejiAgentErrorCode.LimitExceeded);
-                totalToolResultBytes += resultBytes;
-                context.Add(new ChatMessage
+                }
+                context.Add(new ChatMessage { Role = KejiChatRole.Assistant,
+                    Content = iterationContent.Length == 0 ? null : iterationContent.ToString(), ToolCalls = responseToolCalls });
+                var indexes = calls.Keys.ToArray();
+                for (var i = 0; i < responseToolCalls.Length; i++)
                 {
-                    Role = KejiChatRole.Tool,
-                    ToolCallId = toolCall.Id,
-                    Name = toolCall.FunctionName,
-                    Content = toolContent,
-                });
-                await emit(new KejiAgentEvent { RunId = runId, Sequence = 0, Type = KejiAgentEventType.ToolCompleted, TimestampUtc = default, Iteration = iterations, ToolCallId = toolCall.Id, ToolName = toolCall.FunctionName, ToolSucceeded = result.Success, ToolErrorCode = result.Success ? null : SafeToolErrorCode(result.ErrorCode) });
+                    var toolCall = responseToolCalls[i];
+                    var index = indexes[i];
+                    if (!TryConvertArguments(toolCall.FunctionArguments, out var inputs))
+                        throw new AgentFailureException(KejiAgentErrorCode.ToolRejected);
+                    await emit(NewEvent(KejiAgentEventType.ToolStarted, iteration) with
+                    { ToolCallId = toolCall.Id, ToolName = toolCall.FunctionName, ToolCallIndex = index }).ConfigureAwait(false);
+                    await AuditAsync("agent_tool_started", request, userId, state, null, (toolCall.FunctionName, index, null, null), cancellationToken).ConfigureAwait(false);
+                    if (!await IsStillOwnedAsync(request.ConversationId, userId, cancellationToken).ConfigureAwait(false))
+                        throw new AgentFailureException(KejiAgentErrorCode.ConversationNotFound);
+                    var toolStarted = _timeProvider.GetTimestamp();
+                    ToolExecutionResult result;
+                    try { result = await _toolPipeline.ExecuteAsync(toolCall.FunctionName, inputs, cancellationToken).ConfigureAwait(false); }
+                    catch (OperationCanceledException) { throw; }
+                    catch (Exception) { result = ToolExecutionResult.Failed("Tool execution failed.", "TOOL_FAILED", TimeSpan.Zero); }
+                    var durationMs = Math.Max(0, (long)_timeProvider.GetElapsedTime(toolStarted).TotalMilliseconds);
+                    state.ToolCalls++;
+                    state.ToolsUsed.Add(toolCall.FunctionName);
+                    var safeCode = result.Success ? null : SafeToolErrorCode(result.ErrorCode);
+                    await emit(NewEvent(KejiAgentEventType.ToolCompleted, iteration) with
+                    { ToolCallId = toolCall.Id, ToolName = toolCall.FunctionName, ToolCallIndex = index,
+                        ToolSucceeded = result.Success, ToolErrorCode = safeCode, ToolDurationMs = durationMs }).ConfigureAwait(false);
+                    await AuditAsync("agent_tool_completed", request, userId, state, result.Success ? null : KejiAgentErrorCode.ToolFailed,
+                        (toolCall.FunctionName, index, result.Success, durationMs), cancellationToken).ConfigureAwait(false);
+                    if (!TryFormatToolResult(result, out var toolContent, out var resultBytes) ||
+                        resultBytes > _options.MaxTotalToolResultBytes - totalToolResultBytes)
+                        throw new AgentFailureException(KejiAgentErrorCode.ContextLimit, KejiAgentStopReason.ContextLimit);
+                    totalToolResultBytes += resultBytes;
+                    context.Add(new ChatMessage { Role = KejiChatRole.Tool, ToolCallId = toolCall.Id,
+                        Name = toolCall.FunctionName, Content = toolContent });
+                    state.Messages.Add(new KejiAgentTranscriptMessage(KejiAgentTranscriptRole.Tool,
+                        result.Success ? "completed" : safeCode, toolCall.Id, toolCall.FunctionName));
+                    if (!result.Success && IsTerminalToolRejection(safeCode))
+                        throw new AgentFailureException(KejiAgentErrorCode.ToolRejected);
+                    if (!result.Success && ++failedToolContinuations > 1)
+                        throw new AgentFailureException(KejiAgentErrorCode.ToolFailed);
+                }
+                if (!TryEnforceContextBounds(context))
+                    throw new AgentFailureException(KejiAgentErrorCode.ContextLimit, KejiAgentStopReason.ContextLimit);
+                continue;
             }
 
-            if (!TryEnforceContextBounds(context))
-                throw new AgentFailureException(KejiAgentErrorCode.ContextLimit);
+            if (finishReason == KejiFinishReason.ToolCalls) throw ProtocolFailure();
+            if ((finishReason == KejiFinishReason.Length || iterationContent.Length == 0) && recoveryAttempts++ < _options.MaxRecoveryAttempts)
+            {
+                if (iterationContent.Length > 0) context.Add(new ChatMessage { Role = KejiChatRole.Assistant, Content = iterationContent.ToString() });
+                context.Add(new ChatMessage { Role = KejiChatRole.User, Content = "Continue the answer without repeating prior content." });
+                if (!TryEnforceContextBounds(context)) throw new AgentFailureException(KejiAgentErrorCode.ContextLimit, KejiAgentStopReason.ContextLimit);
+                continue;
+            }
+            if (finishReason == KejiFinishReason.Length)
+                throw new AgentFailureException(KejiAgentErrorCode.IterationLimit, KejiAgentStopReason.Length);
+            if (iterationContent.Length == 0)
+                throw new AgentFailureException(KejiAgentErrorCode.ProviderProtocolError, KejiAgentStopReason.EmptyResponse);
+            if (finishReason == KejiFinishReason.ContentFilter)
+                throw new AgentFailureException(KejiAgentErrorCode.ProviderRejected, KejiAgentStopReason.ContentFiltered);
+            var content = state.Content.ToString();
+            if (!TryValidateAssistantContent(content, out content)) throw ProtocolFailure();
+            if (!await IsStillOwnedAsync(request.ConversationId, userId, cancellationToken).ConfigureAwait(false))
+                throw new AgentFailureException(KejiAgentErrorCode.ConversationNotFound);
+            await _messages.AddOwnedAsync(request.ConversationId, userId, "assistant", content, cancellationToken).ConfigureAwait(false);
+            state.Messages.Add(new KejiAgentTranscriptMessage(KejiAgentTranscriptRole.Assistant, content));
+            if (state.HasUsage)
+            {
+                await emit(NewEvent(KejiAgentEventType.Usage, iteration) with { Usage = state.Usage }).ConfigureAwait(false);
+                state.UsageEmitted = true;
+            }
+            var completedAt = _timeProvider.GetUtcNow();
+            var transcript = BuildTranscript(request, started, completedAt, KejiAgentStopReason.Completed, state);
+            await emit(NewEvent(KejiAgentEventType.RunCompleted, iteration) with
+            { StopReason = KejiAgentStopReason.Completed, Usage = state.Usage, Transcript = transcript }).ConfigureAwait(false);
+            await AuditAsync("agent_run_completed", request, userId, state, null, null, cancellationToken).ConfigureAwait(false);
+            return;
         }
-        throw new AgentFailureException(KejiAgentErrorCode.LimitExceeded, KejiAgentStopReason.IterationLimit);
+        throw new AgentFailureException(KejiAgentErrorCode.IterationLimit, KejiAgentStopReason.IterationLimit);
     }
 
-    private static async IAsyncEnumerable<KejiAgentEvent> ReadEventsAsync(
-        ChannelReader<KejiAgentEvent> reader,
-        Task producer,
-        CancellationTokenSource linked,
+    private static AgentFailureException ProtocolFailure() => new(KejiAgentErrorCode.ProviderProtocolError);
+
+    private KejiAgentEvent NewEvent(KejiAgentEventType type, int iteration) => new()
+    { RunId = string.Empty, Sequence = 0, Type = type, TimestampUtc = default, Iteration = iteration, ChoiceIndex = 0 };
+
+    private static async IAsyncEnumerable<KejiAgentEvent> ReadEventsAsync(ChannelReader<KejiAgentEvent> reader,
+        Task producer, CancellationTokenSource runCts, CancellationTokenSource stoppedCts,
+        CancellationTokenSource terminalCts, ITimer timer,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         try
         {
-            await foreach (var item in reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
-                yield return item;
+            await foreach (var item in reader.ReadAllAsync(cancellationToken).ConfigureAwait(false)) yield return item;
         }
         finally
         {
-            linked.Cancel();
+            stoppedCts.Cancel();
+            runCts.Cancel();
             try { await producer.ConfigureAwait(false); } catch (OperationCanceledException) { }
-            linked.Dispose();
+            await timer.DisposeAsync().ConfigureAwait(false);
+            terminalCts.Dispose(); stoppedCts.Dispose(); runCts.Dispose();
         }
     }
 
-    private async Task WriteAuditAsync(
-        string conversationId,
-        string runId,
-        bool success,
-        KejiAgentErrorCode errorCode,
+    private async Task AuditAsync(string action, KejiAgentRunRequest request, string userId, RunState state,
+        KejiAgentErrorCode? error, (string Name, int Index, bool? Success, long? DurationMs)? tool,
         CancellationToken cancellationToken)
     {
-        if (_audit is null)
-            return;
         var metadata = new Dictionary<string, string>(StringComparer.Ordinal)
         {
-            ["run_id"] = runId,
-            ["result_code"] = success ? "completed" : errorCode.ToString(),
+            ["run_id"] = request.RunId, ["conversation_id"] = request.ConversationId,
+            ["user_id"] = userId, ["provider"] = request.ProviderName, ["model"] = request.Model,
+            ["iteration"] = state.Iterations.ToString(System.Globalization.CultureInfo.InvariantCulture),
         };
+        if (error is not null) metadata["safe_error_code"] = error.Value.ToString();
+        if (tool is { } value)
+        {
+            metadata["tool"] = value.Name;
+            metadata["tool_call_index"] = value.Index.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            if (value.Success is not null) metadata["success"] = value.Success.Value ? "true" : "false";
+            if (value.DurationMs is not null) metadata["duration_ms"] = value.DurationMs.Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
+        if (state.HasUsage) metadata["usage_total"] = state.Usage.TotalTokens.ToString(System.Globalization.CultureInfo.InvariantCulture);
         try
         {
-            await _audit.WriteAsync(
-                KejiAuditCategory.DataAccess,
-                "agent_run",
-                success ? KejiAuditOutcome.Success : KejiAuditOutcome.Failure,
-                success ? KejiAuditSeverity.Information : KejiAuditSeverity.Warning,
-                "conversation",
-                conversationId,
-                metadata,
-                cancellationToken).ConfigureAwait(false);
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2), _timeProvider);
+            using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
+            await _audit.WriteAsync(KejiAuditCategory.DataAccess, action,
+                error is null ? KejiAuditOutcome.Success : KejiAuditOutcome.Failure,
+                error is null ? KejiAuditSeverity.Information : KejiAuditSeverity.Warning,
+                "conversation", request.ConversationId, metadata, linked.Token).ConfigureAwait(false);
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
         catch (Exception) { }
+    }
+
+    private static KejiAgentTranscript BuildTranscript(KejiAgentRunRequest request, DateTimeOffset started,
+        DateTimeOffset completed, KejiAgentStopReason reason, RunState state) => new(
+        request.RunId, request.ConversationId, started, completed, reason, state.Iterations, state.ToolCalls,
+        state.ToolsUsed.ToImmutableArray(), state.Content.ToString(), state.Usage, state.Messages.ToImmutableArray());
+
+    private static string SafeError(KejiAgentErrorCode code) => $"AGENT_{code.ToString().ToUpperInvariant()}";
+
+    private static int StrictByteCount(string value)
+    {
+        try { return new UTF8Encoding(false, true).GetByteCount(value); }
+        catch (EncoderFallbackException) { throw ProtocolFailure(); }
     }
 
     private static ImmutableArray<ChatToolCall> BuildToolCalls(SortedDictionary<int, StreamedToolCall> streamed)
@@ -474,6 +508,10 @@ public sealed class AgentLoop : IAgentLoop, IKejiAgentLoop
     private static string SafeToolErrorCode(string? value) =>
         IsSafeIdentifier(value ?? string.Empty, 64) ? value! : "TOOL_FAILED";
 
+    private static bool IsTerminalToolRejection(string? code) => code is
+        "UNKNOWN_TOOL" or "CONTRACT_ONLY" or "UNAUTHORIZED" or "INVALID_INPUT" or
+        "INVALID_TARGET" or "NO_CURRENT_USER" or "PROTOCOL_ERROR";
+
     private static KejiAgentErrorCode MapProviderError(KejiProviderErrorCode code) => code switch
     {
         KejiProviderErrorCode.Timeout or KejiProviderErrorCode.GatewayTimeout => KejiAgentErrorCode.ProviderTimeout,
@@ -488,8 +526,10 @@ public sealed class AgentLoop : IAgentLoop, IKejiAgentLoop
     private static KejiAgentStopReason StopReasonFor(KejiAgentErrorCode code) => code switch
     {
         KejiAgentErrorCode.ProviderTimeout or KejiAgentErrorCode.RunTimedOut => KejiAgentStopReason.TimedOut,
-        KejiAgentErrorCode.LimitExceeded or KejiAgentErrorCode.ContextLimit => KejiAgentStopReason.ContextLimit,
+        KejiAgentErrorCode.ContextLimit => KejiAgentStopReason.ContextLimit,
         KejiAgentErrorCode.ToolCallLimit => KejiAgentStopReason.ToolCallLimit,
+        KejiAgentErrorCode.IterationLimit => KejiAgentStopReason.IterationLimit,
+        KejiAgentErrorCode.SessionBusy => KejiAgentStopReason.SessionBusy,
         _ => KejiAgentStopReason.Failed,
     };
 
@@ -501,13 +541,14 @@ public sealed class AgentLoop : IAgentLoop, IKejiAgentLoop
         KejiAgentErrorCode.ProviderNotFound => AgentRunStatus.ProviderNotFound,
         KejiAgentErrorCode.ToolRejected or KejiAgentErrorCode.ToolFailed or
             KejiAgentErrorCode.ProviderProtocolError => AgentRunStatus.ToolFailed,
-        KejiAgentErrorCode.LimitExceeded or KejiAgentErrorCode.ContextLimit or
-            KejiAgentErrorCode.ToolCallLimit => AgentRunStatus.LimitExceeded,
+        KejiAgentErrorCode.ContextLimit or KejiAgentErrorCode.ToolCallLimit or
+            KejiAgentErrorCode.IterationLimit => AgentRunStatus.LimitExceeded,
         _ => AgentRunStatus.ProviderFailed,
     };
 
     private static KejiAgentRunRequest ToKejiRequest(AgentRunRequest request) => new()
     {
+        RunId = Guid.NewGuid().ToString("N"),
         ConversationId = request.ConversationId,
         ProviderName = request.ProviderName,
         Model = request.Model,
@@ -523,11 +564,16 @@ public sealed class AgentLoop : IAgentLoop, IKejiAgentLoop
         public StringBuilder Arguments { get; } = new();
         public bool Ended { get; set; }
 
-        public void Append(string value, int maxBytes)
+        public int Bytes { get; private set; }
+
+        public int Append(string value, int maxBytes)
         {
-            if (Encoding.UTF8.GetByteCount(Arguments.ToString()) + Encoding.UTF8.GetByteCount(value) > maxBytes)
-                throw new AgentFailureException(KejiAgentErrorCode.LimitExceeded);
+            var added = StrictByteCount(value);
+            Bytes = checked(Bytes + added);
+            if (Bytes > maxBytes)
+                throw new AgentFailureException(KejiAgentErrorCode.ProviderProtocolError);
             Arguments.Append(value);
+            return added;
         }
     }
 
@@ -545,6 +591,14 @@ public sealed class AgentLoop : IAgentLoop, IKejiAgentLoop
         public int ToolCalls { get; set; }
         public StringBuilder Content { get; } = new();
         public KejiAgentUsage Usage { get; set; } = new();
+        public bool HasUsage { get; set; }
+        public bool UsageEmitted { get; set; }
+        public bool ThinkingStarted { get; set; }
+        public bool AnsweringStarted { get; set; }
+        public int ReasoningBytes { get; set; }
+        public int AnswerBytes { get; set; }
+        public List<string> ToolsUsed { get; } = new();
+        public List<KejiAgentTranscriptMessage> Messages { get; } = new();
     }
 
     private async Task<bool> IsStillOwnedAsync(string conversationId, string userId, CancellationToken ct)
@@ -563,7 +617,7 @@ public sealed class AgentLoop : IAgentLoop, IKejiAgentLoop
     {
         if (!IsSafeIdentifier(request.ConversationId, MaxConversationIdLength) ||
             !IsSafeIdentifier(request.ProviderName, MaxProviderNameLength) ||
-            request.Model.Length > MaxModelLength || request.Model.Any(char.IsControl) ||
+            !IsRunId(request.RunId) || request.Model.Length > MaxModelLength || request.Model.Any(char.IsControl) ||
             string.IsNullOrWhiteSpace(request.UserMessage) ||
             Encoding.UTF8.GetByteCount(request.UserMessage) > MaxUserMessageBytes ||
             request.UserMessage.Any(c => c == '\0') ||
@@ -579,37 +633,8 @@ public sealed class AgentLoop : IAgentLoop, IKejiAgentLoop
         !string.IsNullOrWhiteSpace(value) && value.Length <= maxLength &&
         value.All(static c => char.IsAsciiLetterOrDigit(c) || c is '_' or '-');
 
-    private bool TryBuildContext(
-        IReadOnlyList<Persistence.Models.MessageRecord> history,
-        string userMessage,
-        out List<ChatMessage> context)
-    {
-        context = new List<ChatMessage>(_options.MaxContextMessages + 1);
-        var bytes = Encoding.UTF8.GetByteCount(userMessage);
-        if (bytes > _options.MaxContextBytes)
-            return false;
-
-        if (history.Count > _options.MaxContextMessages - 1)
-            return false;
-        foreach (var record in history)
-        {
-            var role = record.Role switch
-            {
-                "user" => KejiChatRole.User,
-                "assistant" => KejiChatRole.Assistant,
-                _ => KejiChatRole.Invalid,
-            };
-            if (role == KejiChatRole.Invalid || record.Content is null)
-                return false;
-            var added = Encoding.UTF8.GetByteCount(record.Content);
-            if (added > _options.MaxContextBytes - bytes)
-                return false;
-            bytes += added;
-            context.Add(new ChatMessage { Role = role, Content = record.Content });
-        }
-        context.Add(new ChatMessage { Role = KejiChatRole.User, Content = userMessage });
-        return true;
-    }
+    private static bool IsRunId(string value) => value.Length == 32 &&
+        value.All(static c => c is >= '0' and <= '9' or >= 'a' and <= 'f');
 
     private ImmutableArray<ChatTool> BuildAdvertisedTools()
     {
@@ -683,7 +708,7 @@ public sealed class AgentLoop : IAgentLoop, IKejiAgentLoop
             if (!IsSafeIdentifier(call.Id, 256) || !ids.Add(call.Id) ||
                 !KejiToolName.TryCreate(call.FunctionName, out var name) ||
                 call.FunctionArguments.ValueKind != JsonValueKind.Object ||
-                Encoding.UTF8.GetByteCount(call.FunctionArguments.GetRawText()) > MaxToolArgumentsBytes)
+                Encoding.UTF8.GetByteCount(call.FunctionArguments.GetRawText()) > _options.MaxToolArgumentBytesPerCall)
             {
                 return false;
             }
@@ -720,7 +745,7 @@ public sealed class AgentLoop : IAgentLoop, IKejiAgentLoop
         {
             case JsonValueKind.String:
                 value = element.GetString();
-                return value is string text && Encoding.UTF8.GetByteCount(text) <= MaxToolArgumentsBytes;
+                return value is string text && Encoding.UTF8.GetByteCount(text) <= 256 * 1024;
             case JsonValueKind.Number when element.TryGetInt64(out var integer):
                 value = integer;
                 return true;
@@ -758,7 +783,7 @@ public sealed class AgentLoop : IAgentLoop, IKejiAgentLoop
                 return false;
             }
             if (kind == JsonValueKind.String && item.GetString() is { } text &&
-                Encoding.UTF8.GetByteCount(text) <= MaxToolArgumentsBytes)
+                Encoding.UTF8.GetByteCount(text) <= 256 * 1024)
                 strings.Add(text);
             else if (kind == JsonValueKind.Number && item.TryGetInt64(out var integer))
                 integers.Add(integer);
