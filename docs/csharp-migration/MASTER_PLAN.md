@@ -5,8 +5,8 @@
 - Repository: `dsja-a/newKJ`
 - Branch: `rewrite/csharp-core`
 - Python reference: `main` at `aad0afab7181e529a53691a4f2801f295025a2c7`
-- Last accepted C# baseline: `a048c1d42b94270f833fa71e335c2c21bd3e2c23`
-- Accepted solution test baseline: 2110
+- Last accepted C# baseline: `6f840c6d077bb424f2a1ab5e8d2e510c2af76bcf`
+- Accepted solution test baseline: 2158
 - Target: .NET 10 / `net10.0`, ASP.NET Core as the only public API, Python as a controlled internal worker
 
 ## Remaining quality gates
@@ -34,4 +34,4 @@ Python and the web frontend remain unchanged until their explicitly assigned tas
 
 ## Current gate
 
-TASK-013 R1 is accepted at `a048c1d42b94270f833fa71e335c2c21bd3e2c23`. The production Agent Loop is StreamAsync-only and exposes a strongly typed bounded event stream plus Agent SSE adapter. It enforces a per-user/conversation concurrency gate, run timeout, cumulative usage, run transcript and UTC timing, bounded empty/Length recovery, explicit context-limit failures, safe Agent auditing, source-specific error mapping, repeated ownership checks, and sequential tool execution only through `IToolExecutionPipeline`. Agent tests pass 141/141, Integration tests pass 160/160, Providers tests pass 202/202, Streaming tests pass 156/156, and the full solution passes 2110/2110 with zero failures, skips, build warnings, build errors, or known NuGet vulnerabilities across 27 projects. Formal C# completion remains 60%. The next gate is TASK-014, which is `not_started`.
+TASK-013 R2 is accepted at `6f840c6d077bb424f2a1ab5e8d2e510c2af76bcf`. Non-cancellation failures terminate as optional Usage, Error, then adjacent RunCompleted; cancellation emits no terminal events. Agent reasoning/answer phases, RunId, provider state machine, final-only usage, bounded context/system prompt, immutable safe transcript, indexed tool events, audit lifecycle, and TimeProvider are hardened. `KejiAgentSseAdapter` maps into TASK-012 `KejiSseEvent` and delegates wire formatting to `KejiSseFormatter.FormatEvent`, with independent GUID EventIds and sensitive payload stripping. Agent tests pass 172/172, Integration tests pass 177/177 (including 17 real Agent composition paths), Providers tests pass 202/202, Streaming tests pass 156/156, and the full solution passes 2158/2158 locally with zero failures, skips, build warnings, build errors, or known NuGet vulnerabilities across 27 projects. Remote GitHub CI status was unavailable. Formal C# completion remains 60%. TASK-014 is `not_started`.

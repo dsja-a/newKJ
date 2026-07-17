@@ -4,7 +4,7 @@
 
 - Repository: `dsja-a/newKJ`
 - Branch: `rewrite/csharp-core`
-- Last accepted baseline: `a048c1d42b94270f833fa71e335c2c21bd3e2c23`
+- Last accepted baseline: `6f840c6d077bb424f2a1ab5e8d2e510c2af76bcf`
 - Current task: TASK-013
 - Current status: accepted (final)
 - Formal C# completion: 60%
@@ -201,13 +201,16 @@ Host process                          ToolWorker.Client            ToolWorker pr
 - No real configuration, secret, SQLite database, user data, log, TRX, ZIP, or temporary review artifact added.
 - No history rewrite performed.
 
-## TASK-013 (Accepted): C# Agent Loop
+## TASK-013 R2 (Accepted): Hardened streaming C# Agent Loop
 
-TASK-013 R1 is accepted (final) at `a048c1d42b94270f833fa71e335c2c21bd3e2c23`.
+TASK-013 R2 is accepted (final) at `6f840c6d077bb424f2a1ab5e8d2e510c2af76bcf`.
 
-### TASK-013 acceptance summary
+### TASK-013 R2 acceptance summary
 
-- Production execution uses Provider `StreamAsync` only and exposes `IKejiAgentLoop.RunStreamAsync` with strongly typed, ordered Agent events and a bounded Agent SSE adapter.
+- Production execution uses Provider `StreamAsync` only. Every non-cancellation failure emits `Usage? → Error → RunCompleted`; cancellation emits neither terminal event.
+- Reasoning and answer phases are distinct, bounded events. Provider Done/Usage/Choice/tool-call ordering is revalidated at the Agent boundary.
+- `KejiAgentSseAdapter` maps to TASK-012 `KejiSseEvent` and calls `KejiSseFormatter.FormatEvent`; it does not own wire formatting or use `agent_*` events.
+- SSE EventIds are independent unique GUID `N` strings, unrelated to RunId or sequence. Transcript, identifiers, prompts, tool bodies, raw errors and secrets are stripped.
 - Added a per-user/conversation concurrency Gate, bounded event Channel, RunTimeout, cumulative Usage, RunId, transcript, and UTC start/completion timestamps.
 - Added bounded empty-answer and `Length` recovery. Context that cannot be represented in full now fails explicitly instead of silently dropping history.
 - Added safe Agent audit events containing only run ID and result code; exception and Provider error text is never forwarded.
@@ -217,7 +220,8 @@ TASK-013 R1 is accepted (final) at `a048c1d42b94270f833fa71e335c2c21bd3e2c23`.
 - Requires an authenticated user and owned conversation, and rechecks both before provider calls, tool execution, and message persistence.
 - Persists user and final assistant messages only. Tool arguments/results remain bounded in-memory context and are not logged or persisted.
 - Cancellation remains distinct; operational failures expose only bounded status/error codes without raw exception messages or stacks.
-- Verification: Agent 141/141, Integration 160/160, Providers 202/202, Streaming 156/156, full solution 2110/2110; 0 failed, 0 skipped, 0 build warnings, 0 build errors, 0 known NuGet vulnerabilities.
+- Verification: Agent 172/172, Integration 177/177 (17 real Agent composition paths), Providers 202/202, Streaming 156/156, full solution 2158/2158; 0 failed, 0 skipped, 0 build warnings, 0 build errors, 0 known NuGet vulnerabilities.
+- Evidence is from the local Gate; no remote GitHub CI status was available.
 - Python and Web are unchanged. TASK-014 is `not_started`.
 
 ## Next action
