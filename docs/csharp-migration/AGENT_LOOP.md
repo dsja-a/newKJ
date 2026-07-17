@@ -1,6 +1,6 @@
 # C# Agent Loop Contract
 
-TASK-013 R4 final accepted baseline: `ed52a87966a1754d9eca8a91b9be511368980b87`.
+TASK-013 R4 final accepted baseline: `f2d0cf7701d908eef9b09e473c6a3e7922e3f0ee`.
 
 ## Execution and terminal protocol
 
@@ -32,11 +32,11 @@ Provider iterations use the explicit terminal states `BeforeChoiceFinished`, `Af
 
 ## Local acceptance evidence
 
-- Keji.Agent.Tests: 196/196
+- Keji.Agent.Tests: 197/197
 - Keji.Integration.Tests: 184/184, including 24 real Agent composition paths
 - Keji.Providers.Tests: 202/202
 - Keji.Streaming.Tests: 156/156
-- Full solution: 2189/2189
+- Full solution: 2190/2190
 - Failed/skipped/build warnings/build errors/known NuGet vulnerabilities: 0/0/0/0/0
 
 These are local Gate results. No remote GitHub CI status was available for this acceptance.

@@ -4,7 +4,7 @@
 
 - Repository: `dsja-a/newKJ`
 - Branch: `rewrite/csharp-core`
-- Last accepted baseline: `ed52a87966a1754d9eca8a91b9be511368980b87`
+- Last accepted baseline: `f2d0cf7701d908eef9b09e473c6a3e7922e3f0ee`
 - Current task: TASK-013
 - Current status: accepted (final)
 - Formal C# completion: 60%
@@ -242,12 +242,12 @@ TASK-013 R3 is accepted at `b09c31010771bfa9afc665dfea1829edf3e40c7d`.
 
 ## TASK-013 R4 (Accepted): Final tool lifecycle and Provider terminal state
 
-TASK-013 R4 is accepted at `ed52a87966a1754d9eca8a91b9be511368980b87`.
+TASK-013 R4 is finally accepted at `f2d0cf7701d908eef9b09e473c6a3e7922e3f0ee` (primary R4 lifecycle commit `ed52a87966a1754d9eca8a91b9be511368980b87`).
 
 - `ToolStarted` only means `IToolExecutionPipeline` is about to execute. Every pre-execution rejection emits one failed `ToolCompleted` with the correct call identity, safe code, and zero duration, followed by `Error` and `RunCompleted`.
 - Pre-execution rejection writes `agent_tool_completed` only. It does not write `agent_tool_started`.
 - User and conversation ownership are rechecked before `ToolStarted`; ownership loss emits no tool event or tool audit and never calls the pipeline.
-- Except for caller cancellation, every emitted `ToolStarted` has exactly one matching `ToolCompleted`.
+- Except for caller cancellation, every emitted `ToolStarted` has exactly one matching `ToolCompleted`, including a safe failed completion when RunTimeout cancels an active pipeline call.
 - Provider `Error` after `ChoiceFinished` or after `Usage` preserves the mapped safe error and terminates as `Error` then `RunCompleted` without requiring Provider `Done`.
-- Local verification: Agent 196/196, Integration 184/184 (24 real Agent composition paths), Providers 202/202, Streaming 156/156, full solution 2189/2189; 0 failed, 0 skipped, 0 build warnings, 0 build errors, and 0 known NuGet vulnerabilities.
+- Local verification: Agent 197/197, Integration 184/184 (24 real Agent composition paths), Providers 202/202, Streaming 156/156, full solution 2190/2190; 0 failed, 0 skipped, 0 build warnings, 0 build errors, and 0 known NuGet vulnerabilities.
 - Python and Web are unchanged. TASK-014 remains `not_started`.
