@@ -4,7 +4,7 @@
 
 - Repository: `dsja-a/newKJ`
 - Branch: `rewrite/csharp-core`
-- Last accepted baseline: `b09c3107ab439399c95176af4967badbde84021b`
+- Last accepted baseline: `b09c31010771bfa9afc665dfea1829edf3e40c7d`
 - Current task: TASK-013
 - Current status: accepted (final)
 - Formal C# completion: 60%
@@ -230,7 +230,7 @@ TASK-014 is the next task and has not started.
 
 ## TASK-013 R3 (Accepted): Safe request and provider terminal closeout
 
-TASK-013 R3 is accepted at `b09c3107ab439399c95176af4967badbde84021b`.
+TASK-013 R3 is accepted at `b09c31010771bfa9afc665dfea1829edf3e40c7d`.
 
 - Invalid RunIds are replaced with a fresh lowercase 32-character hexadecimal effective RunId before events, transcripts, audit, or SSE; valid RunIds are preserved exactly.
 - Conversation, provider, model, user message, and system prompt boundaries use strict UTF-8 validation. Unpaired surrogates are `InvalidRequest`, never `ContextLimit`.

@@ -1,6 +1,6 @@
 # C# Agent Loop Contract
 
-TASK-013 R3 accepted baseline: `b09c3107ab439399c95176af4967badbde84021b`.
+TASK-013 R3 accepted baseline: `b09c31010771bfa9afc665dfea1829edf3e40c7d`.
 
 ## Execution and terminal protocol
 
