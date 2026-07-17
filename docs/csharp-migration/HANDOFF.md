@@ -4,11 +4,11 @@
 
 - Repository: `dsja-a/newKJ`
 - Branch: `rewrite/csharp-core`
-- Last accepted baseline: `f2d0cf7701d908eef9b09e473c6a3e7922e3f0ee`
-- Current task: TASK-013
+- Last accepted baseline: `fc2b270902bbfc855f49d463872dac1a7988ee0e`
+- Current task: TASK-014
 - Current status: accepted (final)
-- Formal C# completion: 60%
-- Next task: TASK-014 (`not_started`)
+- Formal C# completion: 70%
+- Next task: TASK-015 (`not_started`)
 
 ## TASK-011 (Repair): Isolated ToolWorker
 
@@ -226,7 +226,7 @@ TASK-013 R2 is accepted (final) at `6f840c6d077bb424f2a1ab5e8d2e510c2af76bcf`.
 
 ## Next action
 
-TASK-014 is the next task and has not started.
+TASK-015 is the next task and has not started.
 
 ## TASK-013 R3 (Accepted): Safe request and provider terminal closeout
 
@@ -239,6 +239,21 @@ TASK-013 R3 is accepted at `b09c31010771bfa9afc665dfea1829edf3e40c7d`.
 - R4 supersedes the R3 pre-execution tool event detail: these rejections emit failed `ToolCompleted`, `Error`, and `RunCompleted`, while never emitting `ToolStarted` or entering `IToolExecutionPipeline`.
 - Verification: Agent 187/187, Integration 180/180 (20 real Agent composition paths), Providers 202/202, Streaming 156/156, full solution 2176/2176; 0 failed, 0 skipped, 0 build warnings, 0 build errors, and 0 known NuGet vulnerabilities.
 - Python and Web are unchanged. TASK-014 remains `not_started`.
+
+## TASK-014 (Accepted): Safe read-only SmartQuery
+
+TASK-014 is accepted at `fc2b270902bbfc855f49d463872dac1a7988ee0e`.
+
+- Requires authenticated valid user plus both `SmartQueryExecute` and `DatabaseRead`.
+- Resolves only a current-user-accessible data source and administrator-enabled, bounded schema metadata.
+- Uses existing `IModelProvider` only to produce a closed, strongly typed QueryPlan. Models never provide executable SQL.
+- Rejects malformed, duplicate-property, oversized, unknown, injected, or non-scalar plan input.
+- Deterministically compiles quoted, parameterized `SELECT` only and executes behind an injected read-only connection boundary with SQLite `query_only`.
+- Returns immutable typed columns/rows with row, column, cell, schema, plan, and total-result limits.
+- Optional summary treats result values as untrusted data and remains bounded.
+- Audit excludes prompts, plans, SQL, parameters, rows, summaries, provider errors, exceptions, stacks, secrets, and connection references.
+- Local Gate: SmartQuery 31/31, Integration 189/189, Agent 197/197, Providers 202/202, Streaming 156/156, full solution 2226/2226; zero failures, skips, warnings, errors, and known NuGet vulnerabilities.
+- Python and Web are unchanged. TASK-015 is `not_started`.
 
 ## TASK-013 R4 (Accepted): Final tool lifecycle and Provider terminal state
 
