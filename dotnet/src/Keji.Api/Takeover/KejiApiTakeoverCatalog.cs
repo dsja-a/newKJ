@@ -1,0 +1,98 @@
+using Keji.Security.Authorization;
+
+namespace Keji.Api.Takeover;
+
+public sealed record KejiApiRoute(string Method, string Pattern, bool IsPublic, KejiPermission Permission);
+
+public static class KejiApiTakeoverCatalog
+{
+    public static IReadOnlyList<KejiApiRoute> Routes { get; } =
+    [
+        Public("GET","/"), Protected("POST","/chat",KejiPermission.ChatUse),
+        Protected("POST","/chat/stream",KejiPermission.ChatUse), Protected("POST","/chat/stop",KejiPermission.ChatUse),
+        Protected("POST","/chat/reset",KejiPermission.ConversationWrite), Protected("GET","/tools",KejiPermission.ToolCatalogRead),
+        Protected("GET","/sessions",KejiPermission.ConversationRead), Public("GET","/favicon.ico"),
+        Protected("GET","/chat/mode",KejiPermission.ChatUse), Public("GET","/health"),
+        Protected("GET","/api/knowledge/documents",KejiPermission.KnowledgeRead),
+        Protected("POST","/api/knowledge/index",KejiPermission.KnowledgeWrite),
+        Protected("POST","/api/knowledge/cancel",KejiPermission.KnowledgeWrite),
+        Protected("GET","/api/knowledge/is_indexing",KejiPermission.KnowledgeRead),
+        Protected("POST","/api/knowledge/clear",KejiPermission.KnowledgeWrite),
+        Protected("DELETE","/api/knowledge/document/{doc_id}",KejiPermission.KnowledgeWrite),
+        Protected("GET","/api/knowledge/search",KejiPermission.KnowledgeRead),
+        Protected("GET","/api/knowledge/stats",KejiPermission.KnowledgeRead),
+        Protected("GET","/api/files/roots",KejiPermission.FileRead),
+        Protected("GET","/api/files/list",KejiPermission.FileRead),
+        Protected("GET","/api/files/drives",KejiPermission.FileRead),
+        Protected("GET","/api/files/info",KejiPermission.FileRead),
+        Protected("POST","/api/files/open",KejiPermission.FileRead),
+        Protected("POST","/api/files/mkdir",KejiPermission.FileWrite),
+        Protected("POST","/api/files/upload",KejiPermission.FileWrite),
+        Protected("GET","/api/conversations",KejiPermission.ConversationRead),
+        Protected("GET","/api/conversations/{conv_id}",KejiPermission.ConversationRead),
+        Protected("POST","/api/chat/load",KejiPermission.ConversationRead),
+        Protected("DELETE","/api/conversations/{conv_id}",KejiPermission.ConversationWrite),
+        Protected("GET","/api/settings",KejiPermission.SettingsRead),
+        Protected("POST","/api/settings",KejiPermission.SettingsWrite),
+        Protected("POST","/api/mcp/reload",KejiPermission.McpManage),
+        Protected("GET","/api/mcp/filesystem-dirs",KejiPermission.McpManage),
+        Protected("POST","/api/models/test",KejiPermission.ModelManage),
+        Protected("GET","/api/ollama/check",KejiPermission.ModelManage),
+        Protected("POST","/api/ollama/pull",KejiPermission.ModelManage),
+        Protected("GET","/api/tools/display",KejiPermission.ToolCatalogRead),
+        Protected("POST","/api/upload",KejiPermission.FileWrite),
+        Protected("GET","/api/upload/cleanup",KejiPermission.FileWrite),
+        Protected("GET","/api/status",KejiPermission.SystemRead),
+        Protected("GET","/api/debug/logs",KejiPermission.SystemRead),
+        Protected("GET","/api/debug/agent-state",KejiPermission.SystemRead),
+        Protected("GET","/api/mcp/servers",KejiPermission.McpManage),
+        Protected("GET","/api/mcp/status",KejiPermission.McpManage),
+        Protected("POST","/api/mcp/servers",KejiPermission.McpManage),
+        Protected("GET","/api/database/configs",KejiPermission.DatabaseRead),
+        Protected("POST","/api/database/configs",KejiPermission.DatabaseManage),
+        Protected("GET","/api/database/configs/{config_id}",KejiPermission.DatabaseRead),
+        Protected("PUT","/api/database/configs/{config_id}",KejiPermission.DatabaseManage),
+        Protected("DELETE","/api/database/configs/{config_id}",KejiPermission.DatabaseManage),
+        Protected("POST","/api/database/configs/{config_id}/test",KejiPermission.DatabaseManage),
+        Protected("POST","/api/database/configs/{config_id}/scan",KejiPermission.DatabaseManage),
+        Protected("GET","/api/database/configs/{config_id}/metadata",KejiPermission.DatabaseRead),
+        Protected("PUT","/api/database/metadata/{meta_id}",KejiPermission.DatabaseManage),
+        Protected("POST","/api/smart-query",KejiPermission.SmartQueryExecute),
+        Protected("POST","/api/smart-query/with-steps",KejiPermission.SmartQueryExecute),
+        Protected("POST","/api/smart-query/stream",KejiPermission.SmartQueryExecute),
+        Protected("GET","/api/command/status",KejiPermission.SystemRead),
+        Protected("GET","/api/command/selfcheck",KejiPermission.SystemRead),
+        Protected("GET","/api/command/cost",KejiPermission.SystemRead),
+        Protected("GET","/api/command/tools",KejiPermission.ToolCatalogRead),
+        Protected("GET","/api/command/knowledge",KejiPermission.KnowledgeRead),
+        Protected("POST","/api/compact",KejiPermission.ConversationWrite),
+        Protected("GET","/api/stats/tokens",KejiPermission.SystemRead),
+        Protected("GET","/api/skills",KejiPermission.SkillsRead),
+        Protected("GET","/api/skills/{name}",KejiPermission.SkillsRead),
+        Protected("POST","/api/skills/activate",KejiPermission.SkillsManage),
+        Protected("POST","/api/skills/active",KejiPermission.SkillsRead),
+        Protected("POST","/api/skills/deactivate",KejiPermission.SkillsManage),
+        Protected("POST","/api/skills/set",KejiPermission.SkillsManage),
+        Protected("GET","/api/stats/tools",KejiPermission.SystemRead),
+        Protected("GET","/api/stats/cost",KejiPermission.SystemRead),
+        Protected("GET","/api/stats/session/{session_id}",KejiPermission.SystemRead),
+        Public("POST","/api/auth/login"),
+        Protected("GET","/api/auth/me",KejiPermission.AccountSelfRead),
+        Protected("GET","/api/admin/users",KejiPermission.AdminUsers),
+        Protected("POST","/api/admin/users",KejiPermission.AdminUsers),
+        Protected("DELETE","/api/admin/users/{user_id}",KejiPermission.AdminUsers),
+        Protected("PATCH","/api/admin/users/{user_id}",KejiPermission.AdminUsers),
+        Protected("GET","/api/admin/conversations",KejiPermission.AdminConversations),
+        Protected("GET","/api/admin/conversations/{conv_id}",KejiPermission.AdminConversations),
+        Public("GET","/api/security/status"),
+        Protected("GET","/api/security/audit/logs",KejiPermission.AuditRead),
+        Protected("POST","/api/work/configure",KejiPermission.SystemManage),
+        Protected("GET","/api/work/status",KejiPermission.SystemRead),
+        Public("POST","/api/work/callback"), Public("GET","/api/work/callback")
+    ];
+
+    private static KejiApiRoute Public(string method,string pattern) =>
+        new(method,pattern,true,default);
+    private static KejiApiRoute Protected(string method,string pattern,KejiPermission permission) =>
+        new(method,pattern,false,permission);
+}

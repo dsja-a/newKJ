@@ -191,8 +191,8 @@ public sealed class AuthorizationMiddlewareIntegrationTests
     {
         var endpoints = _fixture.DefaultFactory.Services.GetServices<EndpointDataSource>()
             .SelectMany(source => source.Endpoints).OfType<RouteEndpoint>().ToArray();
-        var endpoint = Assert.Single(endpoints, e => e.Metadata.GetOrderedMetadata<KejiRequirePermissionAttribute>()
-            .Any(a => a.Permission == KejiPermission.SystemRead));
+        var endpoint = Assert.Single(endpoints,
+            static e => e.RoutePattern.RawText == "/openapi/{documentName}.json");
         var permissions = endpoint.Metadata.GetOrderedMetadata<KejiRequirePermissionAttribute>();
         Assert.Single(permissions);
         Assert.Equal(KejiPermission.SystemRead, permissions[0].Permission);

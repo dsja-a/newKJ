@@ -58,10 +58,10 @@ public class KejiAuthenticationMiddleware
         {
             var authHeader = context.Request.Headers["Authorization"].FirstOrDefault();
             var xApiKey = context.Request.Headers["X-API-Key"].FirstOrDefault();
-            var queryApiKey = context.Request.Query["api_key"].FirstOrDefault();
             var remoteIp = context.Connection.RemoteIpAddress?.ToString();
 
-            var result = await authenticator.AuthenticateAsync(authHeader, xApiKey, queryApiKey, remoteIp, context.RequestAborted);
+            var result = await authenticator.AuthenticateAsync(
+                authHeader, xApiKey, queryApiKey: null, remoteIp, context.RequestAborted);
 
             if (result.IsAuthenticated && result.User != null)
             {
