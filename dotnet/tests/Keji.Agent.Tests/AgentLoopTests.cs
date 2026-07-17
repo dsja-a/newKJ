@@ -335,6 +335,13 @@ public sealed class AgentLoopTests
     }
 
     [Fact]
+    public void Options_RejectUnpairedSurrogateSystemPrompt()
+    {
+        var invalidUtf16 = new string((char)0xd800, 1);
+        Assert.Throws<ArgumentException>(() => new AgentLoopOptions(systemPrompt: invalidUtf16));
+    }
+
+    [Fact]
     public async Task RunStreamAsync_EmitsOrderedRunTranscriptAndUtcTimes()
     {
         var fixture = Fixture(ChatCompletionResponse.Succeeded("hello stream", new TokenUsage { PromptTokens = 3, CompletionTokens = 2 }));
@@ -500,6 +507,94 @@ public sealed class AgentLoopTests
     }
 
     [Fact]
+    public async Task InvalidRunId_UsesFreshSafeRunIdAcrossEventsTranscriptAuditAndSse()
+    {
+        const string unsafeRunId = "INVALID-RUN-ID/secret";
+        var fixture = Fixture(ChatCompletionResponse.Succeeded("unused"));
+        var request = new KejiAgentRunRequest
+        {
+            RunId = unsafeRunId, ConversationId = "conv_1", ProviderName = "openai",
+            Model = "model", UserMessage = "hello",
+        };
+
+        var events = await CollectAsync(fixture.Loop.RunStreamAsync(request));
+
+        AssertFailureTerminal(events, KejiAgentErrorCode.InvalidRequest);
+        var effectiveRunId = Assert.Single(events.Select(static item => item.RunId).Distinct());
+        Assert.Matches("^[0-9a-f]{32}$", effectiveRunId);
+        Assert.Equal(effectiveRunId, events[^1].Transcript!.RunId);
+        Assert.All(fixture.Audit.Calls, call => Assert.Equal(effectiveRunId, call.Metadata["run_id"]));
+        Assert.DoesNotContain(unsafeRunId, JsonSerializer.Serialize(events), StringComparison.Ordinal);
+        Assert.DoesNotContain(unsafeRunId, JsonSerializer.Serialize(fixture.Audit.Calls), StringComparison.Ordinal);
+
+        var sseFixture = Fixture(ChatCompletionResponse.Succeeded("unused"));
+        var frames = await CollectAsync(new KejiAgentSseAdapter().AdaptAsync(sseFixture.Loop.RunStreamAsync(request)));
+        Assert.Contains("event: error\n", frames[^2], StringComparison.Ordinal);
+        Assert.Contains("event: done\n", frames[^1], StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("conversation", "bad conversation/raw", "openai", "model", "hello")]
+    [InlineData("provider", "conv_1", "bad/provider/raw", "model", "hello")]
+    [InlineData("model", "conv_1", "openai", "bad\u0000model", "hello")]
+    public async Task InvalidTextFields_AreInvalidRequestAndNeverReachTerminalOrAudit(
+        string marker, string conversationId, string provider, string model, string message)
+    {
+        var fixture = Fixture(ChatCompletionResponse.Succeeded("unused"));
+        var request = new KejiAgentRunRequest
+        {
+            RunId = StreamRequest().RunId, ConversationId = conversationId, ProviderName = provider,
+            Model = model, UserMessage = message,
+        };
+
+        var events = await CollectAsync(fixture.Loop.RunStreamAsync(request));
+
+        AssertFailureTerminal(events, KejiAgentErrorCode.InvalidRequest);
+        var done = events[^1];
+        Assert.Empty(done.Transcript!.Messages);
+        var auditValues = fixture.Audit.Calls.SelectMany(static call => call.Metadata.Values).ToArray();
+        switch (marker)
+        {
+            case "conversation":
+                Assert.Empty(done.Transcript.ConversationId);
+                Assert.DoesNotContain(conversationId, auditValues);
+                break;
+            case "provider":
+                Assert.DoesNotContain(provider, auditValues);
+                break;
+            case "model":
+            case "model_surrogate":
+                Assert.DoesNotContain(model, auditValues);
+                break;
+            case "message":
+                Assert.DoesNotContain(message, auditValues);
+                break;
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task UnpairedSurrogate_IsInvalidRequestNotContextLimit(bool putInModel)
+    {
+        var invalidUtf16 = new string((char)0xd800, 1);
+        var fixture = Fixture(ChatCompletionResponse.Succeeded("unused"));
+        var request = new KejiAgentRunRequest
+        {
+            RunId = StreamRequest().RunId, ConversationId = "conv_1", ProviderName = "openai",
+            Model = putInModel ? invalidUtf16 : "model",
+            UserMessage = putInModel ? "hello" : invalidUtf16,
+        };
+
+        var events = await CollectAsync(fixture.Loop.RunStreamAsync(request));
+
+        AssertFailureTerminal(events, KejiAgentErrorCode.InvalidRequest);
+        Assert.Empty(events[^1].Transcript!.Messages);
+        Assert.All(fixture.Audit.Calls.SelectMany(static call => call.Metadata.Values),
+            value => Assert.DoesNotContain(invalidUtf16, value, StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task BoundedChannel_DoesNotDropFailureTerminalWhenNearlyFull()
     {
         var fixture = Fixture(new AgentLoopOptions(eventBufferCapacity: 1), ChatCompletionResponse.Succeeded("unused"));
@@ -552,6 +647,40 @@ public sealed class AgentLoopTests
     {
         var usage = ChatCompletionStreamEvent.UsageEvent(new TokenUsage { PromptTokens = 1 });
         var events = await ProtocolEvents(ChatCompletionStreamEvent.ChoiceFinished(KejiFinishReason.Stop, false), usage, usage, ChatCompletionStreamEvent.Done());
+        AssertFailureTerminal(events, KejiAgentErrorCode.ProviderProtocolError);
+    }
+
+    [Theory]
+    [InlineData("token")]
+    [InlineData("reasoning")]
+    [InlineData("tool_begin")]
+    [InlineData("choice")]
+    [InlineData("error")]
+    public async Task ProviderStream_ChoiceFinishedAllowsOnlyOptionalUsageThenDone(string lateKind)
+    {
+        var late = lateKind switch
+        {
+            "token" => ChatCompletionStreamEvent.Token("late"),
+            "reasoning" => ChatCompletionStreamEvent.ReasoningToken("late"),
+            "tool_begin" => ChatCompletionStreamEvent.ToolCallBegin("call_1", "calculator"),
+            "choice" => ChatCompletionStreamEvent.ChoiceFinished(KejiFinishReason.Stop, false),
+            _ => ChatCompletionStreamEvent.Error(KejiProviderErrorCode.ServerError, "raw"),
+        };
+        var events = await ProtocolEvents(
+            ChatCompletionStreamEvent.ChoiceFinished(KejiFinishReason.Stop, false),
+            late,
+            ChatCompletionStreamEvent.Done());
+        AssertFailureTerminal(events, KejiAgentErrorCode.ProviderProtocolError);
+    }
+
+    [Fact]
+    public async Task ProviderStream_AfterUsageAllowsOnlyDone()
+    {
+        var events = await ProtocolEvents(
+            ChatCompletionStreamEvent.ChoiceFinished(KejiFinishReason.Stop, false),
+            ChatCompletionStreamEvent.UsageEvent(new TokenUsage { PromptTokens = 1 }),
+            ChatCompletionStreamEvent.Token("late"),
+            ChatCompletionStreamEvent.Done());
         AssertFailureTerminal(events, KejiAgentErrorCode.ProviderProtocolError);
     }
 
@@ -711,6 +840,31 @@ public sealed class AgentLoopTests
         Assert.Equal(0, started.ToolCallIndex);
         Assert.True(completed.ToolDurationMs >= 0);
         Assert.DoesNotContain("secret-arg", JsonSerializer.Serialize(new[] { started, completed }), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("unknown")]
+    [InlineData("contract_only")]
+    public async Task RegistryToolRejection_EmitsCompleteStartedCompletedErrorDoneSequence(string toolName)
+    {
+        var fixture = Fixture(ToolResponse(ToolCall("call_1", toolName, "{}")));
+        var events = await CollectAsync(fixture.Loop.RunStreamAsync(StreamRequest()));
+
+        var terminal = events.Where(static item => item.Type is KejiAgentEventType.ToolStarted or
+            KejiAgentEventType.ToolCompleted or KejiAgentEventType.Error or KejiAgentEventType.RunCompleted)
+            .Select(static item => item.Type);
+        Assert.Equal(new[]
+        {
+            KejiAgentEventType.ToolStarted, KejiAgentEventType.ToolCompleted,
+            KejiAgentEventType.Error, KejiAgentEventType.RunCompleted,
+        }, terminal);
+        var completed = Assert.Single(events, static item => item.Type == KejiAgentEventType.ToolCompleted);
+        Assert.False(completed.ToolSucceeded);
+        Assert.Equal("TOOL_REJECTED", completed.ToolErrorCode);
+        Assert.Empty(fixture.Pipeline.Calls);
+        Assert.Equal(new[] { "agent_tool_started", "agent_tool_completed" },
+            fixture.Audit.Calls.Where(static call => call.Action.StartsWith("agent_tool_", StringComparison.Ordinal))
+                .Select(static call => call.Action));
     }
 
     private async Task<List<KejiAgentEvent>> ProtocolEvents(params ChatCompletionStreamEvent[] providerEvents)

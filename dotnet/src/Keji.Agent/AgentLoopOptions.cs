@@ -1,3 +1,5 @@
+using System.Text;
+
 namespace Keji.Agent;
 
 public sealed class AgentLoopOptions
@@ -52,7 +54,9 @@ public sealed class AgentLoopOptions
         if (maxToolCallsPerIteration is < 1 or > 16) throw new ArgumentOutOfRangeException(nameof(maxToolCallsPerIteration));
         if (maxToolArgumentBytesPerCall is < 256 or > 256 * 1024) throw new ArgumentOutOfRangeException(nameof(maxToolArgumentBytesPerCall));
         if (maxToolArgumentBytesTotal < maxToolArgumentBytesPerCall || maxToolArgumentBytesTotal > 1024 * 1024) throw new ArgumentOutOfRangeException(nameof(maxToolArgumentBytesTotal));
-        if (string.IsNullOrWhiteSpace(systemPrompt) || systemPrompt.Length > 4096 || systemPrompt.Any(char.IsControl)) throw new ArgumentException("System prompt is invalid.", nameof(systemPrompt));
+        if (string.IsNullOrWhiteSpace(systemPrompt) || systemPrompt.Length > 4096 ||
+            systemPrompt.Any(char.IsControl) || !IsStrictUtf8(systemPrompt))
+            throw new ArgumentException("System prompt is invalid.", nameof(systemPrompt));
 
         MaxIterations = maxIterations;
         MaxToolCalls = maxToolCalls;
@@ -68,5 +72,18 @@ public sealed class AgentLoopOptions
         MaxToolArgumentBytesPerCall = maxToolArgumentBytesPerCall;
         MaxToolArgumentBytesTotal = maxToolArgumentBytesTotal;
         SystemPrompt = systemPrompt;
+    }
+
+    private static bool IsStrictUtf8(string value)
+    {
+        try
+        {
+            _ = new UTF8Encoding(false, true).GetByteCount(value);
+            return true;
+        }
+        catch (EncoderFallbackException)
+        {
+            return false;
+        }
     }
 }

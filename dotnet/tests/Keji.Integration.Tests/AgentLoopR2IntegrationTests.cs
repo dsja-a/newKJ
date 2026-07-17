@@ -191,6 +191,55 @@ public sealed class AgentLoopR2IntegrationTests
         Assert.Equal(KejiAgentStopReason.Completed, events[^1].StopReason);
     }
 
+    [Fact]
+    public async Task InvalidRunId_StillProducesSafeErrorThenDoneSse()
+    {
+        var request = new KejiAgentRunRequest
+        {
+            RunId = "invalid/run-id", ConversationId = "conv_1", ProviderName = "openai",
+            Model = "model", UserMessage = "hello",
+        };
+        var fixture = Fixture(Answer("unused"));
+
+        var frames = await CollectAsync(new KejiAgentSseAdapter().AdaptAsync(fixture.Loop.RunStreamAsync(request)));
+
+        Assert.Contains("event: error\n", frames[^2], StringComparison.Ordinal);
+        Assert.Contains("event: done\n", frames[^1], StringComparison.Ordinal);
+        Assert.DoesNotContain("invalid/run-id", string.Concat(frames), StringComparison.Ordinal);
+        Assert.Empty(fixture.Provider.Requests);
+    }
+
+    [Fact]
+    public async Task ChoiceFinishedThenLateContent_IsProviderProtocolError()
+    {
+        var fixture = Fixture(new[]
+        {
+            Finish(), ChatCompletionStreamEvent.Token("late"), ChatCompletionStreamEvent.Done(),
+        });
+
+        var events = await CollectAsync(fixture.Loop.RunStreamAsync(Request()));
+
+        Assert.Equal(KejiAgentErrorCode.ProviderProtocolError, events[^2].ErrorCode);
+        Assert.Equal(KejiAgentEventType.RunCompleted, events[^1].Type);
+    }
+
+    [Fact]
+    public async Task ContractOnlyTool_RejectionHasCompleteToolAndTerminalEvents()
+    {
+        var fixture = Fixture(ToolRound("call_1", "contract_only", 0));
+
+        var events = await CollectAsync(fixture.Loop.RunStreamAsync(Request()));
+
+        Assert.Equal(new[]
+        {
+            KejiAgentEventType.ToolStarted, KejiAgentEventType.ToolCompleted,
+            KejiAgentEventType.Error, KejiAgentEventType.RunCompleted,
+        }, events.Where(static item => item.Type is KejiAgentEventType.ToolStarted or
+                KejiAgentEventType.ToolCompleted or KejiAgentEventType.Error or KejiAgentEventType.RunCompleted)
+            .Select(static item => item.Type));
+        Assert.Empty(fixture.Pipeline.Calls);
+    }
+
     private static KejiAgentRunRequest Request() => new()
     {
         RunId = Guid.NewGuid().ToString("N"), ConversationId = "conv_1", ProviderName = "openai",
